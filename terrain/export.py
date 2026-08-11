@@ -97,7 +97,10 @@ class ExportResult:
 
 def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  drainage_km2=None, temperature_c=None, precipitation_mm=None,
-                 biome=None, width=8192, params=None, metrics_summary=None,
+                 biome=None, discharge=None, river_mask=None, river_width_m=None,
+                 lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
+                 endorheic=None, lakes=None,
+                 width=8192, params=None, metrics_summary=None,
                  amplify_params=None, detail=True) -> ExportResult:
     """Write the native archive, the rasters, and the manifest."""
     from terrain import amplify as amp_mod
@@ -106,10 +109,23 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
     out_dir.mkdir(parents=True, exist_ok=True)
     files = {}
 
+    def as_flag(arr):
+        # Masks travel as uint8, matching land_mask, so the archive carries one boolean
+        # convention rather than two.
+        return None if arr is None else np.asarray(arr).astype(np.uint8)
+
     fields = {"elevation": elevation, "land_mask": land_mask.astype(np.uint8)}
     for name, arr in (("temperature_c", temperature_c),
                       ("precipitation_mm", precipitation_mm), ("biome", biome),
-                      ("slope", slope), ("drainage_km2", drainage_km2)):
+                      ("slope", slope), ("drainage_km2", drainage_km2),
+                      ("discharge_km3_per_yr", discharge),
+                      ("river_mask", as_flag(river_mask)),
+                      ("river_width_m", river_width_m),
+                      ("lake_mask", as_flag(lake_mask)),
+                      ("lake_level_m", lake_level_m),
+                      ("lake_depth_m", lake_depth_m),
+                      ("lake_id", lake_id),
+                      ("endorheic", as_flag(endorheic))):
         if arr is not None:
             fields[name] = arr
     files["native"] = str(save_native(out_dir / "world.npz", grid, fields, seed, params))
@@ -158,6 +174,10 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
         "metrics": metrics_summary or {},
         "files": files,
     }
+    if lakes is not None:
+        # field_lake_id indexes this table. Without it the ids are bare labels and the
+        # per-lake quantities -- spill point, inflow, whether it is terminal -- are lost.
+        manifest["lakes"] = list(lakes)
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     files["manifest"] = str(out_dir / "manifest.json")
     return ExportResult(out_dir, files, manifest)

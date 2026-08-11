@@ -89,6 +89,14 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_biome` | uint8 | code | see the biome table below |
 | `field_slope` | float32 | m/m | gradient toward the flow receiver |
 | `field_drainage_km2` | float32 | km² | upstream drainage area |
+| `field_discharge_km3_per_yr` | float32 | km³/yr | water volume routed through the cell (Stage 6) |
+| `field_river_mask` | uint8 | — | 1 where discharge clears `channel_threshold_km3_per_yr` |
+| `field_river_width_m` | float32 | m | channel width from discharge; 0 off-river |
+| `field_lake_mask` | uint8 | — | 1 where a lake stands |
+| `field_lake_level_m` | float32 | m | water surface elevation; NaN off-lake |
+| `field_lake_depth_m` | float32 | m | surface minus bed; 0 off-lake |
+| `field_lake_id` | int32 | — | index into `manifest.json` → `lakes`; −1 off-lake |
+| `field_endorheic` | uint8 | — | 1 where the lake is terminal (no outlet to the sea) |
 | `_n` | int64 | — | grid frequency; rebuilds the geometry |
 | `_radius_km` | float64 | km | planet radius (6371) |
 | `_seed` | int64 | — | world seed |
@@ -105,7 +113,7 @@ Equirectangular, EPSG:4326, covering the full globe, `width × width/2`.
 | `elevation.tif` | 1 | float32 | elevation in metres, with Stage 8 sub-grid detail |
 | `climate.tif` | 2 | float32 | `temperature_c`, `precipitation_mm` |
 | `biomes.tif` | 1 | uint8 | biome code, nearest-sampled (never interpolated) |
-| `manifest.json` | — | — | grid, seed, raster spec, land fraction, parameters, metrics |
+| `manifest.json` | — | — | grid, seed, raster spec, land fraction, parameters, metrics, lake table |
 
 Biome codes: `0` ocean, `1` ice, `2` tundra, `3` boreal forest, `4` temperate grassland,
 `5` woodland/shrubland, `6` temperate seasonal forest, `7` temperate rainforest,

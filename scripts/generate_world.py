@@ -114,7 +114,11 @@ def main():
     res = export.export_world(
         out_dir, grid, z, land, args.seed, slope=fr.slope, drainage_km2=fr.acc,
         temperature_c=clim.temperature_c, precipitation_mm=clim.precipitation_mm,
-        biome=biome, width=width, params=params, metrics_summary=summary)
+        biome=biome, discharge=hyd.discharge, river_mask=hyd.river_mask,
+        river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
+        lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
+        lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
+        width=width, params=params, metrics_summary=summary)
     for name, path in res.files.items():
         size = pathlib.Path(path).stat().st_size / 1e6
         print(f"    {name:10s} {size:8.1f} MB  {pathlib.Path(path).name}")
