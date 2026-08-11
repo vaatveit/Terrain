@@ -241,6 +241,29 @@ Comparison against real DEMs still works: reproject SRTM/Copernicus tiles onto a
 
 A terrain that matches on slope histogram but fails Hack's law is exactly the failure mode of noise-only generation — it looks right in a screenshot and wrong the moment you follow a valley.
 
+### Measured reference values
+
+The metrics module is implemented and calibrated against two contrasting SRTM 1-arcsec tiles, each a 2048² window (~63 km across, 4.19M cells). These are the numbers generated terrain gets compared against.
+
+| | **east** — S. Appalachians | **west** — Olympics / N. Cascades | Published |
+|---|---|---|---|
+| Character | mature, humid, unglaciated fluvial | young, active margin, glaciated | |
+| Slope–area concavity θ | **0.516** (R² 0.89) | **0.404** (R² 0.88) | 0.4–0.6 |
+| Hack exponent h | **0.543** (R² 0.88) | **0.434** (R² 0.54) | 0.5–0.62 |
+| Horton Rb / Rl / Ra | 5.51 / 1.75 / 4.07 | 4.67 / 2.31 / 4.06 | 3–5 / 1.5–3.5 / 3–6 |
+| Drainage density | 0.744 km/km² | 0.480 km/km² | threshold-dependent |
+| Mean slope | 12.8° | 13.4° | |
+
+**Use the east tile as the strict reference.** It is unglaciated and lands inside the published band on every fluvial metric. The west tile falls low on θ and h, and its Hack fit is visibly worse (R² 0.54 against 0.88) — that is a real geomorphic signal rather than a measurement problem. Glacial erosion violates stream-power scaling: U-shaped valleys have flat floors and steep walls, which flattens the slope–area relation, and glacial troughs are shorter and blunter relative to basin area than fluvial networks. Its much lower drainage density says the same thing.
+
+**Three implementation traps, all of which produced badly wrong numbers before being fixed:**
+
+1. **Measure channel gradient over a flow-path baseline, not cell to cell.** SRTM stores int16 metres, so where a river drops less than 1 m across a 30 m cell the measured gradient is exactly zero — and after depression filling, a meaningless `+eps` residual instead. Those are precisely the highest-drainage-area cells, so they dominate the high-A end of the regression. Left in, they put θ at **1.87** instead of 0.52. Walking downstream until ≥0.5 km has accumulated fixes it, and degrades gracefully to cell-to-cell on a coarse mesh where one cell already exceeds the baseline.
+2. **Exclude cells lifted by the depression fill** from slope–area. They sit on an artificial ramp and cluster in valley bottoms.
+3. **Define "clipped basin" by the catchment, not the outlet.** Testing whether a basin's *outlet* lies on the window border excludes everything, because border cells are the sinks — in a 63 km window every drop of water leaves through an edge. Test whether anything *upstream* is edge-contaminated instead; interior sub-basins are complete by definition, since a catchment lies entirely upstream of its outlet.
+
+**Routing-scheme sensitivity, measured.** Re-running the east tile with D4 instead of D8 moves θ by 0.001 and h by 0.000, but Rb by 16% (5.51 → 6.40). So θ and h can be compared directly between D6-routed generated terrain and D8-routed real DEMs; **Horton ratios cannot** — they carry a routing-scheme bias and are only meaningful compared like-for-like.
+
 ---
 
 ## Implementation stack
