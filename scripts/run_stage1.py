@@ -39,7 +39,7 @@ def load_or_build(n):
     return g
 
 
-def render_equirect(grid, crust, path, width=2048):
+def render_equirect(grid, crust, path, width=2048, title=None):
     """Nearest-cell resample of the mesh onto an equirectangular image."""
     import matplotlib
     matplotlib.use("Agg")
@@ -69,8 +69,9 @@ def render_equirect(grid, crust, path, width=2048):
 
     fig, ax = plt.subplots(figsize=(width / 200, height / 200), dpi=200)
     ax.imshow(img, extent=(-180, 180, -90, 90), interpolation="nearest")
-    ax.set_title(f"Stage 1 (throwaway) — land fraction {crust.land_fraction:.1%}, "
-                 f"sea level {crust.sea_level_m:,.0f} m", fontsize=8)
+    ax.set_title(title or (f"Stage 1 (throwaway) — land fraction "
+                           f"{crust.land_fraction:.1%}, sea level "
+                           f"{crust.sea_level_m:,.0f} m"), fontsize=8)
     ax.set_xticks(range(-180, 181, 60))
     ax.set_yticks(range(-90, 91, 30))
     ax.tick_params(labelsize=6)

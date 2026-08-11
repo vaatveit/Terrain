@@ -111,6 +111,64 @@ def slope_area(fr: flow.FlowResult, is_channel, bins=40) -> tuple[Regression, np
     return reg, cx, cy
 
 
+@njit(cache=True)
+def _propagate_root(order, rec, root):
+    """Label every cell with the outlet it ultimately drains to."""
+    n = order.shape[0]
+    for t in range(n):
+        c = order[t]
+        r = rec[c]
+        root[c] = c if r == c else root[r]
+    return root
+
+
+def basin_labels(fr: flow.FlowResult) -> np.ndarray:
+    root = np.empty(fr.rec.shape[0], dtype=np.int32)
+    return _propagate_root(fr.order, fr.rec, root)
+
+
+def slope_area_by_basin(fr: flow.FlowResult, is_channel, area, min_channel_cells=400,
+                        max_basins=40) -> tuple[np.ndarray, np.ndarray]:
+    """Concavity measured separately within each large basin.
+
+    Measuring theta over a whole planet at once is not the same statistic as the published
+    0.4-0.6, and not comparable to a DEM window either. Steady-state stream power gives
+    S = (U/K)^(1/n) * A^(-m/n) with U the LOCAL uplift, so theta = m/n only holds where
+    uplift is roughly uniform. Globally it is not: after evolution, high-uplift regions
+    have become headwater divides (small A, steep) and low-uplift regions lowlands (large
+    A, gentle), so U ends up anti-correlated with A and that anti-correlation lands
+    directly in the regression. Measured, this pushed theta from 0.45 to 0.97 on an
+    otherwise identical run -- the model was right and the measurement was wrong.
+
+    A single basin spans a much narrower range of uplift, which is why published values are
+    per-basin, and why the SRTM references here are single 63 km windows.
+
+    Returns (theta per basin, basin drainage area km^2), largest basins first.
+    """
+    roots = basin_labels(fr)
+    ch_roots = roots[is_channel]
+    if ch_roots.size == 0:
+        return np.empty(0), np.empty(0)
+
+    uniq, counts = np.unique(ch_roots, return_counts=True)
+    keep = uniq[counts >= min_channel_cells]
+    if keep.size == 0:
+        return np.empty(0), np.empty(0)
+    keep = keep[np.argsort(fr.acc[keep])[::-1]][:max_basins]
+
+    thetas, areas = [], []
+    for r in keep:
+        m = is_channel & (roots == r) & (fr.ch_slope > 0) & (fr.step > 0) & ~fr.raised
+        if m.sum() < min_channel_cells:
+            continue
+        cx, cy = _log_bin_median(fr.acc[m], fr.ch_slope[m], bins=25)
+        reg = _loglog_fit(cx, cy)
+        if np.isfinite(reg.exponent) and reg.r2 > 0.5:
+            thetas.append(-reg.exponent)
+            areas.append(float(fr.acc[r]))
+    return np.asarray(thetas), np.asarray(areas)
+
+
 def hacks_law(fr: flow.FlowResult, is_channel, valid, min_area_km2, max_points=200_000,
               seed=0) -> Regression:
     """Hack's law: main-channel length L ~ A^h, h ~ 0.57. Pure noise fails this badly.
@@ -277,10 +335,17 @@ def report(z, nbr, arc_dist, area, is_sink, is_border=None, channel_threshold_km
     hack = hacks_law(fr, is_channel, valid, hack_min_area_km2)
     horton = horton_ratios(fr, is_channel, valid)
     hyp_x, hyp_y, hyp_int = hypsometry(fr.filled, area)
+    basin_theta, basin_area = slope_area_by_basin(fr, is_channel, area)
 
     return {
         "label": label,
         "cells": int(z.shape[0]),
+        "basin_theta_median": float(np.median(basin_theta)) if basin_theta.size else np.nan,
+        "basin_theta_p25": float(np.percentile(basin_theta, 25)) if basin_theta.size else np.nan,
+        "basin_theta_p75": float(np.percentile(basin_theta, 75)) if basin_theta.size else np.nan,
+        "basin_count": int(basin_theta.size),
+        "_basin_theta": basin_theta,
+        "_basin_area": basin_area,
         "interior_fraction": float(valid.mean()),
         "channel_cells": int(is_channel.sum()),
         "relief_m": float(fr.filled.max() - fr.filled.min()),

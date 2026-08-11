@@ -322,8 +322,14 @@ class FlowResult:
     raised: np.ndarray   # (N,) bool, cell sits inside a filled depression
 
 
-def route(z, nbr, arc_dist, area, is_sink, slope_baseline_km=0.5) -> FlowResult:
-    """Full flow-routing stack. ~1.1 s at 6.2M cells."""
+def route(z, nbr, arc_dist, area, is_sink, slope_baseline_km=0.5,
+          metrics=True) -> FlowResult:
+    """Full flow-routing stack. ~1.1 s at 6.2M cells.
+
+    `metrics=False` skips the longest-upstream-path and flow-path-slope fields, which only
+    Hack's law and the slope-area regression need. The erosion loop calls this every
+    timestep and uses neither, so skipping them is worth it there.
+    """
     z = np.ascontiguousarray(z, dtype=np.float32)
     n = z.shape[0]
     if nbr.shape[0] != n or area.shape[0] != n:
@@ -352,8 +358,12 @@ def route(z, nbr, arc_dist, area, is_sink, slope_baseline_km=0.5) -> FlowResult:
     flow_accumulate(order, rec, area, acc)
     receiver_step(rec, nbr, arc_dist, step)
     receiver_slope(filled, rec, step, slope)
-    flow_path_slope(filled, rec, step, np.float32(slope_baseline_km), ch_slope)
-    longest_upstream_path(order, rec, don_ptr, don, arc_dist, nbr, up_len)
+    if metrics:
+        flow_path_slope(filled, rec, step, np.float32(slope_baseline_km), ch_slope)
+        longest_upstream_path(order, rec, don_ptr, don, arc_dist, nbr, up_len)
+    else:
+        ch_slope[:] = 0.0
+        up_len[:] = 0.0
 
     # Cells the fill lifted sit on an artificial +eps ramp, so their gradient is a fiction.
     # They cluster in valley bottoms -- i.e. at high drainage area -- so leaving them in

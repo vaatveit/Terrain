@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2, tuned until slope–area concavity lands in 0.4–0.6** ← *next* → *then* the real Stage 1, by which point you know which of its outputs Stage 2 actually consumes.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ (per-basin θ = 0.464, inside the 0.4–0.6 band) → *next:* the real Stage 1, now that Stage 2 has shown which of its outputs actually matter — chiefly the uplift field, whose spatial *contrast* turned out to drive both realism and measurability.
 
 Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
@@ -282,6 +282,39 @@ The throwaway Stage 1 (3D warped fBm thickness → isostasy → solved sea level
 **This is the number Stage 2 has to beat, and it sharpens one of this document's own claims.** The survey asserted above that pure noise "fails Hack's law badly." Measured, it does not: h lands within 14% of real terrain, close enough that Hack's law alone would not tell you erosion was missing. What collapses is **slope–area concavity — 0.106 against 0.516**. Noise-only channels barely steepen upstream at all, because nothing has carved them; there is no mechanism in an fBm field that makes gradient scale with contributing area.
 
 So the ranking for the testbed is: **slope–area concavity is the primary discriminator, Hack's exponent is a secondary confirmation, and Horton ratios are near-useless for this purpose** — noise-only Rb (5.98) is no further from the published band than real Appalachian terrain (5.51).
+
+### Stage 2 result: erosion closes the gap
+
+400 timesteps × 0.5 Myr = 200 Myr at n=785, implicit stream power (`K=2.5e-6, m=0.45, n=1`) plus hillslope diffusion and belt-like uplift. 435 s, converged to mean |dz| = 0.39 m/Myr.
+
+| | Stage 1 (noise) | **Stage 2 (eroded)** | SRTM east |
+|---|---|---|---|
+| Slope–area θ, per-basin | 0.124 | **0.464** | 0.516 |
+| Slope–area θ, whole planet | 0.094 | **0.498** | 0.516 |
+| Hack exponent h | 0.464 | **0.543** | 0.543 |
+| Hypsometric integral | 0.366 | 0.196 | 0.217 |
+| Horton Rb | 5.84 | 5.42 | 5.51 |
+| Peak elevation | 623 m | 6,273 m | — |
+
+θ moved from 0.094 to 0.498 and Hack's exponent landed on 0.543, matching the SRTM reference exactly. **The document's central claim — noise gives you shape, erosion gives you realism — is now a measured result rather than an assertion.**
+
+**Solver validation.** With *uniform* uplift the recovered θ equals `m/n` to ±0.001 (m=0.45 → 0.451, m=0.60 → 0.600, R² = 1.000). That is the strongest available end-to-end check: it only comes out right if the implicit solver, the flow routing, the spherical cell areas and the metrics all agree.
+
+### Four things measured while getting there
+
+**1. Uplift contrast controls whether θ means anything.** Steady-state slope goes as `U^(1/n)`, so where uplift varies spatially the uplift pattern competes with the `A^(-m/n)` signal in the slope–area regression. Holding everything else fixed at n=128:
+
+| craton-to-orogen contrast | 1× | 2× | 4× | 10× | 50× |
+|---|---|---|---|---|---|
+| measured θ (true m/n = 0.45) | 0.453 | 0.452 | **0.512** | 0.690 | 0.893 |
+
+A 50× contrast varies slope 50× on its own, while `A^-0.45` spans only ~22× across three decades of drainage area — so the uplift pattern wins and θ stops measuring `m/n`. Earth's real contrast is 50× or more, and **real Earth measured this way would be just as inflated**: published θ values come from tectonically coherent regions, not whole continents. Two consequences: measure θ per-basin, not planet-wide; and when comparing against published values, keep the generated world's uplift contrast moderate (~4×) or compare only against other generated worlds.
+
+**2. `K` is resolution-dependent; `θ` is not.** Steady-state slope is `(U/K)^(1/n)`, so `K` sets relief while leaving the exponent untouched. But finer grids resolve smaller headwater drainage areas, where steady-state slope is steepest, so the same `K` yields far more total relief: `K=1e-6` gave 5.8 km peaks at n=128 and **17.6 km at n=785**. Retune `K` whenever the resolution changes — this is the concrete form of the doc's earlier warning that erosion coefficients don't transfer between resolutions.
+
+**3. Hillslope diffusion does almost no direct work here, but is still not ignorable.** At ~10 km cells the convex-hilltop scale is far below the grid, and one step at the default `D` moves at most 0.014 m against 4 km of relief. Yet because it biases every step in the same direction it eventually tips receiver choices at divides, and a flipped divide re-routes a whole sub-basin: over 100 steps the median difference from a `D=0` run is 0.014 m and the maximum is **720 m**. A small persistent forcing is not a small effect.
+
+**4. Landscape evolution here is *not* chaotic — the steady state is a strong attractor.** A one-off 1 cm random perturbation leaves no trace after 100 steps; not a small difference, but bit-identical output. The implicit solve contracts deviations by `1/(1+F)` each step, so a transient shrinks by ~1e-10 over 100 steps and vanishes below float32 resolution. This is good news for reproducibility, but it does *not* retire the parallel-reduction determinism concern: a non-deterministic reduction biases every step, which is the persistent case in point 3, not the transient one.
 
 ---
 
