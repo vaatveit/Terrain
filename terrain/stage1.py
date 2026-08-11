@@ -186,6 +186,139 @@ def generate_crust(grid, params: CrustParams = None, seed: int = 0,
     )
 
 
+@dataclasses.dataclass
+class TectonicCrust(Crust):
+    """Everything `Crust` carries, plus what the plates produced."""
+    plates: object = None
+    plate_id: np.ndarray = None
+    boundary_type: np.ndarray = None
+    boundary_stress: np.ndarray = None
+    margin_class: np.ndarray = None
+    uplift: np.ndarray = None
+
+
+def generate_crust_tectonic(grid, params: CrustParams = None,
+                            plate_params=None, seed: int = 0,
+                            uplift_contrast_cap=None, verbose: bool = False):
+    """Full Stage 1: crust from noise, tectonics from plates, elevation from isostasy.
+
+    The ordering is the load-bearing decision. Crust type comes first and independently,
+    from 3D noise; plates are laid over it afterwards and never decide where continents go.
+    Assigning crust type per plate is geologically wrong -- six of Earth's seven major plates
+    carry both types -- and it gives every continent a Voronoi silhouette at whole-continent
+    scale.
+
+    Sub-steps, following the spec in terrain-algorithms.md:
+      1 build_thickness   warped 3D noise -> continental/oceanic thickness
+      2 warp_margins      (folded into 1: the domain warp is applied to the whole field)
+      3 seed_plates       Poisson-disk on the sphere, Lloyd-relaxed
+      4 partition         spherical Voronoi
+      5 assign_motion     Euler pole and rate per plate
+      6 compute_boundaries  relative velocity -> convergent / divergent / transform
+      7 apply_tectonic_thickness  crustal root under orogens, thinning at rifts
+      8 isostatic_elevation
+      9 resolve_sea_level  area-weighted quantile for target land fraction
+     10 prune_islands
+     11 classify_margins   passive vs active coast
+    and derive_uplift as a separate operator, so uplift models can be swapped without
+    regenerating plates.
+    """
+    from terrain import plates as plates_mod
+
+    p = params or CrustParams()
+    pp = plate_params or plates_mod.PlateParams()
+    n = grid.cell_count
+    xyz = np.ascontiguousarray(grid.xyz)
+
+    def log(msg):
+        if verbose:
+            print(f"  {msg}", flush=True)
+
+    perm_crust = noise.permutation(hash(("crust", seed)) & 0xFFFFFFFF)
+    perm_relief = noise.permutation(hash(("relief", seed)) & 0xFFFFFFFF)
+
+    # 1-2. Continentality, independent of the plates.
+    field = np.empty(n, dtype=np.float64)
+    noise.warped_fbm(xyz, perm_crust, noise.GRAD3, p.crust_octaves, p.crust_frequency,
+                     2.0, 0.5, p.warp_amp, p.warp_frequency, field)
+    thr = area_quantile(field, grid.area, 1.0 - p.continental_fraction)
+    c = _smoothstep(thr - p.transition, thr + p.transition, field)
+    is_continental = c > 0.5
+    log(f"continentality: {is_continental.mean():.1%} of surface")
+
+    relief = np.empty(n, dtype=np.float64)
+    noise.fbm(xyz, perm_relief, noise.GRAD3, p.relief_octaves, p.relief_frequency,
+              2.0, 0.5, relief)
+    thickness = (p.t_oceanic_km + c * (p.t_continental_km - p.t_oceanic_km)
+                 + c * relief * p.relief_km)
+    density = p.rho_oceanic + c * (p.rho_continental - p.rho_oceanic)
+
+    # 3-6. Plates.
+    pl = plates_mod.build_plates(grid, pp, seed)
+    n_bound = int((pl.boundary_type != plates_mod.NONE).sum())
+    log(f"{pl.sites.shape[0]} plates, {n_bound:,} boundary cells")
+
+    # 7. Crustal root under orogens; thinning at rifts.
+    conv = pl.boundary_type != plates_mod.NONE
+    scale = np.percentile(np.abs(pl.boundary_stress[conv]), 90) if conv.any() else 1.0
+    near = pl.nearest_boundary
+    near_type = np.zeros(n, dtype=np.uint8)
+    near_stress = np.zeros(n, dtype=np.float32)
+    ok = near >= 0
+    near_type[ok] = pl.boundary_type[near[ok]]
+    near_stress[ok] = pl.boundary_stress[near[ok]]
+    strength = np.clip(np.abs(near_stress) / max(scale, 1e-6), 0.0, 1.5)
+    decay = np.exp(-pl.boundary_dist_km / pp.orogen_decay_km)
+
+    thickness = thickness + np.where(
+        near_type == plates_mod.CONVERGENT,
+        pp.convergent_thickening_km * decay * strength * c, 0.0)
+    thickness = thickness - np.where(
+        near_type == plates_mod.DIVERGENT,
+        pp.divergent_thinning_km * decay * strength * c, 0.0)
+    thickness = np.maximum(thickness, 1.0)
+    log("tectonic thickening applied")
+
+    # 8-10. Isostasy, sea level, pruning -- identical to the throwaway path.
+    elevation = thickness * (1.0 - density / p.rho_mantle) * 1000.0
+    datum = area_quantile(elevation.astype(np.float32), grid.area,
+                          1.0 - p.target_land_fraction)
+    elevation = (elevation - datum).astype(np.float32)
+    land = elevation > 0
+
+    labels = np.empty(n, dtype=np.int32)
+    stack = np.empty(n, dtype=np.int32)
+    n_lab = label_components(land, np.ascontiguousarray(grid.neighbours), labels, stack)
+    sizes = np.zeros(n_lab, dtype=np.float64)
+    np.add.at(sizes, labels[land], grid.area[land].astype(np.float64))
+    too_small = sizes < p.min_island_area_km2
+    land[land & too_small[np.clip(labels, 0, None)]] = False
+    kept = np.sort(sizes[~too_small])[::-1]
+    log(f"{n_lab:,} landmasses, {int(too_small.sum()):,} pruned")
+
+    # 11 + uplift.
+    margin = plates_mod.classify_margins(grid, land, pl)
+    uplift = plates_mod.derive_uplift(pl, is_continental, land, pp,
+                                      contrast_cap=uplift_contrast_cap)
+    log(f"uplift {uplift[land].min():.0f}..{uplift[land].max():.0f} m/Myr")
+
+    return TectonicCrust(
+        crust_thickness=thickness.astype(np.float32),
+        crust_density=density.astype(np.float32),
+        elevation=elevation,
+        land_mask=land,
+        sea_level_m=0.0,
+        land_fraction=float(grid.area[land].sum() / grid.area.sum()),
+        landmass_areas=kept,
+        plates=pl,
+        plate_id=pl.plate_id,
+        boundary_type=pl.boundary_type,
+        boundary_stress=pl.boundary_stress,
+        margin_class=margin,
+        uplift=uplift,
+    )
+
+
 def isostasy_check(crust: Crust, area) -> dict:
     """Mean continental surface minus mean abyssal depth.
 

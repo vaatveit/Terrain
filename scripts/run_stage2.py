@@ -55,6 +55,12 @@ def main():
     ap.add_argument("--G", type=float, default=0.0)
     ap.add_argument("--dt", type=float, default=0.5, help="timestep, Myr")
     ap.add_argument("--uplift", type=float, default=800.0, help="max uplift, m/Myr")
+    ap.add_argument("--tectonic", action="store_true",
+                    help="use the full Stage 1 (plates, Euler poles, derived uplift) "
+                         "instead of the throwaway crust and stand-in uplift")
+    ap.add_argument("--contrast-cap", type=float, default=None,
+                    help="bound craton-to-orogen uplift contrast; ~4 keeps theta "
+                         "comparable to published values, None is realistic tectonics")
     ap.add_argument("--render", action="store_true")
     args = ap.parse_args()
 
@@ -63,18 +69,33 @@ def main():
     print(f"  {grid.cell_count:,} cells, spacing "
           f"{grid.arc_dist[grid.neighbours >= 0].mean():.2f} km")
 
-    print("\nStage 1...")
-    crust = stage1.generate_crust(grid, seed=args.seed)
+    print(f"\nStage 1 ({'tectonic' if args.tectonic else 'throwaway'})...")
+    if args.tectonic:
+        from terrain import plates as plates_mod
+        crust = stage1.generate_crust_tectonic(
+            grid, seed=args.seed, uplift_contrast_cap=args.contrast_cap, verbose=True)
+        uplift = crust.uplift
+        bt = crust.boundary_type
+        print(f"  boundaries: convergent {int((bt == plates_mod.CONVERGENT).sum()):,}  "
+              f"divergent {int((bt == plates_mod.DIVERGENT).sum()):,}  "
+              f"transform {int((bt == plates_mod.TRANSFORM).sum()):,}")
+        mc = crust.margin_class
+        print(f"  margins: passive {int((mc == plates_mod.PASSIVE).sum()):,}  "
+              f"active {int((mc == plates_mod.ACTIVE).sum()):,}")
+    else:
+        crust = stage1.generate_crust(grid, seed=args.seed)
+        uplift = stage2.uplift_field(grid, crust.land_mask, seed=args.seed,
+                                     u_max_m_per_myr=args.uplift)
     is_ocean = ~crust.land_mask
     print(f"  land {crust.land_fraction:.1%}, relief "
           f"{crust.elevation.min():,.0f}..{crust.elevation.max():,.0f} m")
 
     before = measure(grid, crust.elevation, is_ocean, "stage1")
 
-    uplift = stage2.uplift_field(grid, crust.land_mask, seed=args.seed,
-                                 u_max_m_per_myr=args.uplift)
-    print(f"  uplift {uplift[crust.land_mask].min():.0f}.."
-          f"{uplift[crust.land_mask].max():.0f} m/Myr")
+    u_land = uplift[crust.land_mask]
+    print(f"  uplift {u_land.min():.0f}..{u_land.max():.0f} m/Myr "
+          f"(contrast {u_land.max() / max(u_land.min(), 1e-9):.0f}x, "
+          f"mean {u_land.mean():.0f})")
 
     p = stage2.LemParams(K=args.K, m=args.m, n=args.n_exp, D=args.D, G=args.G,
                          dt_myr=args.dt)

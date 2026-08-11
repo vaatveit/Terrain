@@ -224,12 +224,23 @@ def uplift_field(grid, land_mask, seed=0, u_max_m_per_myr=500.0, craton_floor=0.
 
 
 def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
-           n_steps=400, verbose=False, report_every=50) -> EvolveResult:
-    """Run the landscape evolution model to near steady state."""
+           n_steps=400, verbose=False, report_every=50,
+           base_level_m=0.0) -> EvolveResult:
+    """Run the landscape evolution model to near steady state.
+
+    `base_level_m` is the elevation ocean cells present to the land draining into them, and
+    it must be SEA LEVEL, not the sea floor. Holding ocean cells at their Stage 1
+    bathymetric depth instead lets coastal rivers grade toward the abyssal plain 4 km down,
+    so continents incise straight past zero and drown: measured land minimum -1371 m, with
+    only the orogen belts left above water. Subaerial erosion grades to sea level. The true
+    bathymetry is restored on the way out, since ocean cells never erode anyway.
+    """
     p = params or LemParams()
     n_cells = grid.cell_count
 
     z = np.ascontiguousarray(z0, dtype=np.float64).copy()
+    ocean_z0 = z[np.ascontiguousarray(is_ocean)].copy()
+    z[np.ascontiguousarray(is_ocean)] = base_level_m
     nbr = np.ascontiguousarray(grid.neighbours)
     arc = np.ascontiguousarray(grid.arc_dist)
     edge = np.ascontiguousarray(grid.edge_len)
@@ -281,6 +292,7 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
                   f"mean |dz| {rate[land].mean():8.2f} m/Myr  "
                   f"max z {z[land].max():7.0f} m", flush=True)
 
+    z[is_fixed] = ocean_z0  # put the real bathymetry back
     return EvolveResult(z.astype(np.float32), n_steps,
                         time.perf_counter() - t_start, history)
 

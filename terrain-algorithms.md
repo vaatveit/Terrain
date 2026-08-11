@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ (per-basin θ = 0.464, inside the 0.4–0.6 band) → *next:* the real Stage 1, now that Stage 2 has shown which of its outputs actually matter — chiefly the uplift field, whose spatial *contrast* turned out to drive both realism and measurability.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → *next:* stage 3, the climate pass.
 
 Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
@@ -314,7 +314,30 @@ A 50× contrast varies slope 50× on its own, while `A^-0.45` spans only ~22× a
 
 **3. Hillslope diffusion does almost no direct work here, but is still not ignorable.** At ~10 km cells the convex-hilltop scale is far below the grid, and one step at the default `D` moves at most 0.014 m against 4 km of relief. Yet because it biases every step in the same direction it eventually tips receiver choices at divides, and a flipped divide re-routes a whole sub-basin: over 100 steps the median difference from a `D=0` run is 0.014 m and the maximum is **720 m**. A small persistent forcing is not a small effect.
 
-**4. Landscape evolution here is *not* chaotic — the steady state is a strong attractor.** A one-off 1 cm random perturbation leaves no trace after 100 steps; not a small difference, but bit-identical output. The implicit solve contracts deviations by `1/(1+F)` each step, so a transient shrinks by ~1e-10 over 100 steps and vanishes below float32 resolution. This is good news for reproducibility, but it does *not* retire the parallel-reduction determinism concern: a non-deterministic reduction biases every step, which is the persistent case in point 3, not the transient one.
+**4. Landscape evolution here is *not* chaotic — the steady state is a strong attractor.** A one-off 1 cm random perturbation decays to ~0.018 m within 25 steps and to bit-identical output by 100. The implicit solve contracts deviations by `1/(1+F)` each step, so a transient shrinks geometrically and vanishes into float32 rounding. This is good news for reproducibility, but it does *not* retire the parallel-reduction determinism concern: a non-deterministic reduction biases every step, which is the persistent case in point 3, not the transient one.
+
+### Stage 1 proper: plates, Euler poles, derived uplift
+
+Implemented per the spec, with crust type still generated from noise independently of the plate layout. At n=785, 400 × 0.5 Myr:
+
+| | throwaway Stage 1 | **tectonic Stage 1** | SRTM east |
+|---|---|---|---|
+| Slope–area θ, per-basin | 0.464 | **0.452** (IQR 0.450–0.454) | 0.516 |
+| Hack exponent h | 0.543 | **0.529** | 0.543 |
+| Horton Rb | 5.42 | 5.44 | 5.51 |
+| Peak elevation | 6,273 m | 8,369 m | — |
+| Pre-erosion relief | 623 m | 3,835 m | — |
+
+The pre-erosion figure is the point of adding tectonics: crustal roots under orogens (thickness reaching 51 km) give real isostatic relief before a single erosion step, where the throwaway had only ~600 m of noise.
+
+**Four things this stage got wrong before it got them right**, all now pinned by tests:
+
+- **Rivers must grade to sea level, not to the sea floor.** Holding ocean cells at their Stage 1 bathymetric depth let coastal rivers incise toward the abyssal plain 4 km down. Continents drowned: land minimum −1,371 m, with only the orogen belts left above water while every metric still read perfectly. The metrics cannot catch this — it is a base-level error, not a network error.
+- **Uplift terms must be clamped before scaling.** The collision and arc contributions overlap, so summing them unbounded pushed peak uplift to 4,943 m/Myr against a 3,000 cap, and peaks to 19.3 km.
+- **Random Euler poles produce too much strike-slip.** Classifying transform whenever tangential motion exceeds normal gave 44% transform against Earth's ~20%: a real plate system's motion is organised by the ridges and trenches that create the plates, and random poles are not. Requiring tangential to exceed 2.5× normal restores a plausible 39/37/25 convergent/divergent/transform mix.
+- **Warp the plate boundaries, not just the crust field.** Raw spherical Voronoi boundaries are exact great-circle arcs, and since orogens track boundaries, mountain ranges rendered as dead-straight lines. Domain-warping the Voronoi *query position* bends them into arcs without changing the partition's topology.
+
+**And a refinement to the uplift-contrast finding above.** The tectonic uplift field has a craton-to-orogen contrast of ~250×, far past the 4× where smooth-noise uplift wrecked the concavity measurement — yet per-basin θ comes out at 0.452 with an IQR of 0.004. The reason is that what matters is uplift variation *within* a basin, not the global ratio. Tectonic uplift clamps most of the continent to a flat cratonic floor with sharp belt transitions, so most basins sit in genuinely uniform `U`; smooth fBm varied continuously everywhere, contaminating every basin. **Realistic tectonics is better for the metric than a gentler but smoother uplift field** — so the `contrast_cap` knob is available but not needed by default.
 
 ---
 

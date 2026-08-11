@@ -143,7 +143,7 @@ def test_uplift_and_erosion_balance_at_steady_state():
     assert final_rate < 0.05 * 300.0, f"not converged: {final_rate:.1f} m/Myr vs U=300"
 
 
-def test_ocean_is_held_as_base_level():
+def test_ocean_bathymetry_is_preserved():
     g = build_goldberg(48)
     crust = stage1.generate_crust(g, seed=7)
     is_ocean = ~crust.land_mask
@@ -152,6 +152,28 @@ def test_ocean_is_held_as_base_level():
 
     res = stage2.evolve(g, z0, uplift, is_ocean, stage2.LemParams(), n_steps=20)
     assert np.array_equal(res.elevation[is_ocean], z0[is_ocean])
+
+
+def test_land_grades_to_sea_level_not_to_the_sea_floor():
+    """Rivers must stop at sea level. Grading to the abyssal plain drowns the continents.
+
+    The ocean floor sits ~4 km below sea level. If ocean cells present that depth to the
+    land draining into them, coastal rivers keep incising past zero and cratons erode away
+    entirely -- measured land minimum -1371 m, with only orogen belts left above water.
+    """
+    g = build_goldberg(64)
+    crust = stage1.generate_crust(g, seed=11)
+    is_ocean = ~crust.land_mask
+    land = crust.land_mask
+    # Low uplift, long run: the case where over-incision shows up most clearly.
+    uplift = np.where(land, 30.0, 0.0).astype(np.float32)
+
+    res = stage2.evolve(g, crust.elevation, uplift, is_ocean,
+                        stage2.LemParams(dt_myr=1.0), n_steps=200)
+
+    drowned = (res.elevation[land] < 0).mean()
+    assert drowned < 0.10, f"{drowned:.1%} of land eroded below sea level"
+    assert res.elevation[land].min() > -100.0
 
 
 def test_no_cell_incises_below_its_receiver():
@@ -243,13 +265,14 @@ def test_diffusion_does_almost_no_direct_work_at_continental_resolution():
         f"{relief:.0f} m of relief; if this grows the docstring needs revisiting")
 
 
-def test_transient_perturbations_decay_completely():
-    """A one-off 1 cm nudge leaves NO trace after 100 steps -- not small, exactly zero.
+def test_transient_perturbations_decay_away():
+    """A one-off 1 cm nudge leaves essentially no trace, and less of one the longer you run.
 
     Worth pinning down, because the intuition that landscape evolution is chaotic is only
     half right. The implicit solve contracts deviations by 1/(1+F) every step, so a transient
-    perturbation shrinks by ~1e-10 over 100 steps and vanishes below float32 resolution.
-    The steady state is a strong attractor and reproducibility is robust to one-off noise.
+    shrinks geometrically and disappears into float32 rounding. Measured here: ~0.018 m of
+    residual after 25 steps against 4 km of relief, and bit-identical output by 100 steps for
+    most perturbations. The steady state is a strong attractor.
 
     What the model IS sensitive to is *persistent* forcing, which accumulates until it flips
     a receiver at a divide and reassigns a whole sub-basin -- see the diffusion test. So the
@@ -263,13 +286,23 @@ def test_transient_perturbations_decay_completely():
     p = stage2.LemParams(D=0.0)
     land = crust.land_mask
 
-    base = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=100)
     rng = np.random.default_rng(0)
     nudged_z = crust.elevation.copy()
     nudged_z[land] += (rng.standard_normal(int(land.sum())) * 0.01).astype(np.float32)
-    nudged = stage2.evolve(g, nudged_z, uplift, is_ocean, p, n_steps=100)
 
-    assert np.array_equal(base.elevation[land], nudged.elevation[land])
+    residual = {}
+    for steps in (25, 150):
+        base = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=steps)
+        nudged = stage2.evolve(g, nudged_z, uplift, is_ocean, p, n_steps=steps)
+        delta = np.abs(base.elevation[land] - nudged.elevation[land])
+        relief = float(base.elevation[land].max() - base.elevation[land].min())
+        residual[steps] = (float(delta.max()), relief)
+
+    for steps, (worst, relief) in residual.items():
+        assert worst < 1e-4 * relief, (
+            f"after {steps} steps a 1 cm nudge still shows {worst:.3f} m "
+            f"against {relief:.0f} m of relief")
+    assert residual[150][0] <= residual[25][0], "the transient must keep decaying"
 
 
 def test_persistent_forcing_reorganises_divides():
