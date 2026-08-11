@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → *next:* stage 8 amplification, or stage 9 export — the latter being what produces the static file this project set out to make.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ (IDW resampling plus slope- and drainage-modulated detail) → *next:* **stage 9 export**, the last one, and what produces the static file this project set out to make.
 
 ### Stage 5: secondary erosion — mostly sub-grid
 
@@ -259,6 +259,21 @@ Verified on constructed basins, holding geometry and rainfall fixed and varying 
 Closed basins remain **rare** in generated worlds — 0.03% of land against Earth's roughly 1% lake cover — because fluvial erosion efficiently removes depressions and continental rifts are uncommon. The endorheic machinery is therefore unit-tested on constructed basins rather than on emergent ones.
 
 Sub-grid and deliberately absent: meander migration (0.1–10 km wavelength). River *width* is carried as a per-cell attribute (`w ∝ Q^0.5`, the standard hydraulic-geometry relation) because it is wanted for rendering, but no river is geometrically resolved at ~10 km cells — the Amazon at its mouth would be one cell across.
+
+### Stage 8: amplification
+
+Simulate coarse, add detail afterwards — which only means something if there is a finer target. The mesh is ~9.8 km at n=785 and the export raster is 8192×4096 (~4.9 km/px at the equator), so detail lives in that gap.
+
+**Two separate problems, worth keeping apart.** Nearest-cell sampling of a hex mesh renders the hexagons — flat-shaded cells with visible seams, which reads as a rendering bug rather than as terrain. Inverse-distance weighting over the three nearest cells cuts measured high-frequency energy by 3× before any detail is considered. Only then does fractal detail go on top.
+
+**Modulation is the whole point; uniform noise over a landscape is the most obvious tell of a procedural map.** Amplitude is driven by slope and drainage area, giving (measured, in metres) 107 on steep ground, 35 on plains, 1 on trunk valley floors, 16 under the sea. A valley floor is smooth because sediment is filling it, not because nothing is happening there.
+
+Two calibration traps, both of which zeroed the detail almost everywhere on the first attempt:
+
+- **The valley-smoothing scale must be a large-river drainage area, not a few cells.** At 3,000 km² it was roughly four cells of drainage at n=256, and it smoothed the entire channel network flat.
+- **The slope term needs a floor.** Without one, amplitude reaches exactly zero on plains, on valley floors, *and across the whole sea bed* — base level is flat, so its slope is zero. Real plains have texture.
+
+**Never feed amplification back onto the simulation mesh.** Detail perturbs elevations, which changes steepest-descent receivers, which rewires the drainage network the previous five stages exist to get right. Measured: slope–area concavity moves **0.512 → 0.603** and ~2,300 spurious channel cells appear. Amplification is an output-side operation and the metrics belong on the pre-amplification field. A test pins this so the pipeline does not get "simplified" by amplifying in place.
 
 ### Stage 7: biomes
 
