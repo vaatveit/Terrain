@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ (IDW resampling plus slope- and drainage-modulated detail) → *next:* **stage 9 export**, the last one, and what produces the static file this project set out to make.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ → **Stage 9 export** ✅. **The pipeline is complete.** `scripts/generate_world.py` runs all nine stages end to end and writes a georeferenced world; 167 tests pass.
 
 ### Stage 5: secondary erosion — mostly sub-grid
 
@@ -274,6 +274,19 @@ Two calibration traps, both of which zeroed the detail almost everywhere on the 
 - **The slope term needs a floor.** Without one, amplitude reaches exactly zero on plains, on valley floors, *and across the whole sea bed* — base level is flat, so its slope is zero. Real plains have texture.
 
 **Never feed amplification back onto the simulation mesh.** Detail perturbs elevations, which changes steepest-descent receivers, which rewires the drainage network the previous five stages exist to get right. Measured: slope–area concavity moves **0.512 → 0.603** and ~2,300 spurious channel cells appear. Amplification is an output-side operation and the metrics belong on the pre-amplification field. A test pins this so the pipeline does not get "simplified" by amplifying in place.
+
+### Stage 9: export
+
+Two artifacts. **Native:** field arrays plus `n` and the seed, at under 40 bytes per cell — the grid is regenerable from `n`, so storing geometry alongside would be paying 650 MB for nothing. **Static:** an equirectangular GeoTIFF at 8192×4096 in EPSG:4326, plus a two-band climate raster and a `uint8` biome raster. Biomes are sampled nearest, never interpolated — the average of "tundra" and "savanna" is not a biome. A manifest records parameters, seed and measured metrics beside the data, because a world whose provenance is lost is not reproducible even when the generator is deterministic.
+
+**Fidelity is the export's own test**, and it is a different question from realism. Comparing raster pixels against the mesh field at the same coordinates gives mean |error| 4.9 m and p99 22 m against 12,412 m of relief — exactly the sub-grid detail Stage 8 adds, and no more.
+
+**The GeoTIFF choice was justified by "the metrics code runs unmodified on both generated and real terrain". That is true, and less useful than it sounds.** The export loads, routes and measures through the same path as the SRTM tiles with no code change. But the numbers are not comparable to the SRTM references, and the reason is a resolution gap rather than a defect: the export is ~5 km per pixel against SRTM's 30 m, so no window is simultaneously wide enough to span three decades of drainage area and small enough to avoid serious equirectangular distortion. **Judge a generated world by the mesh metrics; use the round-trip to confirm the file is well-formed.**
+
+Two things had to be right before the round-trip produced anything sane at all, and both gave a concavity of **−0.081** — slope rising with drainage area, which is not a landscape:
+
+- **The window must avoid the poles.** A window tall enough to reach one is measuring a coordinate singularity; equirectangular cells collapse to zero width there and the D8 graph across the pole is meaningless.
+- **The sea must be declared as base level.** A raster carrying bathymetry is otherwise treated as one continuous land surface, and rivers incise happily across the abyssal plain. Real SRTM tiles never need this because they are land-only — which is exactly why the generated case exposed it.
 
 ### Stage 7: biomes
 

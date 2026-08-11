@@ -84,8 +84,16 @@ def best_window(path, size, probe=16):
     return best
 
 
-def load_window(path, size=2048, row0=None, col0=None, connectivity=8, name=None):
-    """Read a square window and build its spherical cell graph."""
+def load_window(path, size=2048, row0=None, col0=None, connectivity=8, name=None,
+                sink_below=None):
+    """Read a square window and build its spherical cell graph.
+
+    `sink_below` marks every cell at or under that elevation as a sink, which is how you
+    tell the router where the sea is. Without it a raster carrying bathymetry is treated as
+    one continuous land surface and rivers happily incise across the abyssal plain -- on a
+    generated world that pushed slope-area concavity to -0.081, i.e. slope rising with
+    drainage area. Real SRTM tiles do not need it because they are land-only.
+    """
     if row0 is None or col0 is None:
         row0, col0 = best_window(path, size)
 
@@ -146,6 +154,8 @@ def load_window(path, size=2048, row0=None, col0=None, connectivity=8, name=None
         if bad.any():
             is_sink |= bad
             z[bad] = np.float32(0.0)
+    if sink_below is not None:
+        is_sink |= z <= np.float32(sink_below)
 
     return DemWindow(
         name=name or f"{path.split(chr(92))[-1]}[{row0},{col0}+{size}]",
