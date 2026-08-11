@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from spikes.bench_flow_kernels import (  # noqa: E402
+from terrain.flow import (  # noqa: E402
     build_order, compute_receivers, flow_accumulate, priority_flood,
 )
 from terrain.grid import Grid  # noqa: E402
@@ -78,7 +78,7 @@ def main():
 
     results = {}
     t0 = time.perf_counter()
-    max_heap = priority_flood(z, nbr, is_ocean, filled, closed, keys, idxs)
+    priority_flood(z, nbr, is_ocean, filled, closed, keys, idxs)
     results["priority_flood"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()
@@ -100,7 +100,6 @@ def main():
     print(f"\n  order covers all {ns:,} cells")
     print(f"  largest basin {acc.max():,.0f} km^2 ({100 * acc.max() / land_area:.1f}% of land)")
     print(f"  cells raised by fill {(filled > z + 1e-3).sum():,}")
-    print(f"  peak heap {max_heap:,} ({100 * max_heap / n:.1f}% of grid)")
 
     print()
     per_iter = sum(results.values())

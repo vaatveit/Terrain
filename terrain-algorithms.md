@@ -218,7 +218,9 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Recommended order: grid (done) → **metrics module** → a throwaway 50-line Stage 1 (3D warped fBm thickness → isostasy → sea-level quantile) → Stage 2 tuned until slope–area concavity lands in 0.4–0.6 → *then* the real Stage 1, by which point you know which of its outputs Stage 2 actually consumes.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2, tuned until slope–area concavity lands in 0.4–0.6** ← *next* → *then* the real Stage 1, by which point you know which of its outputs Stage 2 actually consumes.
+
+Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
 ---
 
@@ -231,7 +233,7 @@ Most of these are graph- or area-based and carry over to the sphere unchanged. T
 - **Slope histogram** — real terrain has a characteristic distribution; pure fBm is visibly too uniform.
 - **Hypsometric curve** — elevation vs. cumulative area. Distinguishes young/steep from mature/eroded landscapes. Weight by real cell area.
 - **Power spectral density** — ⚠️ *does not transfer.* On a sphere the analogue is the spherical-harmonic power spectrum `C_ℓ`, which on a hex grid means resampling to HEALPix and running an SHT. This is the one place HEALPix would have been easier. It is also the weakest metric on this list, and slope–area concavity already catches the failure mode it targets — dropping it is defensible.
-- **Hack's law** — main channel length vs. drainage area: `L ∝ A^h`, `h ≈ 0.57`. Pure noise fails this badly. Measure length along great-circle steps and area as summed cell areas.
+- **Hack's law** — main channel length vs. drainage area: `L ∝ A^h`, `h ≈ 0.57`. Measure length along great-circle steps and area as summed cell areas. ⚠️ *Weaker than expected as a discriminator* — see the Stage 1 baseline below; noise-only terrain scores 0.469 against a real 0.543, only 14% off.
 - **Horton's laws** — bifurcation, length, and area ratios between Strahler stream orders. Real networks cluster tightly around known values.
 - **Slope–area relation** — in channels, `S ∝ A^−θ` with concavity `θ ≈ 0.4–0.6`. The cleanest single diagnostic that an erosion model is behaving correctly. Slope is `Δz / (R·Δσ)` with `Δσ` the central angle — never a planar `√(Δx²+Δy²)`.
 - **Drainage density** — total channel length per unit area; should vary with climate.
@@ -239,7 +241,47 @@ Most of these are graph- or area-based and carry over to the sphere unchanged. T
 
 Comparison against real DEMs still works: reproject SRTM/Copernicus tiles onto a patch of the same grid and compare there, rather than comparing in tile space.
 
-A terrain that matches on slope histogram but fails Hack's law is exactly the failure mode of noise-only generation — it looks right in a screenshot and wrong the moment you follow a valley.
+A terrain that matches on slope histogram but fails the slope–area relation is exactly the failure mode of noise-only generation — it looks right in a screenshot and wrong the moment you follow a valley.
+
+### Measured reference values
+
+The metrics module is implemented and calibrated against two contrasting SRTM 1-arcsec tiles, each a 2048² window (~63 km across, 4.19M cells). These are the numbers generated terrain gets compared against.
+
+| | **east** — S. Appalachians | **west** — Olympics / N. Cascades | Published |
+|---|---|---|---|
+| Character | mature, humid, unglaciated fluvial | young, active margin, glaciated | |
+| Slope–area concavity θ | **0.516** (R² 0.89) | **0.404** (R² 0.88) | 0.4–0.6 |
+| Hack exponent h | **0.543** (R² 0.88) | **0.434** (R² 0.54) | 0.5–0.62 |
+| Horton Rb / Rl / Ra | 5.51 / 1.75 / 4.07 | 4.67 / 2.31 / 4.06 | 3–5 / 1.5–3.5 / 3–6 |
+| Drainage density | 0.744 km/km² | 0.480 km/km² | threshold-dependent |
+| Mean slope | 12.8° | 13.4° | |
+
+**Use the east tile as the strict reference.** It is unglaciated and lands inside the published band on every fluvial metric. The west tile falls low on θ and h, and its Hack fit is visibly worse (R² 0.54 against 0.88) — that is a real geomorphic signal rather than a measurement problem. Glacial erosion violates stream-power scaling: U-shaped valleys have flat floors and steep walls, which flattens the slope–area relation, and glacial troughs are shorter and blunter relative to basin area than fluvial networks. Its much lower drainage density says the same thing.
+
+**Three implementation traps, all of which produced badly wrong numbers before being fixed:**
+
+1. **Measure channel gradient over a flow-path baseline, not cell to cell.** SRTM stores int16 metres, so where a river drops less than 1 m across a 30 m cell the measured gradient is exactly zero — and after depression filling, a meaningless `+eps` residual instead. Those are precisely the highest-drainage-area cells, so they dominate the high-A end of the regression. Left in, they put θ at **1.87** instead of 0.52. Walking downstream until ≥0.5 km has accumulated fixes it, and degrades gracefully to cell-to-cell on a coarse mesh where one cell already exceeds the baseline.
+2. **Exclude cells lifted by the depression fill** from slope–area. They sit on an artificial ramp and cluster in valley bottoms.
+3. **Define "clipped basin" by the catchment, not the outlet.** Testing whether a basin's *outlet* lies on the window border excludes everything, because border cells are the sinks — in a 63 km window every drop of water leaves through an edge. Test whether anything *upstream* is edge-contaminated instead; interior sub-basins are complete by definition, since a catchment lies entirely upstream of its outlet.
+
+**Routing-scheme sensitivity, measured.** Re-running the east tile with D4 instead of D8 moves θ by 0.001 and h by 0.000, but Rb by 16% (5.51 → 6.40). So θ and h can be compared directly between D6-routed generated terrain and D8-routed real DEMs; **Horton ratios cannot** — they carry a routing-scheme bias and are only meaningful compared like-for-like.
+
+**Drainage density is not scale-free.** It is channel length per unit area, so a 9.8 km global mesh and a 30 m DEM window differ by orders of magnitude by construction. Track it across runs at fixed resolution; do not compare it across resolutions.
+
+### Stage 1 baseline: what noise-only terrain actually scores
+
+The throwaway Stage 1 (3D warped fBm thickness → isostasy → solved sea level, no erosion) run at n=785 against the same metric suite:
+
+| | Stage 1, noise only | SRTM east | |
+|---|---|---|---|
+| Slope–area concavity θ | **0.106** | 0.516 | **4.9× off** |
+| Hack exponent h | **0.469** | 0.543 | 14% off |
+| Horton Rb | 5.98 | 5.51 | — |
+| Hypsometric integral | 0.368 | 0.217 | — |
+
+**This is the number Stage 2 has to beat, and it sharpens one of this document's own claims.** The survey asserted above that pure noise "fails Hack's law badly." Measured, it does not: h lands within 14% of real terrain, close enough that Hack's law alone would not tell you erosion was missing. What collapses is **slope–area concavity — 0.106 against 0.516**. Noise-only channels barely steepen upstream at all, because nothing has carved them; there is no mechanism in an fBm field that makes gradient scale with contributing area.
+
+So the ranking for the testbed is: **slope–area concavity is the primary discriminator, Hack's exponent is a secondary confirmation, and Horton ratios are near-useless for this purpose** — noise-only Rb (5.98) is no further from the published band than real Appalachian terrain (5.51).
 
 ---
 
