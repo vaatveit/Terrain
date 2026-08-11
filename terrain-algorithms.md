@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → *next:* stage 4, the coupled re-run where precipitation modulates `K`.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → *next:* stage 5 secondary erosion (glacial, aeolian, coastal), or stage 7 biomes, whichever is worth more to you.
 
 Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
@@ -361,6 +361,37 @@ Also note what does *not* work as a test: comparing the p90/p10 spread of precip
 
 1. **No subtropical desert belt.** Earth's great deserts sit near 25–30° because air there descends from the top of the Hadley cell already wrung dry over the ITCZ — the horse latitudes are dry because their air *arrives* dry. A surface-only model has no aloft, so the profile declines monotonically from the equator instead of dipping at 30°. Three surrogates were tried and measured; all failed, one of them making the belt *wetter*. Fixing it properly needs a second vertical level.
 2. **Orographic strength and interior wetness are in direct tension.** Evapotranspiration recycling is what keeps continental interiors from being absolute desert, but recycled moisture refills the lee side and cancels the very contrast the orographic term creates. No setting of the two reaches Earth on both counts at once.
+
+### Stage 4: the coupled loop
+
+Erode, recompute climate on the new topography, re-erode against the new discharge, repeat. The doc called this the stage most implementations skip and the one that most improves plausibility; it is also the cheapest of the four to implement, because the coupling needs no new solver.
+
+**Couple through discharge, not through a fudged erodibility.** Stream power is properly `E = K·Q^m·S^n`; drainage area is only a stand-in for discharge under uniform rainfall. Accumulating `area × P/mean(P)` instead of area restores the real variable, keeps `Q` in area units so `K` retains its calibrated meaning, and is algebraically identical to scaling `K` by `P^m`. It also degenerates *exactly* to the uncoupled run when precipitation is uniform — bit-identical, which makes a strong regression test.
+
+**It does what it is supposed to do.** Against an uncoupled run of the same total duration, so the comparison is about *where* erosion went rather than how much there was:
+
+| | uncoupled | coupled | change |
+|---|---|---|---|
+| Wettest quartile | 314 m | 262 m | **−52 m** |
+| Driest quartile | 106 m | 334 m | **+228 m** |
+| corr(log P, elevation) | +0.165 | −0.053 | |
+
+Wet ground incises deeper, arid ground holds its relief, and rain shadows stop being a property of the precipitation map and start being a property of the topography.
+
+Worth noting for the testbed: **the drainage metrics are blind to this stage.** θ and Hack's exponent sit at 0.454 and 0.535 whether the run is coupled or not, and stayed there even while a normalisation bug was inflating peaks to 15 km. They measure network *geometry*, which climate does not change — it changes where the erosion goes, not how the channels organise. Judge Stage 4 by the wet/dry elevation contrast, not by the scaling exponents.
+
+**Normalise the discharge weight by the MEDIAN, not the mean.** This was the one real bug in the stage and it hid behind healthy-looking metrics. Precipitation is heavily right-skewed (median 111 mm against a mean of 1000), so dividing by the mean puts the *typical* land cell far below 1 and against the floor. Every cell then erodes ~1.7× too slowly rather than just the deserts, and production peaks reached **15.4 km against 8.4 km uncoupled** — while θ and Hack's exponent stayed comfortably in range throughout, because the drainage network was fine and only its vertical scale was wrong. Normalising by the median keeps the typical cell at weight 1, so `K` stays calibrated. It also *strengthened* the wet/dry contrast rather than trading it away.
+
+**The discharge floor then trades peak height against contrast.** Relief goes as `Q^(-m/n)`, so an arid cell at half the typical discharge holds 1.4× the relief. Measured at n=256 over three passes, against an uncoupled run peaking at 6,688 m:
+
+| floor | 0.15 | 0.30 | 0.50 |
+|---|---|---|---|
+| peak elevation | 11,950 m | 9,531 m | **7,735 m** |
+| wet−dry contrast | −293 m | −246 m | **−220 m** |
+
+0.50 keeps peaks near the uncoupled result while retaining most of the contrast. The parameter is partly absorbing a *climate* limitation — the precipitation distribution is more skewed than Earth's, so the floor is compensating downstream for something better fixed upstream.
+
+**Two or three passes is indeed enough.** Mean elevation change between successive passes ran 356 → 107 → 55 m at n=128; the loop settles quickly because most of the topography is set by uplift and only the *distribution* of erosion responds to climate.
 
 **And a refinement to the uplift-contrast finding above.** The tectonic uplift field has a craton-to-orogen contrast of ~250×, far past the 4× where smooth-noise uplift wrecked the concavity measurement — yet per-basin θ comes out at 0.452 with an IQR of 0.004. The reason is that what matters is uplift variation *within* a basin, not the global ratio. Tectonic uplift clamps most of the continent to a flat cratonic floor with sharp belt transitions, so most basins sit in genuinely uniform `U`; smooth fBm varied continuously everywhere, contaminating every basin. **Realistic tectonics is better for the metric than a gentler but smoother uplift field** — so the `contrast_cap` knob is available but not needed by default.
 

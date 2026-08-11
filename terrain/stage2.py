@@ -225,7 +225,7 @@ def uplift_field(grid, land_mask, seed=0, u_max_m_per_myr=500.0, craton_floor=0.
 
 def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
            n_steps=400, verbose=False, report_every=50,
-           base_level_m=0.0) -> EvolveResult:
+           base_level_m=0.0, discharge_weight=None) -> EvolveResult:
     """Run the landscape evolution model to near steady state.
 
     `base_level_m` is the elevation ocean cells present to the land draining into them, and
@@ -234,6 +234,13 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
     so continents incise straight past zero and drown: measured land minimum -1371 m, with
     only the orogen belts left above water. Subaerial erosion grades to sea level. The true
     bathymetry is restored on the way out, since ocean cells never erode anyway.
+
+    `discharge_weight` replaces cell area in the flow accumulation, which is how climate
+    couples back into erosion (Stage 4). Stream power is properly written against DISCHARGE,
+    E = K*Q^m*S^n, and drainage area is only a stand-in for it under uniform rainfall. Pass
+    `area * P/mean(P)` and Q keeps area units, so K keeps its meaning and the result is
+    identical to the uncoupled run wherever precipitation is uniform. Equivalent to scaling
+    erodibility as K*P^m, but it needs no change to the solver at all.
     """
     p = params or LemParams()
     n_cells = grid.cell_count
@@ -251,6 +258,9 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
     uplift_m_per_yr = np.ascontiguousarray(
         uplift_m_per_yr_from(uplift_m_per_myr), dtype=np.float64)
 
+    accum = area if discharge_weight is None else np.ascontiguousarray(
+        discharge_weight, dtype=np.float32)
+
     dt_yr = p.dt_myr * YR_PER_MYR
     out = np.empty(n_cells, dtype=np.float64)
     dz = np.empty(n_cells, dtype=np.float64)
@@ -261,7 +271,7 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
     fr = None
     for step in range(n_steps):
         if fr is None or step % p.fill_every == 0:
-            fr = flow.route(z.astype(np.float32), nbr, arc, area, is_fixed,
+            fr = flow.route(z.astype(np.float32), nbr, arc, accum, is_fixed,
                             metrics=False)
 
         z_before = z.copy()

@@ -61,6 +61,9 @@ def main():
     ap.add_argument("--contrast-cap", type=float, default=None,
                     help="bound craton-to-orogen uplift contrast; ~4 keeps theta "
                          "comparable to published values, None is realistic tectonics")
+    ap.add_argument("--coupled", type=int, default=0, metavar="PASSES",
+                    help="run stage 4: alternate erosion and climate for N passes, so "
+                         "precipitation feeds back into where erosion happens")
     ap.add_argument("--render", action="store_true")
     args = ap.parse_args()
 
@@ -104,20 +107,41 @@ def main():
     print(f"  K={p.K:g}  m={p.m}  n={p.n}  D={p.D}  G={p.G}")
     print(f"  predicted steady-state theta = m/n = {p.m / p.n:.3f}")
 
-    res = stage2.evolve(grid, crust.elevation, uplift, is_ocean, p,
-                        n_steps=args.steps, verbose=True,
-                        report_every=max(1, args.steps // 8))
-    print(f"  evolved in {res.seconds:.1f} s "
-          f"({res.seconds / args.steps * 1000:.0f} ms/step)")
-
     land = crust.land_mask
-    z = res.elevation
+    if args.coupled:
+        from terrain import coupled
+        per_pass = max(1, args.steps // args.coupled)
+        print(f"  stage 4: {args.coupled} coupled passes x {per_pass} steps")
+        cres = coupled.run(grid, crust.elevation, uplift, is_ocean, p,
+                           passes=args.coupled, steps_per_pass=per_pass, verbose=True)
+        z = cres.elevation
+        print(f"  coupled in {cres.seconds:.1f} s")
+        cp = cres.climate.precipitation_mm
+        wet = land & (cp > np.percentile(cp[land], 75))
+        dry = land & (cp < np.percentile(cp[land], 25))
+        print(f"  precip land mean {cp[land].mean():.0f} mm, "
+              f"wettest quartile {cp[wet].mean():.0f}, driest {cp[dry].mean():.0f}")
+        print(f"  elevation: wet quartile {z[wet].mean():.0f} m, "
+              f"arid quartile {z[dry].mean():.0f} m")
+        print(f"  temperature {cres.climate.temperature_c[land].mean():.1f} C mean on land")
+    else:
+        res = stage2.evolve(grid, crust.elevation, uplift, is_ocean, p,
+                            n_steps=args.steps, verbose=True,
+                            report_every=max(1, args.steps // 8))
+        print(f"  evolved in {res.seconds:.1f} s "
+              f"({res.seconds / args.steps * 1000:.0f} ms/step)")
+        z = res.elevation
     print(f"  relief now {z[land].min():,.0f}..{z[land].max():,.0f} m "
           f"(was {crust.elevation[land].min():,.0f}..{crust.elevation[land].max():,.0f})")
 
-    first, last = res.history[0][1], res.history[-1][1]
-    print(f"  mean |dz| {first:,.1f} -> {last:,.2f} m/Myr "
-          f"({'converging' if last < first else 'NOT converging'})")
+    if args.coupled:
+        first, last = cres.convergence[0][1], cres.convergence[-1][1]
+        label, unit, verb = "between passes", "m", "settling"
+    else:
+        first, last = res.history[0][1], res.history[-1][1]
+        label, unit, verb = "", "m/Myr", "converging"
+    print(f"  mean |dz| {label} {first:,.1f} -> {last:,.2f} {unit} "
+          f"({verb if last < first else 'NOT ' + verb})")
 
     print("\nMeasuring...")
     t0 = time.perf_counter()
