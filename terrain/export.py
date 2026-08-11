@@ -128,19 +128,21 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
     files["elevation"] = str(write_geotiff(out_dir / "elevation.tif", z_r, "float32",
                                            descriptions=["elevation_m"]))
 
-    pts, shape = amp_mod.equirect_points(width)
-    if temperature_c is not None and precipitation_mm is not None:
-        t_r = amp_mod.interpolate(grid, temperature_c, pts).reshape(shape)
-        p_r = amp_mod.interpolate(grid, precipitation_mm, pts).reshape(shape)
-        files["climate"] = str(write_geotiff(
-            out_dir / "climate.tif", [t_r, p_r], "float32",
-            descriptions=["temperature_c", "precipitation_mm"]))
-    if biome is not None:
-        # Nearest, not interpolated: averaging categorical codes is meaningless.
-        b_r = amp_mod.interpolate(grid, biome.astype(np.float64), pts, k=1).reshape(shape)
-        files["biomes"] = str(write_geotiff(out_dir / "biomes.tif",
-                                            np.rint(b_r), "uint8",
-                                            descriptions=["biome_code"]))
+    if (temperature_c is not None and precipitation_mm is not None) or biome is not None:
+        pts, shape = amp_mod.equirect_points(width)
+        idx, w = amp_mod.neighbour_weights(grid, pts)
+        nearest = idx[:, 0] if w is not None else idx
+        if temperature_c is not None and precipitation_mm is not None:
+            t_r = amp_mod.apply_weights(temperature_c, idx, w).reshape(shape)
+            p_r = amp_mod.apply_weights(precipitation_mm, idx, w).reshape(shape)
+            files["climate"] = str(write_geotiff(
+                out_dir / "climate.tif", [t_r, p_r], "float32",
+                descriptions=["temperature_c", "precipitation_mm"]))
+        if biome is not None:
+            # Nearest, not interpolated: averaging categorical codes is meaningless.
+            b_r = np.asarray(biome)[nearest].reshape(shape)
+            files["biomes"] = str(write_geotiff(out_dir / "biomes.tif", b_r, "uint8",
+                                                descriptions=["biome_code"]))
 
     manifest = {
         "grid": {"n": int(grid.n), "cells": int(grid.cell_count),

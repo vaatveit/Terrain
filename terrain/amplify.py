@@ -98,19 +98,36 @@ def _detail_noise(points, perm, grad, octaves, frequency, lacunarity, gain, ridg
     return out
 
 
-def interpolate(grid, field, points, k=3, tree=None):
-    """Inverse-distance interpolation of a mesh field onto arbitrary unit-sphere points.
+def neighbour_weights(grid, points, k=3, tree=None):
+    """One KD-tree query, reusable for every field sampled at the same points.
 
-    Nearest-cell sampling renders the hexagons; three-neighbour IDW does not.
+    Worth doing explicitly: an 8192x4096 export is 33.5M points, and querying separately
+    for elevation, slope, drainage and the land mask would repeat the most expensive step
+    four times over.
     """
     from scipy.spatial import cKDTree
     tree = tree or cKDTree(grid.xyz)
     dist, idx = tree.query(points, k=k, workers=-1)
     if k == 1:
-        return np.asarray(field)[idx]
+        return idx, None
     w = 1.0 / np.maximum(dist, 1e-12) ** 2
     w /= w.sum(axis=1, keepdims=True)
+    return idx, w
+
+
+def apply_weights(field, idx, w):
+    if w is None:
+        return np.asarray(field)[idx]
     return (np.asarray(field, dtype=np.float64)[idx] * w).sum(axis=1)
+
+
+def interpolate(grid, field, points, k=3, tree=None):
+    """Inverse-distance interpolation of a mesh field onto arbitrary unit-sphere points.
+
+    Nearest-cell sampling renders the hexagons; three-neighbour IDW does not.
+    """
+    idx, w = neighbour_weights(grid, points, k=k, tree=tree)
+    return apply_weights(field, idx, w)
 
 
 def amplify(points, base_elevation, amplitude, p: AmplifyParams = None, seed=0):
@@ -145,15 +162,18 @@ def amplified_raster(grid, elevation, slope, drainage_km2, land_mask, width=8192
     pts, shape = equirect_points(width)
     tree = cKDTree(grid.xyz)
 
-    z = interpolate(grid, elevation, pts, k=p.neighbours, tree=tree)
+    # One query, every field. The nearest cell is column 0 of the same result, so the
+    # categorical land mask comes free rather than costing a second traversal.
+    idx, w = neighbour_weights(grid, pts, k=p.neighbours, tree=tree)
+    nearest = idx[:, 0] if w is not None else idx
+
+    z = apply_weights(elevation, idx, w)
+    land = np.asarray(land_mask)[nearest]
     if not detail:
-        land = interpolate(grid, land_mask.astype(np.float64), pts, k=1, tree=tree) > 0.5
         return z.reshape(shape).astype(np.float32), land.reshape(shape)
 
-    s = interpolate(grid, slope, pts, k=p.neighbours, tree=tree)
-    a = interpolate(grid, drainage_km2, pts, k=p.neighbours, tree=tree)
-    land = interpolate(grid, land_mask.astype(np.float64), pts, k=1, tree=tree) > 0.5
-
+    s = apply_weights(slope, idx, w)
+    a = apply_weights(drainage_km2, idx, w)
     amp = detail_amplitude(s, a, land, p)
     z = amplify(pts, z, amp, p, seed)
     return z.reshape(shape).astype(np.float32), land.reshape(shape)
