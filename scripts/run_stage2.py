@@ -64,6 +64,8 @@ def main():
     ap.add_argument("--coupled", type=int, default=0, metavar="PASSES",
                     help="run stage 4: alternate erosion and climate for N passes, so "
                          "precipitation feeds back into where erosion happens")
+    ap.add_argument("--glacial", action="store_true",
+                    help="run stage 5 glacial erosion after the coupled loop")
     ap.add_argument("--render", action="store_true")
     args = ap.parse_args()
 
@@ -124,6 +126,18 @@ def main():
         print(f"  elevation: wet quartile {z[wet].mean():.0f} m, "
               f"arid quartile {z[dry].mean():.0f} m")
         print(f"  temperature {cres.climate.temperature_c[land].mean():.1f} C mean on land")
+
+        if args.glacial:
+            from terrain import glacial
+            gres = glacial.erode(grid, z, cres.climate.temperature_c, is_ocean,
+                                 verbose=True)
+            iced = land & gres.glaciated
+            moved = np.abs(gres.elevation - z)
+            print(f"  stage 5: glaciated {iced.sum() / land.sum():.1%} of land, "
+                  f"mean lowering {moved[iced].mean():.0f} m under ice vs "
+                  f"{moved[land & ~gres.glaciated].mean():.2f} m off it")
+            print(f"  overdeepened basins {gres.overdeepened.sum():,} cells")
+            z = gres.elevation
 
         from terrain import biomes
         biome = biomes.classify(cres.climate.temperature_c, cres.climate.precipitation_mm,

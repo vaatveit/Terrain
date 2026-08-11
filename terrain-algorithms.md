@@ -220,6 +220,30 @@ Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip an
 
 **Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ (Whittaker; land shares within a few points of Earth's) → *next:* stage 5 secondary erosion (glacial, aeolian, coastal), stage 6 hydrology finalize, or stage 9 export.
 
+### Stage 5: secondary erosion — mostly sub-grid
+
+**Three of the four processes cannot act at continental resolution**, and it is worth stating that with numbers rather than shipping operators that do nothing. At n=785 the cells are 9.81 km across:
+
+| process | feature scale | verdict at 9.81 km cells |
+|---|---|---|
+| Thermal talus | needs slope > angle of repose | **impossible** — 33° across one cell is 6,371 m of drop, against ~8 km of total world relief |
+| Aeolian dunes | 0.05–2 km | sub-grid |
+| Wave-cut notches | 1–50 m | sub-grid by 2–4 orders of magnitude |
+| Cirques | 0.5–3 km | sub-grid |
+| **Glacial troughs** | 1–10 km | marginal |
+| **Fjords** | 20–200 km | resolved |
+| **Ice sheets** | 500–4,000 km | resolved |
+
+So Stage 5 is glacial erosion, driven from the Stage 3 temperature field (which already carries the lapse rate, so latitude and altitude are handled together — a latitude-only ELA put ice on 1.2% of land and missed low-lying polar shields entirely).
+
+**What makes glacial terrain glacial, at this resolution, is that ice can cut below its own outlet.** Water cannot: it needs a downhill path, so the fluvial solver forbids it and every river valley drains monotonically to the sea. Ice is driven by its *surface* slope and will gouge a closed basin then flow up out of it — which is what overdeepenings, fjord sills and glaciated lake districts are.
+
+Getting that to happen took one non-obvious change. Simply removing the "don't cut below the receiver" clamp achieves **nothing**: with `E ∝ S`, erosion vanishes exactly as a cell approaches its receiver's elevation, so the bed asymptotes flat and never crosses (measured: minimum drop-to-receiver +0.0 m and zero overdeepenings at every erosion rate tried). The driving slope has to be **regional**, measured over a long flow path, which is also the physically right choice since ice responds to surface not bed slope.
+
+**A negative result worth recording.** The textbook signature — glaciation flattens channel long profiles — did not survive measurement. Concavity in glaciated channels went 0.507 → 0.408 at n=256 (flattening, as predicted) but 0.559 → 0.631 at n=128 (steepening). **The sign flips with resolution**, so concavity is not a usable glacial diagnostic at continental cell sizes, and no test asserts it. What does hold is that erosion is cleanly confined to cold ground: 44.9 m of mean lowering under ice against 0.00 m off it.
+
+Glacier tongues correctly extend past the freezing line — mean temperature under ice is −11.3 °C but the warmest glaciated cell is +13.6 °C, because a glacier flows downhill past its own equilibrium line and keeps eroding until it melts out. An assertion that every glaciated cell is below freezing would be asserting a bug.
+
 ### Stage 7: biomes
 
 Whittaker classification from the temperature and precipitation Stage 3 already produces, so the stage is nearly free — and it is worth doing early precisely because it turns the climate fields from numbers into something you can judge at a glance. Land shares against Earth's:
