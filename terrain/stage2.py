@@ -255,8 +255,16 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
 
     # Ocean is base level: fixed elevation, no uplift, no incision.
     is_fixed = np.ascontiguousarray(is_ocean)
-    uplift_m_per_yr = np.ascontiguousarray(
-        uplift_m_per_yr_from(uplift_m_per_myr), dtype=np.float64)
+    # Uplift and subsidence take different paths. The stream-power solve clamps every cell
+    # to stay at or above its receiver, which is right for incision -- water cannot cut a
+    # closed basin -- but it would also forbid a rift graben from ever dropping below its
+    # outlet. So positive uplift goes through the solver, and subsidence is applied
+    # afterwards without the clamp. Without this split, tectonic basins cannot form and
+    # Stage 6 has no endorheic lakes to find.
+    u_all = uplift_m_per_yr_from(uplift_m_per_myr)
+    uplift_m_per_yr = np.ascontiguousarray(np.maximum(u_all, 0.0), dtype=np.float64)
+    subsidence_m_per_yr = np.ascontiguousarray(np.minimum(u_all, 0.0), dtype=np.float64)
+    has_subsidence = bool((subsidence_m_per_yr < 0).any())
 
     accum = area if discharge_weight is None else np.ascontiguousarray(
         discharge_weight, dtype=np.float32)
@@ -279,6 +287,9 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
         solve_stream_power(z, fr.order, fr.rec, fr.step, fr.acc, uplift_m_per_yr,
                            dt_yr, p.K, p.m, p.n, is_fixed, p.newton_iters, out)
         z, out = out, z
+
+        if has_subsidence:
+            z += np.where(is_fixed, 0.0, subsidence_m_per_yr * dt_yr)
 
         if p.G > 0.0:
             erosion = np.maximum(z_before + uplift_m_per_yr * dt_yr - z, 0.0)

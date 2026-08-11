@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ (Whittaker; land shares within a few points of Earth's) → *next:* stage 5 secondary erosion (glacial, aeolian, coastal), stage 6 hydrology finalize, or stage 9 export.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → *next:* stage 8 amplification, or stage 9 export — the latter being what produces the static file this project set out to make.
 
 ### Stage 5: secondary erosion — mostly sub-grid
 
@@ -243,6 +243,22 @@ Getting that to happen took one non-obvious change. Simply removing the "don't c
 **A negative result worth recording.** The textbook signature — glaciation flattens channel long profiles — did not survive measurement. Concavity in glaciated channels went 0.507 → 0.408 at n=256 (flattening, as predicted) but 0.559 → 0.631 at n=128 (steepening). **The sign flips with resolution**, so concavity is not a usable glacial diagnostic at continental cell sizes, and no test asserts it. What does hold is that erosion is cleanly confined to cold ground: 44.9 m of mean lowering under ice against 0.00 m off it.
 
 Glacier tongues correctly extend past the freezing line — mean temperature under ice is −11.3 °C but the warmest glaciated cell is +13.6 °C, because a glacier flows downhill past its own equilibrium line and keeps eroding until it melts out. An assertion that every glaciated cell is below freezing would be asserting a bug.
+
+### Stage 6: lakes, endorheic basins, rivers
+
+Depression filling inside the erosion loop is a numerical device — it exists so water has somewhere to go. This stage is where depressions become geography instead.
+
+**The distinction that matters is exorheic versus endorheic,** and it needs a water balance rather than geometry, which is why this stage comes after climate. A basin whose catchment delivers more water than its lake surface can evaporate fills to its spill point and drains onward; one in an arid enough setting settles far below the rim where evaporation exactly balances inflow, and never overflows. Filling every depression to the brim — what the erosion loop does internally — turns every Caspian into an overflowing freshwater lake and deletes a whole class of landscape.
+
+Verified on constructed basins, holding geometry and rainfall fixed and varying only temperature: at 1,200 mm and 2 °C the basin fills to spill and overflows; at 12 °C it settles 150 m below the rim and shrinks. Drier or warmer pushes it further down (700 mm / 8 °C settles 339 m below spill).
+
+**Choosing that test climate needs care, and the trap is instructive.** Push the temperature too high and land runoff drops to *exactly zero* — PET exceeds rainfall, nothing reaches the basin at all, and the answer is "no lake" rather than "endorheic lake". The endorheic window needs positive runoff that lake-surface evaporation can still outpace, roughly `P < 2·PET`.
+
+**This stage exposed a bug two stages upstream.** The first run found four tiny coastal lakes and not one endorheic basin, because the world had essentially no closed depressions — the fluvial solver forbids them by construction, and nothing else was making any. The cause was in Stage 1: the boundary table specifies *"continental divergent → subsiding graben flanked by uplifted rift shoulders"*, `derive_uplift` computed exactly that, and then `np.clip(u, 0.0, 1.0)` threw the subsidence away. Tectonic subsidence is where the Dead Sea, Baikal and the East African rift lakes come from. Restoring it took a matching change in Stage 2, because the stream-power solver clamps every cell to stay at or above its receiver — right for incision, since water cannot cut a closed basin, but it would equally forbid a graben from dropping below its outlet. Uplift now goes through the solver and subsidence is applied outside it. Lakes went from 4 to 24, with the first endorheic basin appearing.
+
+Closed basins remain **rare** in generated worlds — 0.03% of land against Earth's roughly 1% lake cover — because fluvial erosion efficiently removes depressions and continental rifts are uncommon. The endorheic machinery is therefore unit-tested on constructed basins rather than on emergent ones.
+
+Sub-grid and deliberately absent: meander migration (0.1–10 km wavelength). River *width* is carried as a per-cell attribute (`w ∝ Q^0.5`, the standard hydraulic-geometry relation) because it is wanted for rendering, but no river is geometrically resolved at ~10 km cells — the Amazon at its mouth would be one cell across.
 
 ### Stage 7: biomes
 
@@ -421,6 +437,8 @@ Erode, recompute climate on the new topography, re-erode against the new dischar
 | corr(log P, elevation) | +0.165 | −0.053 | |
 
 Wet ground incises deeper, arid ground holds its relief, and rain shadows stop being a property of the precipitation map and start being a property of the topography.
+
+**The coupling amplifies itself.** Measured while building Stage 6's tests: the isolated orographic ratio is 0.92 on uncoupled terrain — no signal at all — against 1.27 after coupling. Wet windward slopes get incised, which deepens the relief that drives the orographic rainfall in the first place. So Stage 3's rain shadows are weak in isolation and only become real once Stage 4 has run; the climate tests are therefore run against coupled terrain, since uncoupled is a state the pipeline never emits.
 
 Worth noting for the testbed: **the drainage metrics are blind to this stage.** θ and Hack's exponent sit at 0.454 and 0.535 whether the run is coupled or not, and stayed there even while a normalisation bug was inflating peaks to 15 km. They measure network *geometry*, which climate does not change — it changes where the erosion goes, not how the channels organise. Judge Stage 4 by the wet/dry elevation contrast, not by the scaling exponents.
 

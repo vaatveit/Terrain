@@ -17,12 +17,20 @@ from terrain.grid import build_goldberg  # noqa: E402
 
 @pytest.fixture(scope="module")
 def world():
+    """Terrain from the COUPLED pipeline, which is what the pipeline actually produces.
+
+    Not an incidental choice. On uncoupled terrain the isolated orographic ratio measures
+    0.92 -- no signal at all -- against 1.27 after coupling. The feedback amplifies itself:
+    wet windward slopes get incised, which deepens the relief that drives the orographic
+    rainfall in the first place. Testing the climate against uncoupled terrain would be
+    testing a state the pipeline never emits.
+    """
+    from terrain import coupled
     g = build_goldberg(96)
     crust = stage1.generate_crust_tectonic(g, seed=1)
-    res = stage2.evolve(g, crust.elevation, crust.uplift, ~crust.land_mask,
-                        stage2.LemParams(), n_steps=150)
-    cl = climate.compute_climate(g, res.elevation, crust.land_mask)
-    return g, res.elevation, crust.land_mask, cl
+    res = coupled.run(g, crust.elevation, crust.uplift, ~crust.land_mask,
+                      passes=2, steps_per_pass=150)
+    return g, res.elevation, crust.land_mask, res.climate
 
 
 # --------------------------------------------------------------------------------------

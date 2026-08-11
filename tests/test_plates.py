@@ -159,7 +159,27 @@ def test_uplift_is_high_at_convergent_margins_and_low_in_cratons(g, pl):
     assert near_conv.any() and interior.any()
     assert u[near_conv].mean() > 5 * u[interior].mean()
     assert u.max() <= p.u_max_m_per_myr + 1e-6, "shape function must be clamped before scaling"
-    assert u[land].min() >= p.craton_floor_m_per_myr - 1e-6
+    # The cratonic floor applies to ground that is rising. Rift grabens subside, and that
+    # negative uplift is what makes tectonic basins -- and hence endorheic lakes -- possible.
+    rising = u > 0
+    assert u[rising].min() >= p.craton_floor_m_per_myr - 1e-6
+    assert u.min() >= -p.u_max_m_per_myr - 1e-6
+
+
+def test_rift_grabens_subside(g, pl):
+    """The boundary table calls for a subsiding graben flanked by uplifted shoulders.
+
+    Clipping uplift at zero silently deleted the subsidence, and the consequence only
+    surfaced two stages later as a world with no closed basins and no endorheic lakes.
+    """
+    is_cont = np.ones(g.cell_count, dtype=bool)
+    land = np.ones(g.cell_count, dtype=bool)
+    u = plates.derive_uplift(pl, is_cont, land, plates.PlateParams())
+    assert (u < 0).any(), "no ground is subsiding anywhere"
+    near_div = (pl.boundary_dist_km < 60) & (
+        pl.boundary_type[np.maximum(pl.nearest_boundary, 0)] == plates.DIVERGENT)
+    if near_div.any():
+        assert u[near_div].min() < 0, "rift axes should drop"
 
 
 def test_uplift_is_zero_over_ocean(g, pl):
@@ -174,8 +194,12 @@ def test_contrast_cap_bounds_the_uplift_ratio(g, pl):
     land = np.ones(g.cell_count, dtype=bool)
     uncapped = plates.derive_uplift(pl, is_cont, land, plates.PlateParams())
     capped = plates.derive_uplift(pl, is_cont, land, plates.PlateParams(), contrast_cap=4.0)
-    assert uncapped.max() / uncapped.min() > 10
-    assert capped.max() / capped.min() == pytest.approx(4.0, rel=0.01)
+    # Measured across RISING ground: the cap bounds the craton-to-orogen ratio and must not
+    # lift subsiding grabens back out of the ground.
+    up_un, up_cap = uncapped[uncapped > 0], capped[capped > 0]
+    assert up_un.max() / up_un.min() > 10
+    assert up_cap.max() / up_cap.min() == pytest.approx(4.0, rel=0.01)
+    assert capped.min() < 0, "the cap must leave subsidence alone"
 
 
 # --------------------------------------------------------------------------------------

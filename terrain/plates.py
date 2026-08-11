@@ -350,13 +350,25 @@ def derive_uplift(plates: Plates, is_continental, land_mask, params: PlateParams
     trans = near_type == TRANSFORM
     u[trans] += 0.12 * np.exp(-d[trans] / 100.0) * strength[trans]
 
-    # Clamp the SHAPE to [0, 1] before scaling. The collision and arc terms overlap, so
-    # letting them sum unbounded pushed peak uplift to 4943 m/Myr against a 3000 cap.
-    u = np.clip(u, 0.0, 1.0) * p.u_max_m_per_myr
-    u = np.maximum(u, p.craton_floor_m_per_myr)
+    # Clamp the SHAPE before scaling. The collision and arc terms overlap, so letting them
+    # sum unbounded pushed peak uplift to 4943 m/Myr against a 3000 cap.
+    #
+    # The lower bound is -1, not 0. Rift grabens SUBSIDE -- that is what the boundary table
+    # specifies and what the rift term above computes -- and clipping at zero silently threw
+    # it away. The consequence showed up two stages later: with nothing subsiding, the world
+    # had essentially no closed basins, so Stage 6 found four tiny coastal lakes and not a
+    # single endorheic one. Tectonic subsidence is where the Dead Sea, Baikal and the East
+    # African rift lakes come from.
+    u = np.clip(u, -1.0, 1.0) * p.u_max_m_per_myr
+    # The cratonic floor applies to ground that is rising, not to ground that is dropping.
+    u = np.where(u >= 0.0, np.maximum(u, p.craton_floor_m_per_myr), u)
 
     if contrast_cap is not None:
-        u = np.maximum(u, u.max() / contrast_cap)
+        # Bound the ratio across RISING ground only. Applying the floor to everything would
+        # lift subsiding grabens back out of the ground.
+        rising = u > 0.0
+        if rising.any():
+            u[rising] = np.maximum(u[rising], u[rising].max() / contrast_cap)
 
     u[~land_mask] = 0.0  # ocean is base level
     return u.astype(np.float32)
