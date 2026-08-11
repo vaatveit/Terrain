@@ -1,0 +1,13 @@
+# Generated grids and field stacks. Derived artifacts, not source: the grid is fully
+# regenerable from n alone (34 s at n=785), and grid_n785.npz alone is 650 MB.
+data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Numba on-disk kernel cache (cache=True)
+*.nbc
+*.nbi
