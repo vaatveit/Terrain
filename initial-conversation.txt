@@ -1,0 +1,145 @@
+we're going to build a program to test various terrain generation algorithms.  our goal is realistic terrain.  we will be generating the map all at once in a batch process, as opposed to generating chunks on the fly.  please research and categorize relevant algorithms, describing how they can be combined to generate realistic terrain.
+
+
+Weighing terrain representation trade-offs and complexity
+Weighing terrain representation trade-offs and complexity
+The short version of the survey: noise gives you shape, erosion gives you realism. Because you're generating in batch rather than streaming chunks, you're free to use global iterative simulations — which is exactly the class of algorithm that produces terrain that holds up when you look closely.
+
+Three things I'd flag as the highest-leverage decisions:
+
+Landscape evolution models over cellular erosion. The graphics-tradition droplet and pipe-model erosion methods are what most hobby projects use, but the geomorphology tradition — stream power incision plus hillslope diffusion, solved with Braun & Willett's O(n) implicit method — produces drainage networks that actually obey Hack's law and Horton's laws. It's also faster at continental scale, since it takes million-year timesteps instead of tiny stable ones.
+
+Climate as a feedback loop, not a post-process. Orographic precipitation modulating erodibility is the difference between a map where the mountains all look the same and one where the windward side is deeply incised and the lee side is high, dry, and blocky.
+
+Build the metrics module before you build the third algorithm. You said the goal is testing various approaches — slope–area concavity and Hack's law exponent give you an objective answer to "is this more realistic," and they're the diagnostics that catch the specific failure mode of noise-only terrain: looks fine in a screenshot, falls apart when you trace a valley.
+
+Where do you want to start — the field-stack/operator scaffolding, or a specific stage?
+
+
+Terrain algorithms
+Document · MD
+What is the best way to generate the outlines of the land masses for the whole map.  Every land mass should be surrounded by ocean.  Would plate tectonic simulation be able to do this?
+
+
+Architected crust-based coastline generation over tectonic simulation approach
+Architected crust-based coastline generation over tectonic simulation approach
+Plate tectonic simulation is the wrong tool for this specific job, and it's worth being precise about why: coastlines are set by crustal thickness and isostasy, not by plate boundaries. Continental crust is ~35 km thick and buoyant; oceanic crust is ~7 km thick and dense. Sea level cuts across that difference. Plate boundaries determine where mountains, trenches, and volcanic arcs go — which is a different question from where the water's edge falls.
+
+There's also a chicken-and-egg problem. A tectonic simulation needs an initial crust distribution as input; it moves and deforms crust, it doesn't create the continental/oceanic split from nothing. So you need an outline generator regardless. Add to that: tectonic sims have no concept of your map edge (they'll happily shove a craton off the boundary), they're slow to converge, they give you weak control over "I want five continents," and they can go degenerate — everything welds into one supercontinent, or shreds into gravel.
+
+Recommended: generate crust first, threshold second
+Poisson-disk sample 12–30 plate seeds, Lloyd-relax two or three times so plate sizes are even rather than lottery-distributed.
+Voronoi partition into plates.
+Assign continental vs. oceanic to hit a target crust fraction. Generate the assignment with spatial correlation — an oceanic plate's neighbors are somewhat more likely to be oceanic — so you get a few large continents instead of confetti. Force every plate touching the border to oceanic.
+Merge adjacent continental plates into continent groups. This is what gives you naturally varied continent sizes without picking them by hand.
+Build a crustal thickness field: high inside continental plates, low in oceanic, with a transition zone a few percent of map width across the boundary.
+Perturb the boundary with domain-warped multi-octave fBm applied to the thickness field near the transition. Multi-octave is important — real coastlines are fractal, and a single-frequency warp reads as fake immediately.
+Threshold at sea level to get the land mask. Tune the threshold to hit your land fraction.
+This is worth doing over pure thresholded noise because Voronoi boundaries produce something noise can't: the straight-ish, angular coast segments that real rifted margins actually have. Look at the east coast of South America, the west coast of Africa, or the Indian subcontinent — they're much more polygonal than fractal noise ever generates.
+
+On targets: Earth is ~29% land, but continental crust covers ~40% of the surface — the difference is submerged shelf. Generate the crust generously and let sea level do the trimming. Sea level then becomes a free knob for ice-age variants of the same world.
+
+The edge constraint
+Three mechanisms, and you want all three:
+
+Constrain the seeds. No continental plate seed within some margin of the border. Cheap and preserves natural shapes.
+Soft falloff in a wide margin band. Multiply thickness by a smoothstep over the outer 10–15%. Keep it wide — a narrow falloff visibly chops continents mid-body, and a radial falloff over the whole map makes every world a round blob.
+Hard guarantee by flood fill. Flood ocean inward from the border, then demote any land connected component that touches it. This is the actual guarantee; the first two just make it rarely fire.
+Then run connected-component analysis anyway to prune speckle islands below a threshold — or keep them deliberately and call them archipelagos.
+
+Worth noting: on a sphere or a torus this whole constraint evaporates. If a globe is ever plausible for your project, deciding that early saves you this entire subsystem.
+
+What tectonics is actually for
+Once you have an outline, assign plate velocities and classify each boundary as convergent, divergent, or transform. That gives you the uplift field — and, more importantly for coastline realism, it tells you what kind of coast each stretch is:
+
+
+
+Tagging every coastal segment with its margin type is a bigger realism win than refining the outline shape itself, because it drives so much downstream: shelf width, whether rivers end in broad deltas or plunge straight into the sea, whether erosion produces fjords or barrier islands, where the deep-water ports would be. Passive margins get a wide shelf and low coastal relief; active margins get mountains within a few tens of kilometers of the water, sometimes with no shelf at all.
+
+Two techniques worth stealing
+Rift a supercontinent. Generate one large landmass, draw a jagged rift path through it, then split and translate the halves apart with a slight rotation. Their coastlines now fit together like puzzle pieces. This is the Africa–South America relationship, and it's the single most convincing "this is a real world" signal you can plant — people notice it consciously. You don't need a tectonic simulation for it; it's a geometry operation.
+
+Vary coastline roughness by margin type. Coastlines are fractal, but their fractal dimension varies a lot in reality — roughly 1.25 for Britain's glaciated, drowned coast versus about 1.05 for South Africa's smooth passive margin. If you drive the warp amplitude and octave count from margin type and glacial history, your coasts stop looking like they came from one noise function.
+
+That also gives you a validation metric for the testbed: box-count the fractal dimension of generated coastlines and compare against real coasts of the same type. It's cheap to compute and it catches the "everything is uniformly wiggly" failure directly.
+
+Want me to sketch the crust-generation stage as an operator in the field-stack design — signature, parameters, and outputs it needs to hand to the erosion stage?
+
+yes, sketch the crust generation stage and add it to the plan
+
+
+Architected crustal operator with isostatic physics and tectonic integration
+Architected crustal operator with isostatic physics and tectonic integration
+Added as a "Stage 1 spec" section, with the pipeline block updated to point at it. Four things in there are worth flagging as the load-bearing decisions rather than incidental detail:
+
+The operator declares requires and provides. Crust generation is the root — it requires nothing but the domain. Making the contract explicit lets the harness topologically validate a pipeline config before it spends twenty minutes on erosion, and lets it know which downstream stages to invalidate when you touch one parameter. That's the difference between a testbed and a script.
+
+Sub-seeds derived by name, not sequentially. If every sub-step pulls from one RNG stream in order, changing warp_octaves reshuffles your plate layout and every A/B comparison becomes meaningless. Derive each from hash(stage_seed, substep_name) instead. This is a five-minute decision that's painful to retrofit.
+
+Sea level is solved, not assumed. Sub-step 10 does a quantile search on the elevation histogram to hit the target land fraction. This absorbs a lot of parameter drift — you can change crustal thicknesses or densities and still get a world with roughly Earth-like land coverage rather than a drowned or desiccated one.
+
+Uplift is separable. I listed it as an output because stage 2 needs it, but it's really its own operator consuming boundary_type and boundary_stress. Splitting it means you can swap uplift models without regenerating plates, and uplift is the thing you'll want to iterate on most once erosion is running.
+
+One number check worth doing early: the isostasy math gives a 4.45 km gap between mean continental surface and abyssal plain, against ~4.5 km in reality. If your implementation lands far from that, something's wrong with the densities or the thickness field before you've written a line of erosion code.
+
+Stage 2 next, or do you want to build the harness scaffolding first so stage 1 has somewhere to live?
+
+
+Terrain algorithms
+Document · MD
+What is the best language / technology for implementing this?  I would like to do my testing locally on a windows desktop, but eventually make map generation a service on a server.
+
+
+Added to memory
+Added to memory
+Two things worth settling before the language question, because they mostly determine the answer.
+
+You have two workloads with opposite requirements. The testbed rewards iteration speed — you'll run hundreds of experiments and most of your time goes to looking at results, not computing them. The service rewards throughput and clean deployment. A single language optimized for one is compromised for the other.
+
+You will have Python on the analysis side regardless of what you pick. Your validation plan needs box-counting, slope–area regression, Horton ratios, hypsometric curves, and comparison against real SRTM/Copernicus tiles. That ecosystem — rasterio, GDAL, scipy.ndimage, scikit-image, matplotlib — is Python and has no real equivalent anywhere else. Even if you write the core in C#, you'll export rasters and analyze them in Python. So the real question is narrower than it looks: what language is the compute core?
+
+Recommendation: Rust core, Python harness
+Rust compiled to a native Python module via PyO3 and maturin. The same crate is later wrapped in axum to become the service, with no rewrite of the numerics.
+
+Why this fits your workload specifically:
+
+The hard parts of your pipeline are graph and pointer work, not array math. Braun–Willett's stream power solver is a receiver array plus a topological ordering; priority-flood is a binary heap over millions of cells. Neither vectorizes. NumPy gives you nothing here, and pure Python is 100–1000× off. Rust's index-based graph structures (Vec<u32> receivers) sidestep the borrow checker entirely — this is the shape of Rust code that's genuinely pleasant to write.
+Rayon has no GIL. Erosion iterations parallelize across rows or subtrees trivially. Python's parallelism story for this is multiprocessing with pickled arrays, which is miserable.
+The service story is a static binary in a scratch container. No interpreter, no LLVM runtime, no dependency resolution at deploy time.
+maturin is genuinely low-friction now. maturin develop and your Rust functions are importable in a Jupyter session, operating on NumPy arrays zero-copy.
+The honest cost: if you don't already know Rust, budget real time. It's not a weekend.
+
+The alternatives, honestly
+Stack Where it wins     Where it hurts
+Rust + PyO3 Perf, parallelism, deployment, one core for both phases     Learning curve if new; weak plotting on the Rust side
+Python + Numba    Fastest to first result; whole ecosystem in reach     Numba is a Python subset — graph code and structs get awkward; obscure compile errors; heavier deploy
+C#/.NET     Superb on Windows; ASP.NET service story; good perf with Span<T> and SIMD     Thin numerical ecosystem; you'll still add Python for analysis
+C++   Max perf; fastscapelib is C++ Windows build/dependency friction; slowest iteration
+Julia Fast and exploratory — the real best-of-both for the numerics     Deployment as a service is off the beaten path; smaller talent pool
+Go    Easy service, easy concurrency      Weak numerics, no SIMD story — middling fit
+If you're already a .NET person and Rust sounds like a detour, C# is a defensible choice and I wouldn't argue hard against it. If you're already a Python person and want results this month, Python+Numba first with the intent to port hot spots later is also fine — just structure the operators with clean boundaries so porting is mechanical.
+
+Worth knowing before you build from scratch: fastscapelib implements the Braun–Willett solver with both C++ and Python bindings, and richdem gives you priority-flood depression filling. Landlab is a full Python landscape evolution framework. Even if you ultimately write your own, having a reference implementation to check your slope–area exponents against is worth a lot.
+
+Don't reach for GPU yet
+Cellular erosion (virtual pipes, thermal talus) and noise are embarrassingly parallel and would fly on GPU. But stream power and priority-flood are inherently sequential graph traversals — parallel variants exist but they're research-grade. Since the landscape evolution model is your realism engine, GPU would accelerate the parts that matter least. Revisit if you add the cellular operators as alternatives to compare against.
+
+Windows → server specifics
+Development. Rust works natively on Windows with the MSVC toolchain; no WSL needed for the inner loop. For the deploy artifact, don't cross-compile — build in a Linux container via Docker Desktop. Cross-linking Windows→Linux is fiddly and you gain nothing.
+
+Generation is minutes-long, so it cannot be a synchronous HTTP request. Structure it as a job queue from day one: POST /maps returns 202 with a job id, a worker pulls the job, writes the output to object storage, and the client polls GET /maps/{id}. Retrofitting this later is painful because it changes your error handling and your client contract.
+
+Memory is your server sizing constraint, not CPU. At f32, a 4096² field is 64 MB; a fifteen-field stack is roughly 1 GB. At 8192² that's 4 GB, before any scratch buffers the erosion solver needs. Size instances by memory and plan to spill intermediate stage checkpoints to disk.
+
+Determinism gotcha. Parallel floating-point reductions don't have a fixed summation order, so the same seed can produce slightly different maps across runs or machines — and in a chaotic system like erosion, "slightly different" compounds into visibly different. If reproducible-by-seed is a requirement (it should be, for a testbed), use fixed chunk sizes with deterministic combination order for any reduction, and test it explicitly.
+
+Concrete picks
+Rust core: flat Vec<f32> with manual indexing over ndarray for grid work (usually faster and simpler); rayon for parallelism; serde + TOML for declarative pipeline configs; spade for Delaunay if you need it, though brute-force nearest-site is fine for 18 plates; image for hillshade PNGs; axum + tokio for the service; pyo3/maturin for the bridge. Write your own noise — fBm and domain warping are about a hundred lines and you want direct control over the octave structure.
+
+Python harness: numpy, scipy.ndimage (connected components, morphology — exactly what prune_islands needs), scikit-image, matplotlib, rasterio, and Jupyter or marimo.
+
+Interchange format: GeoTIFF. Not .npy. Real DEMs arrive as GeoTIFF, and using the same format for your output means your metrics code runs unmodified against both generated and real terrain. That single choice makes your validation story dramatically easier.
+
+What's your current background — are you coming from Python, .NET, or something else? That shifts the recommendation more than anything else here, and I can add the decision to the plan doc once it's settled.
+
+
