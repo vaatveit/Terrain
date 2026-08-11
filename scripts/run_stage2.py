@@ -124,6 +124,13 @@ def main():
         print(f"  elevation: wet quartile {z[wet].mean():.0f} m, "
               f"arid quartile {z[dry].mean():.0f} m")
         print(f"  temperature {cres.climate.temperature_c[land].mean():.1f} C mean on land")
+
+        from terrain import biomes
+        biome = biomes.classify(cres.climate.temperature_c, cres.climate.precipitation_mm,
+                                land, z, grid.lat)
+        print("  biomes, share of land:")
+        for name, share in biomes.summary(biome, grid.area, land):
+            print(f"    {name:28s} {share:6.1%}")
     else:
         res = stage2.evolve(grid, crust.elevation, uplift, is_ocean, p,
                             n_steps=args.steps, verbose=True,
@@ -180,6 +187,12 @@ def main():
         render_equirect(grid, crust, out, title=(
             f"Stage 2 — {args.steps * args.dt:,.0f} Myr of erosion, "
             f"peaks {z[land].max():,.0f} m, per-basin θ {theta:.3f}"))
+        if args.coupled:
+            from run_stage1 import render_biomes
+            bout = str(ROOT / "data" / f"biomes_n{args.n}_seed{args.seed}.png")
+            print(f"Rendering {bout}...")
+            render_biomes(grid, biome, bout, title=(
+                f"Biomes (Whittaker) — {args.coupled} coupled climate-erosion passes"))
 
 
 if __name__ == "__main__":

@@ -82,6 +82,13 @@ class ClimateParams:
     # latitude profile declines monotonically from the equator and there is no desert belt.
     subsidence_floor: float = 0.10        # background rainout multiplier where air descends
     eddy: float = 0.07                    # isotropic mixing blended into pure advection
+    # Low-frequency wobble applied to the band latitudes, standing in for Rossby waves.
+    # Without it the circulation is perfectly zonal, so the four latitudes where the zonal
+    # wind passes through zero are dead-straight lines all the way round the world -- and
+    # they show up in the output as ruler-straight stripes of anomalous rainfall, most
+    # obviously along the equator. Real cells meander by tens of degrees of longitude.
+    meander_deg: float = 7.0
+    meander_frequency: float = 1.8
     # Fraction of rain over land that evapotranspires and rains again further inland.
     # Without it, every drop that falls on a continent must have arrived from the coast,
     # and interiors come out as absolute desert: measured 2043 mm within 200 km of the sea
@@ -133,6 +140,18 @@ def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams):
     return t.astype(np.float32), seasonality.astype(np.float32)
 
 
+def _effective_lat(grid, p: ClimateParams, seed=0):
+    """Latitude with the circulation bands wobbled, so they are not perfect circles."""
+    lat = grid.lat.astype(np.float64)
+    if p.meander_deg <= 0.0:
+        return lat
+    from terrain import noise
+    out = np.empty(grid.cell_count, dtype=np.float64)
+    noise.fbm(np.ascontiguousarray(grid.xyz), noise.permutation(noise.sub_seed("wind", seed)),
+              noise.GRAD3, 3, p.meander_frequency, 2.0, 0.5, out)
+    return np.clip(lat + p.meander_deg * out, -90.0, 90.0)
+
+
 def wind_field(grid, p: ClimateParams):
     """Surface wind from the three-cell circulation, as tangent vectors.
 
@@ -145,7 +164,7 @@ def wind_field(grid, p: ClimateParams):
     in the Hadley and Polar cells and poleward in the Ferrel cell, which is exactly where
     the zonal sign flips, so v is proportional to sign(lat) * u.
     """
-    lat = grid.lat.astype(np.float64)
+    lat = _effective_lat(grid, p)
     u = -p.wind_speed * np.cos(np.pi * (np.abs(lat) - 15.0) / 30.0)
     v = p.meridional_fraction * np.sign(lat) * u
 
@@ -247,7 +266,7 @@ def rainout_factor(grid, p: ClimateParams):
     where they belong, while leaving orographic rainfall intact, so a range inside the
     desert belt still catches rain the way the Atlas does on the edge of the Sahara.
     """
-    ascent = 0.5 + 0.5 * np.cos(np.pi * np.abs(grid.lat.astype(np.float64)) / 30.0)
+    ascent = 0.5 + 0.5 * np.cos(np.pi * np.abs(_effective_lat(grid, p)) / 30.0)
     return p.subsidence_floor + (1.0 - p.subsidence_floor) * ascent
 
 

@@ -57,6 +57,16 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=0.50):
     0.50 keeps peaks close to the uncoupled result while retaining most of the contrast.
     It is also the right shape physically: arid basins erode slowly, not never -- episodic
     runoff, groundwater and hillslope processes all keep working when the rain does not.
+
+    OPEN ISSUE, resolution dependence. At n=785 the same settings give 13.5 km peaks
+    against 8.4 km for the uncoupled run, where n=256 gives 7.7 km against 6.7 km. Finer
+    grids resolve a more extreme precipitation field (driest quartile reaches 1 mm/yr), so
+    the spread of discharge weights widens and arid ground holds proportionally more
+    relief. Raising the floor cannot fix it -- the algebra needs a floor above 1, which is
+    meaningless. The real fix is upstream: the climate model's precipitation distribution
+    is far more skewed than Earth's, and that skew grows with resolution. Retuning K for
+    the coupled case at each resolution is the workaround; compressing the precipitation
+    distribution is the cure.
     """
     p = np.asarray(precipitation_mm, dtype=np.float64)
     # Normalise by the MEDIAN, not the mean. Precipitation is heavily right-skewed (median

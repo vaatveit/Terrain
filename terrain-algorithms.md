@@ -218,7 +218,25 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → *next:* stage 5 secondary erosion (glacial, aeolian, coastal), or stage 7 biomes, whichever is worth more to you.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ (Whittaker; land shares within a few points of Earth's) → *next:* stage 5 secondary erosion (glacial, aeolian, coastal), stage 6 hydrology finalize, or stage 9 export.
+
+### Stage 7: biomes
+
+Whittaker classification from the temperature and precipitation Stage 3 already produces, so the stage is nearly free — and it is worth doing early precisely because it turns the climate fields from numbers into something you can judge at a glance. Land shares against Earth's:
+
+| | generated | Earth | | generated | Earth |
+|---|---|---|---|---|---|
+| temperate grassland | 23.4% | 9% | boreal forest | 8.8% | 12% |
+| savanna | 17.8% | 15% | woodland/shrubland | 4.9% | 6% |
+| subtropical desert | 11.8% | 14% | tropical rainforest | 4.3% | 6% |
+| tundra | 11.6% | 8% | tropical seasonal forest | 3.0% | 6% |
+| ice | 9.0% | 10% | temperate seasonal forest | 2.8% | 7% |
+
+Close on desert, savanna and ice; grassland is over-represented and every forest type under-represented, which is the climate model's dry bias showing through rather than a classification error.
+
+**A subtropical desert belt appears in the biomes even though it is absent from the precipitation profile.** Stage 3 declines monotonically from the equator with no dip at 30°, yet the map has clear desert bands near ±20°. Whittaker's threshold is on temperature *and* rainfall jointly (T > 20 °C with P < 250 mm), so warm-and-moderately-dry ground classifies as desert without needing a rainfall minimum. Worth knowing before reading too much into it: the belt is real on the map but arrives for a different reason than it does on Earth.
+
+Two things the raw diagram needs: **permanent ice**, which it has no cell for, placed by a latitude-dependent snowline (~4900 m at the equator falling to sea level at the poles) — this is what makes mountains read as mountains; and a guard against `cos(lat)**1.6` returning NaN at the poles from a slightly negative cosine, which would compare false against every elevation and silently leave the ice caps unmarked.
 
 Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
@@ -356,6 +374,8 @@ Temperature, three-cell wind, and precipitation as a steady-state advection-reac
 **Measuring a rain shadow needs a control, and without one the number is nearly all continentality.** Walking upwind and downwind from ridge cells gives a raw windward/leeward ratio of ~2.4×, which looks like a strong rain shadow. Flattening the terrain and re-measuring *at the same points* gives ~2.5×. Almost the entire raw signal is the coast-to-interior gradient — walking upwind from a mountain heads toward the sea, downwind heads inland. The isolated orographic contribution is the ratio of the two, and at the tuned settings it is **1.34×**. An earlier iteration of this work reported 1.9–2.9× "rain shadows" that were nothing of the kind.
 
 Also note what does *not* work as a test: comparing the p90/p10 spread of precipitation with and without relief. Flat terrain gives a **wider** spread, because without orographic rain the interiors go bone dry and p10 collapses.
+
+**The circulation must meander.** Perfectly zonal bands put the four zero-wind latitudes on exact circles, and they showed up in the output as ruler-straight stripes of anomalous rainfall — plainly visible in the biome map as a dark line along the equator. Perturbing the band latitudes with low-frequency noise (standing in for Rossby waves) drops the equatorial stripe from 2.05× its neighbours to 1.61×, and a wet ITCZ at that ratio is physically correct anyway. It costs some of the orographic signal, because a less consistent wind direction makes the upwind/downwind comparison noisier.
 
 **Two limitations, recorded rather than papered over:**
 

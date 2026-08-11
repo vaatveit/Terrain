@@ -39,6 +39,48 @@ def load_or_build(n):
     return g
 
 
+def render_biomes(grid, biome, path, width=2048, title=None):
+    """Equirectangular biome map, coloured by the conventional scheme."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+    from scipy.spatial import cKDTree
+
+    from terrain import biomes as bio
+
+    height = width // 2
+    lon = np.radians(np.linspace(-180, 180, width, endpoint=False) + 180.0 / width)
+    lat = np.radians(np.linspace(90, -90, height, endpoint=False) - 90.0 / height)
+    lo, la = np.meshgrid(lon, lat)
+    pts = np.stack([np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)], axis=-1)
+    _, idx = cKDTree(grid.xyz).query(pts.reshape(-1, 3), workers=-1)
+    b = biome[idx].reshape(height, width)
+
+    img = np.zeros((height, width, 3), dtype=np.float32)
+    present = []
+    for code, colour in bio.COLOURS.items():
+        m = b == code
+        if m.any():
+            img[m] = colour
+            if code != bio.OCEAN:
+                present.append(code)
+
+    fig, ax = plt.subplots(figsize=(width / 200, height / 200), dpi=200)
+    ax.imshow(img, extent=(-180, 180, -90, 90), interpolation="nearest")
+    ax.set_title(title or "Biomes (Whittaker)", fontsize=8)
+    ax.set_xticks(range(-180, 181, 60))
+    ax.set_yticks(range(-90, 91, 30))
+    ax.tick_params(labelsize=6)
+    ax.legend(handles=[Patch(facecolor=bio.COLOURS[c], label=bio.NAMES[c])
+                       for c in present],
+              loc="lower left", fontsize=5, ncol=4, framealpha=0.85)
+    fig.tight_layout()
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
+
+
 def render_equirect(grid, crust, path, width=2048, title=None):
     """Nearest-cell resample of the mesh onto an equirectangular image."""
     import matplotlib
