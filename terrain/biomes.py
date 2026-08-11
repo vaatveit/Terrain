@@ -35,6 +35,12 @@ SUBTROPICAL_DESERT = 8
 SAVANNA = 9
 TROPICAL_SEASONAL_FOREST = 10
 TROPICAL_RAINFOREST = 11
+# Arid ground outside the tropics. Without these, aridity can only be expressed where it is
+# also hot, so the desert class becomes a latitude band by construction and every dry
+# temperate region collapses into grassland -- which came out at 23% of land against
+# Earth's 9%. The Gobi sits at 43N and Patagonia at 45S; neither is a warm desert.
+TEMPERATE_DESERT = 12
+COLD_DESERT = 13
 
 NAMES = {
     OCEAN: "ocean", ICE: "ice", TUNDRA: "tundra", BOREAL_FOREST: "boreal forest",
@@ -43,6 +49,7 @@ NAMES = {
     TEMPERATE_RAINFOREST: "temperate rainforest", SUBTROPICAL_DESERT: "subtropical desert",
     SAVANNA: "savanna", TROPICAL_SEASONAL_FOREST: "tropical seasonal forest",
     TROPICAL_RAINFOREST: "tropical rainforest",
+    TEMPERATE_DESERT: "temperate desert", COLD_DESERT: "cold desert",
 }
 
 # Map colours, roughly the conventional ones so the render reads without a legend.
@@ -57,6 +64,8 @@ COLOURS = {
     SAVANNA: (0.72, 0.70, 0.33),
     TROPICAL_SEASONAL_FOREST: (0.38, 0.62, 0.24),
     TROPICAL_RAINFOREST: (0.13, 0.42, 0.16),
+    TEMPERATE_DESERT: (0.76, 0.64, 0.44),
+    COLD_DESERT: (0.68, 0.65, 0.58),
 }
 
 
@@ -92,15 +101,21 @@ def classify(temperature_c, precipitation_mm, land_mask, elevation_m=None, lat_d
     out[warm & (p >= 1500) & (p < 2500)] = TROPICAL_SEASONAL_FOREST
     out[warm & (p >= 2500)] = TROPICAL_RAINFOREST
 
-    # Temperate
-    out[temperate & (p < 400)] = TEMPERATE_GRASSLAND
+    # Temperate. The arid cut-offs sit below textbook Whittaker (which puts temperate
+    # desert nearer 250 mm) because this pipeline's precipitation carries a heavy dry tail
+    # -- land p25 is about 15 mm against Earth's ~250 -- so absolute thresholds
+    # over-assign aridity. Note that lowering them barely helps: temperate desert only
+    # falls from 20% of land to 16% between cut-offs of 200 mm and 80 mm. The real cause
+    # is the Stage 3 precipitation skew, not the classification.
+    out[temperate & (p < 120)] = TEMPERATE_DESERT
+    out[temperate & (p >= 120) & (p < 400)] = TEMPERATE_GRASSLAND
     out[temperate & (p >= 400) & (p < 900)] = WOODLAND_SHRUBLAND
     out[temperate & (p >= 900) & (p < 1800)] = TEMPERATE_SEASONAL_FOREST
     out[temperate & (p >= 1800)] = TEMPERATE_RAINFOREST
 
-    # Cold. Below ~100 mm there is not enough water for closed-canopy forest.
-    out[cold & (p < 100)] = TUNDRA
-    out[cold & (p >= 100)] = BOREAL_FOREST
+    # Cold. Below this there is not enough water for closed-canopy forest.
+    out[cold & (p < 90)] = COLD_DESERT
+    out[cold & (p >= 90)] = BOREAL_FOREST
 
     out[frigid] = TUNDRA
 

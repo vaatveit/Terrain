@@ -76,7 +76,18 @@ def _relief_neutral_scale(p, area, land_mask, floor, exponent, lo=1e-6, hi=1e6):
     return float(np.sqrt(lo * hi))
 
 
-def discharge_weight(area, precipitation_mm, land_mask, floor=0.50, exponent=0.45):
+DISCHARGE_FLOOR = 0.30
+"""Minimum discharge weight, as a fraction of the typical cell.
+
+One constant, referenced by both `discharge_weight` and `run`. They previously carried
+separate defaults of 0.50 and 0.30, so every production run used 0.30 while the docstring
+recommended 0.50 -- and the K calibration was done against 0.30 without that being written
+down anywhere.
+"""
+
+
+def discharge_weight(area, precipitation_mm, land_mask, floor=DISCHARGE_FLOOR,
+                     exponent=0.45):
     """Cell area scaled by precipitation, normalised so the mean weight is one cell area.
 
     Normalising matters: it keeps Q in area units, so K retains its calibrated meaning and
@@ -91,9 +102,9 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=0.50, exponent=0.4
         peak (m)    11950    9531    7735
         wet-dry (m)  -293    -246    -220
 
-    0.50 retains most of the contrast. It is also the right shape physically: arid basins
-    erode slowly, not never -- episodic runoff, groundwater and hillslope processes all
-    keep working when the rain does not.
+    0.30 is the shipped value and the one K is calibrated against. It is also the right
+    shape physically: arid basins erode slowly, not never -- episodic runoff, groundwater
+    and hillslope processes all keep working when the rain does not.
 
     Note the floor sets the coupled/uncoupled peak ratio, at floor^(-m/n) = 1.37x, and that
     is a feature. Arid rain-shadow orogens are where the highest ground is, which is why
@@ -124,7 +135,7 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=0.50, exponent=0.4
 
 def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
         clim: climate_mod.ClimateParams = None, passes=3, steps_per_pass=200,
-        discharge_floor=0.30, verbose=False) -> CoupledResult:
+        discharge_floor=DISCHARGE_FLOOR, verbose=False) -> CoupledResult:
     """Alternate erosion and climate until the pair stops moving."""
     lem = lem or stage2.LemParams()
     land_mask = ~np.asarray(is_ocean)

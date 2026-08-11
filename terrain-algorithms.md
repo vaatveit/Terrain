@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ → **Stage 9 export** ✅. **The pipeline is complete.** `scripts/generate_world.py` runs all nine stages end to end and writes a georeferenced world; 167 tests pass.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ → **Stage 9 export** ✅. **The pipeline is complete** — `scripts/generate_world.py` runs all nine stages end to end and writes a georeferenced world. See **[README.md](README.md)** for how to run it, what every parameter does, and what the outputs contain.
 
 ### Stage 5: secondary erosion — mostly sub-grid
 
@@ -301,6 +301,31 @@ Whittaker classification from the temperature and precipitation Stage 3 already 
 | ice | 9.0% | 10% | temperate seasonal forest | 2.8% | 7% |
 
 Close on desert, savanna and ice; grassland is over-represented and every forest type under-represented, which is the climate model's dry bias showing through rather than a classification error.
+
+### Zonal banding: what fixed it, and what did not
+
+The biome map came out in ruler-straight latitude bands. Measuring first — *zonality*, the share of a field's variance explained by latitude alone — located the cause precisely:
+
+| field | zonality |
+|---|---|
+| temperature | **0.962** |
+| log precipitation | 0.187 |
+| elevation | 0.058 |
+
+Precipitation was already varied; temperature was almost purely latitudinal, and biomes threshold on temperature. Four candidate fixes, measured against how far a desert belt's mean latitude wanders with longitude:
+
+| change | result |
+|---|---|
+| Continental cooling on mean temperature | zonality 0.962 → 0.959; band dominance *worse*, 59% → 64% |
+| Wind meander 0° → 28° | belt wander 4.62° → 3.72° |
+| Lower arid thresholds (200 → 80 mm) | temperate desert 20% → 16% of land |
+| **Arid biome classes outside the tropics** | **belt wander 4.41° → 9.87°** |
+
+**The cause was in the classification, not the climate.** `SUBTROPICAL_DESERT` requires T ≥ 20 °C, so aridity could only be expressed where it was also hot — making the desert class a latitude band *by construction*, and collapsing every arid temperate region into grassland (23% of land against Earth's 9%). Earth's Gobi sits at 43°N and Patagonia at 45°S; neither is a warm desert, and neither could exist in the output. Adding temperate and cold desert classes lets aridity appear at any latitude.
+
+**Two things kept despite not fixing the banding.** Continentality on mean annual temperature is real physics that was simply missing — Siberia averages −10 °C where the Norwegian coast at the same latitude averages +5 °C — and the wind meander does help a little.
+
+**And an honest limit: the bands are still visible.** Deserts now span more latitudes but are not much patchier, and a wide uniform band reads much like a narrow one. Breaking zonality properly needs mechanisms this model does not have: **ocean-current heat transport** (the Gulf Stream is why Norway is not Labrador) and a **seasonal cycle** (monsoons, and the prerequisite for Köppen classification). Both are stage-scale additions rather than tuning.
 
 **A subtropical desert belt appears in the biomes even though it is absent from the precipitation profile.** Stage 3 declines monotonically from the equator with no dip at 30°, yet the map has clear desert bands near ±20°. Whittaker's threshold is on temperature *and* rainfall jointly (T > 20 °C with P < 250 mm), so warm-and-moderately-dry ground classifies as desert without needing a rainfall minimum. Worth knowing before reading too much into it: the belt is real on the map but arrives for a different reason than it does on Earth.
 

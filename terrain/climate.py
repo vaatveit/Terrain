@@ -60,6 +60,15 @@ class ClimateParams:
     lapse_rate_c_per_km: float = 6.5      # standard environmental lapse rate
     continentality_c: float = 6.0         # seasonal amplitude gain far from the sea
     continentality_scale_km: float = 1500.0
+    # Annual-MEAN cooling deep inside a continent, at high latitude. Distinct from the
+    # seasonal amplitude above, and the more important of the two here: the sea moderates
+    # the annual mean, not just its swing. Siberia at 60N averages about -10 C where the
+    # Norwegian coast at the same latitude averages +5 C.
+    #
+    # Without this, temperature is a pure function of latitude and elevation and comes out
+    # 96% zonal, which is what drove the ruler-straight biome bands. Coast distance depends
+    # on continent shape, so it is the cheapest genuinely non-zonal signal available.
+    continental_cooling_c: float = 15.0
     # Wind. Bands are Hadley / Ferrel / Polar: easterly, westerly, easterly.
     wind_speed: float = 1.0               # arbitrary units; only direction and ratio matter
     meridional_fraction: float = 0.3
@@ -131,12 +140,23 @@ class Climate:
 
 
 def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams):
-    """Latitude insolation, elevation lapse rate, and continentality."""
+    """Latitude insolation, elevation lapse rate, and continentality.
+
+    Continentality affects the annual MEAN, not only the seasonal swing. The latitude
+    weighting matters: the sea moderates a cold winter far more than it moderates a warm
+    one, so the effect is strong at high latitude and vanishes at the equator -- the
+    interior of the Amazon is not colder than its coast.
+    """
     lat = np.radians(grid.lat.astype(np.float64))
     sea_level_t = p.t_pole_c + (p.t_equator_c - p.t_pole_c) * np.cos(lat) ** 1.5
-    t = sea_level_t - p.lapse_rate_c_per_km * np.maximum(elevation_m, 0.0) / 1000.0
-    seasonality = p.continentality_c * (
-        1.0 - np.exp(-coast_distance_km / p.continentality_scale_km))
+
+    inland = 1.0 - np.exp(-np.asarray(coast_distance_km, dtype=np.float64)
+                          / p.continentality_scale_km)
+    t = (sea_level_t
+         - p.lapse_rate_c_per_km * np.maximum(elevation_m, 0.0) / 1000.0
+         - p.continental_cooling_c * inland * np.abs(np.sin(lat)) ** 1.5)
+
+    seasonality = p.continentality_c * inland
     return t.astype(np.float32), seasonality.astype(np.float32)
 
 

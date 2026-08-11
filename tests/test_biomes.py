@@ -30,7 +30,8 @@ def _one(t, p, elev=0.0, lat=0.0):
     (12, 600, biomes.WOODLAND_SHRUBLAND),
     (12, 200, biomes.TEMPERATE_GRASSLAND),
     (0, 500, biomes.BOREAL_FOREST),
-    (0, 50, biomes.TUNDRA),
+    (0, 50, biomes.COLD_DESERT),
+    (12, 60, biomes.TEMPERATE_DESERT),
     (-8, 300, biomes.TUNDRA),
     (-20, 300, biomes.ICE),
 ])
@@ -84,6 +85,34 @@ def world():
     b = biomes.classify(res.climate.temperature_c, res.climate.precipitation_mm,
                         crust.land_mask, res.elevation, g.lat)
     return g, crust, res, b
+
+
+def test_deserts_are_not_a_single_latitude_band(world):
+    """Aridity must be expressible outside the tropics, or the desert class becomes a
+    latitude band by construction.
+
+    With only a warm-desert category, every arid temperate region collapses into grassland
+    -- 23% of land against Earth's 9% -- and the desert belt renders as a ruler-straight
+    stripe. Measured by how much the belt's mean latitude wanders with longitude: 4.4
+    degrees with warm desert alone, 9.9 with the temperate and cold classes added.
+    """
+    g, crust, res, b = world
+    land = crust.land_mask
+    arid = np.isin(b, [biomes.SUBTROPICAL_DESERT, biomes.TEMPERATE_DESERT,
+                       biomes.COLD_DESERT]) & land
+    warm_only = (b == biomes.SUBTROPICAL_DESERT) & land
+
+    def wander(mask, nbins=16):
+        if mask.sum() < 100:
+            return 0.0
+        la, lo = np.abs(g.lat[mask]), g.lon[mask]
+        e = np.linspace(-180, 180, nbins + 1)
+        i = np.clip(np.digitize(lo, e) - 1, 0, nbins - 1)
+        means = [la[i == k].mean() for k in range(nbins) if (i == k).sum() > 10]
+        return float(np.std(means)) if len(means) > 3 else 0.0
+
+    assert arid.sum() > warm_only.sum(), "no arid ground outside the tropics"
+    assert wander(arid) > wander(warm_only)
 
 
 def test_biomes_are_ordered_sensibly_by_latitude(world):
