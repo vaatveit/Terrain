@@ -123,8 +123,8 @@ def generate_crust(grid, params: CrustParams = None, seed: int = 0,
 
     # Sub-seeds derived by NAME, not drawn sequentially from one stream. Otherwise changing
     # the relief octaves would reshuffle the continents and no A/B comparison would hold.
-    perm_crust = noise.permutation(hash(("crust", seed)) & 0xFFFFFFFF)
-    perm_relief = noise.permutation(hash(("relief", seed)) & 0xFFFFFFFF)
+    perm_crust = noise.permutation(noise.sub_seed("crust", seed))
+    perm_relief = noise.permutation(noise.sub_seed("relief", seed))
 
     # 1. Continentality from warped low-frequency noise, independent of any plate layout.
     field = np.empty(n, dtype=np.float64)
@@ -234,8 +234,8 @@ def generate_crust_tectonic(grid, params: CrustParams = None,
         if verbose:
             print(f"  {msg}", flush=True)
 
-    perm_crust = noise.permutation(hash(("crust", seed)) & 0xFFFFFFFF)
-    perm_relief = noise.permutation(hash(("relief", seed)) & 0xFFFFFFFF)
+    perm_crust = noise.permutation(noise.sub_seed("crust", seed))
+    perm_relief = noise.permutation(noise.sub_seed("relief", seed))
 
     # 1-2. Continentality, independent of the plates.
     field = np.empty(n, dtype=np.float64)

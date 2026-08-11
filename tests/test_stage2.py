@@ -265,19 +265,19 @@ def test_diffusion_does_almost_no_direct_work_at_continental_resolution():
         f"{relief:.0f} m of relief; if this grows the docstring needs revisiting")
 
 
-def test_transient_perturbations_decay_away():
-    """A one-off 1 cm nudge leaves essentially no trace, and less of one the longer you run.
+def test_a_tiny_nudge_permanently_reorganises_some_divides():
+    """A one-off 1 cm nudge leaves a PERMANENT mark on a small fraction of the world.
 
-    Worth pinning down, because the intuition that landscape evolution is chaotic is only
-    half right. The implicit solve contracts deviations by 1/(1+F) every step, so a transient
-    shrinks geometrically and disappears into float32 rounding. Measured here: ~0.018 m of
-    residual after 25 steps against 4 km of relief, and bit-identical output by 100 steps for
-    most perturbations. The steady state is a strong attractor.
+    Measured: 99.2% of land ends up bit-identical, but 0.8% of cells differ by up to 433 m,
+    and that difference is fixed from step 100 onward rather than decaying. Where the
+    implicit solve contracts a perturbation smoothly, it dies; where it tips a receiver
+    choice at a drainage divide, the affected sub-basin re-routes and never comes back.
 
-    What the model IS sensitive to is *persistent* forcing, which accumulates until it flips
-    a receiver at a divide and reassigns a whole sub-basin -- see the diffusion test. So the
-    determinism concern for parallel reductions still stands: those bias every step, they
-    are not a one-off.
+    An earlier version of this suite asserted the opposite -- that transients decay to
+    bit-identical output -- and passed, because the sub-seed bug meant every process
+    generated a different world and that one happened to be smoothly contracting. The
+    lesson generalises: reproducibility here means identical inputs give identical outputs
+    (see the test below), NOT that near-identical inputs give near-identical worlds.
     """
     g = build_goldberg(64)
     crust = stage1.generate_crust(g, seed=3)
@@ -290,19 +290,18 @@ def test_transient_perturbations_decay_away():
     nudged_z = crust.elevation.copy()
     nudged_z[land] += (rng.standard_normal(int(land.sum())) * 0.01).astype(np.float32)
 
-    residual = {}
-    for steps in (25, 150):
+    changed = {}
+    for steps in (200, 300):
         base = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=steps)
         nudged = stage2.evolve(g, nudged_z, uplift, is_ocean, p, n_steps=steps)
         delta = np.abs(base.elevation[land] - nudged.elevation[land])
-        relief = float(base.elevation[land].max() - base.elevation[land].min())
-        residual[steps] = (float(delta.max()), relief)
+        changed[steps] = (float((delta > 0).mean()), float(delta.max()))
 
-    for steps, (worst, relief) in residual.items():
-        assert worst < 1e-4 * relief, (
-            f"after {steps} steps a 1 cm nudge still shows {worst:.3f} m "
-            f"against {relief:.0f} m of relief")
-    assert residual[150][0] <= residual[25][0], "the transient must keep decaying"
+    frac, worst = changed[300]
+    assert frac < 0.05, f"{frac:.1%} of land moved; expected only scattered divide flips"
+    assert worst > 1.0, "expected at least one divide to flip and stay flipped"
+    # Settled, not still decaying: the same cells differ by the same amount at 200 and 300.
+    assert changed[300] == pytest.approx(changed[200], rel=1e-6)
 
 
 def test_persistent_forcing_reorganises_divides():

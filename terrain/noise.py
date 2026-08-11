@@ -14,6 +14,8 @@ cells x several octaves.
 
 from __future__ import annotations
 
+import zlib
+
 import numpy as np
 from numba import njit, prange
 
@@ -27,6 +29,24 @@ GRAD3 = np.array(
 
 _F3 = 1.0 / 3.0
 _G3 = 1.0 / 6.0
+
+
+def sub_seed(name: str, seed: int) -> int:
+    """Derive a stage's sub-seed from its NAME, stably across processes.
+
+    Two requirements, and the obvious implementation fails the second.
+
+    By name rather than sequentially: if every sub-step drew from one RNG stream in order,
+    changing the relief octaves would reshuffle the continents and no A/B comparison would
+    mean anything.
+
+    Stable across processes: Python's built-in hash() is randomised per interpreter for
+    str (and for any tuple containing one), so `hash(("crust", seed))` silently produced a
+    DIFFERENT WORLD on every restart. Same seed, same code, different planet -- and a
+    same-process reproducibility test cannot see it, because within one run the hash is
+    fixed. crc32 over a plain byte string has no such surprise.
+    """
+    return zlib.crc32(f"{name}:{seed}".encode()) & 0xFFFFFFFF
 
 
 def permutation(seed: int) -> np.ndarray:

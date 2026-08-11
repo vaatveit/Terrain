@@ -212,7 +212,7 @@ def uplift_field(grid, land_mask, seed=0, u_max_m_per_myr=500.0, craton_floor=0.
     it is given -- which is precisely why the shape being wrong was expensive.
     """
     field = np.empty(grid.cell_count, dtype=np.float64)
-    perm = noise.permutation(hash(("uplift", seed)) & 0xFFFFFFFF)
+    perm = noise.permutation(noise.sub_seed("uplift", seed))
     noise.fbm(np.ascontiguousarray(grid.xyz), perm, noise.GRAD3,
               octaves, frequency, 2.0, 0.5, field)
 

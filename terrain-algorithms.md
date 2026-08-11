@@ -218,7 +218,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → *next:* stage 3, the climate pass.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → *next:* stage 4, the coupled re-run where precipitation modulates `K`.
 
 Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
@@ -314,7 +314,11 @@ A 50× contrast varies slope 50× on its own, while `A^-0.45` spans only ~22× a
 
 **3. Hillslope diffusion does almost no direct work here, but is still not ignorable.** At ~10 km cells the convex-hilltop scale is far below the grid, and one step at the default `D` moves at most 0.014 m against 4 km of relief. Yet because it biases every step in the same direction it eventually tips receiver choices at divides, and a flipped divide re-routes a whole sub-basin: over 100 steps the median difference from a `D=0` run is 0.014 m and the maximum is **720 m**. A small persistent forcing is not a small effect.
 
-**4. Landscape evolution here is *not* chaotic — the steady state is a strong attractor.** A one-off 1 cm random perturbation decays to ~0.018 m within 25 steps and to bit-identical output by 100. The implicit solve contracts deviations by `1/(1+F)` each step, so a transient shrinks geometrically and vanishes into float32 rounding. This is good news for reproducibility, but it does *not* retire the parallel-reduction determinism concern: a non-deterministic reduction biases every step, which is the persistent case in point 3, not the transient one.
+**4. A 1 cm perturbation permanently reorganises part of the world.** ⚠️ *This corrects an earlier claim here that transients decay to bit-identical output.* Measured on a reproducible world: after a one-off 1 cm nudge, 99.2% of land ends up bit-identical, but **0.8% of cells differ by up to 433 m, and that difference is fixed from step 100 onward** rather than decaying. Where the implicit solve contracts a perturbation smoothly it dies; where it tips a receiver choice at a drainage divide, the sub-basin re-routes and never returns. Reproducibility here means identical inputs give identical outputs — not that near-identical inputs give near-identical worlds. The parallel-reduction determinism requirement stands.
+
+The earlier wrong conclusion is instructive: it was measured before the sub-seed bug below was found, so every process was generating a *different world*, and the one that happened to be sampled was smoothly contracting.
+
+**5. Sub-seeds must not be derived with Python's `hash()`.** `hash()` is randomised per interpreter for `str` and for any tuple containing one, so `hash(("crust", seed))` produced **a different planet on every restart** — same seed, same code. A same-process reproducibility test cannot see this, because within one run the hash is fixed; the tell was a Stage 2 test that passed alone, failed in a suite, and reported a different number each time. Use a stable digest (`zlib.crc32` over a byte string). Derive by *name* rather than sequentially, so that changing one stage's parameters does not reshuffle every other stage.
 
 ### Stage 1 proper: plates, Euler poles, derived uplift
 
@@ -336,6 +340,27 @@ The pre-erosion figure is the point of adding tectonics: crustal roots under oro
 - **Uplift terms must be clamped before scaling.** The collision and arc contributions overlap, so summing them unbounded pushed peak uplift to 4,943 m/Myr against a 3,000 cap, and peaks to 19.3 km.
 - **Random Euler poles produce too much strike-slip.** Classifying transform whenever tangential motion exceeds normal gave 44% transform against Earth's ~20%: a real plate system's motion is organised by the ridges and trenches that create the plates, and random poles are not. Requiring tangential to exceed 2.5× normal restores a plausible 39/37/25 convergent/divergent/transform mix.
 - **Warp the plate boundaries, not just the crust field.** Raw spherical Voronoi boundaries are exact great-circle arcs, and since orogens track boundaries, mountain ranges rendered as dead-straight lines. Domain-warping the Voronoi *query position* bends them into arcs without changing the partition's topology.
+
+### Stage 3: climate
+
+Temperature, three-cell wind, and precipitation as a steady-state advection-reaction fixed point rather than time-stepped moisture packets. 11.8 s at n=785.
+
+**What works.** Temperature lands at 26 °C at the equator and −23 °C at the poles with the 6.5 °C/km lapse rate applied exactly, and a land mean of 9.4 °C against Earth's ~8.5. Wind bands come out easterly / westerly / easterly with the circulation going slack at 0°, 30°, 60° and 90° — the doldrums, horse latitudes and polar front. Precipitation falls monotonically from wet tropics to dry poles, and there is a real coast-to-interior gradient.
+
+**Three fixes without which it does not work at all:**
+
+- **Cap moisture at saturation.** Incoming advection weights sum to more than one wherever wind converges, so the fixed point is not a contraction and moisture grows without bound: **1.3 × 10⁷ mm/yr** before the cap. The Clausius–Clapeyron ceiling bounds the operator *and* supplies the mechanism that makes convergence zones rain heavily rather than diverge.
+- **Evaporation fills the saturation deficit, it does not pump into saturated air.** Adding it unconditionally and raining off the overflow made the ocean rain out its own evaporation on the spot — over 10,000 mm/yr across most of the sea — leaving only a trickle to reach land.
+- **Blend a little isotropic mixing into the advection.** Zonal wind is exactly zero at 0°, 30°, 60° and 90°, so on pure advection those cells never export moisture. They became traps that filled and dumped, producing 129,000 mm/yr spikes along four latitude lines.
+
+**Measuring a rain shadow needs a control, and without one the number is nearly all continentality.** Walking upwind and downwind from ridge cells gives a raw windward/leeward ratio of ~2.4×, which looks like a strong rain shadow. Flattening the terrain and re-measuring *at the same points* gives ~2.5×. Almost the entire raw signal is the coast-to-interior gradient — walking upwind from a mountain heads toward the sea, downwind heads inland. The isolated orographic contribution is the ratio of the two, and at the tuned settings it is **1.34×**. An earlier iteration of this work reported 1.9–2.9× "rain shadows" that were nothing of the kind.
+
+Also note what does *not* work as a test: comparing the p90/p10 spread of precipitation with and without relief. Flat terrain gives a **wider** spread, because without orographic rain the interiors go bone dry and p10 collapses.
+
+**Two limitations, recorded rather than papered over:**
+
+1. **No subtropical desert belt.** Earth's great deserts sit near 25–30° because air there descends from the top of the Hadley cell already wrung dry over the ITCZ — the horse latitudes are dry because their air *arrives* dry. A surface-only model has no aloft, so the profile declines monotonically from the equator instead of dipping at 30°. Three surrogates were tried and measured; all failed, one of them making the belt *wetter*. Fixing it properly needs a second vertical level.
+2. **Orographic strength and interior wetness are in direct tension.** Evapotranspiration recycling is what keeps continental interiors from being absolute desert, but recycled moisture refills the lee side and cancels the very contrast the orographic term creates. No setting of the two reaches Earth on both counts at once.
 
 **And a refinement to the uplift-contrast finding above.** The tectonic uplift field has a craton-to-orogen contrast of ~250×, far past the 4× where smooth-noise uplift wrecked the concavity measurement — yet per-basin θ comes out at 0.452 with an IQR of 0.004. The reason is that what matters is uplift variation *within* a basin, not the global ratio. Tectonic uplift clamps most of the continent to a flat cratonic floor with sharp belt transitions, so most basins sit in genuinely uniform `U`; smooth fBm varied continuously everywhere, contaminating every basin. **Realistic tectonics is better for the metric than a gentler but smoother uplift field** — so the `contrast_cap` knob is available but not needed by default.
 

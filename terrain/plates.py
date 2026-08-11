@@ -138,7 +138,7 @@ def partition(grid, sites, params: PlateParams = None, seed=0):
     warped = xyz.copy()
     out = np.empty(n, dtype=np.float64)
     for axis_i, tag in enumerate(("wx", "wy", "wz")):
-        perm = noise.permutation(hash((tag, seed)) & 0xFFFFFFFF)
+        perm = noise.permutation(noise.sub_seed(tag, seed))
         noise.fbm(xyz, perm, noise.GRAD3, 4, p.boundary_warp_frequency, 2.0, 0.5, out)
         warped[:, axis_i] += p.boundary_warp * out
     warped /= np.linalg.norm(warped, axis=1, keepdims=True)

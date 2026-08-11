@@ -179,6 +179,41 @@ def test_generation_is_reproducible(g):
     assert not np.array_equal(a.elevation, c.elevation)
 
 
+def test_sub_seeds_are_stable_across_processes():
+    """The same seed must give the same world after restarting Python.
+
+    Python randomises hash() for str and for any tuple containing one, so deriving
+    sub-seeds as `hash(("crust", seed))` produced a DIFFERENT PLANET on every interpreter
+    restart. A same-process test cannot see it -- within one run the hash is fixed -- which
+    is exactly why this one shells out. It surfaced as a Stage 2 test that passed alone and
+    failed in a suite, with a different number each time.
+    """
+    import subprocess
+
+    code = (
+        "import sys; sys.path.insert(0, r'%s')\n"
+        "from terrain import noise\n"
+        "print(noise.sub_seed('crust', 7), noise.sub_seed('relief', 7), "
+        "noise.sub_seed('uplift', 7))"
+    ) % str(pathlib.Path(__file__).resolve().parents[1])
+
+    runs = set()
+    for hashseed in ("0", "1", "12345"):
+        env = dict(**__import__("os").environ, PYTHONHASHSEED=hashseed)
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                             text=True, env=env, check=True)
+        runs.add(out.stdout.strip())
+    assert len(runs) == 1, f"sub-seeds vary with PYTHONHASHSEED: {runs}"
+
+
+def test_sub_seeds_differ_by_name_and_seed():
+    """Distinct names must not collide, or two stages would share a noise field."""
+    from terrain import noise as n
+    assert n.sub_seed("crust", 1) != n.sub_seed("relief", 1)
+    assert n.sub_seed("crust", 1) != n.sub_seed("crust", 2)
+    assert n.sub_seed("crust", 1) == n.sub_seed("crust", 1)
+
+
 def test_changing_relief_does_not_reshuffle_the_continents(g):
     """Sub-seeds are derived by name, so one knob must not move an unrelated field.
 
