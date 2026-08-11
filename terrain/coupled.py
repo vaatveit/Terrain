@@ -39,7 +39,44 @@ class CoupledResult:
     convergence: list
 
 
-def discharge_weight(area, precipitation_mm, land_mask, floor=0.50):
+def _relief_neutral_scale(p, area, land_mask, floor, exponent, lo=1e-6, hi=1e6):
+    """Find c such that weighting by max(c*P, floor) leaves mean relief unchanged.
+
+    Steady-state slope goes as Q^(-m/n), so a cell's relief responds to w^(-m/n), not to w.
+    Normalising the WEIGHT (by its mean or median) therefore does not normalise the relief:
+    precipitation is heavily right-skewed, so the area-weighted mean of w^(-m/n) comes out
+    well above 1 even when the median weight is exactly 1, and the coupling inflates the
+    whole world rather than redistributing erosion within it.
+
+    Solving for c directly is self-calibrating and needs no per-resolution tuning, which
+    matters because the skew grows with resolution -- the same settings gave 7.7 km peaks
+    at n=256 and 13.7 km at n=785.
+    """
+    a = np.asarray(area, dtype=np.float64)[land_mask]
+    pl = np.asarray(p, dtype=np.float64)[land_mask]
+    total = a.sum()
+    if total <= 0 or pl.size == 0:
+        return 1.0
+
+    def mean_response(c):
+        w = np.maximum(c * pl, floor)
+        return float((a * w ** (-exponent)).sum() / total)
+
+    # Monotonically decreasing in c, so bisect.
+    if mean_response(lo) < 1.0:
+        return lo
+    if mean_response(hi) > 1.0:
+        return hi
+    for _ in range(80):
+        mid = np.sqrt(lo * hi)
+        if mean_response(mid) > 1.0:
+            lo = mid
+        else:
+            hi = mid
+    return float(np.sqrt(lo * hi))
+
+
+def discharge_weight(area, precipitation_mm, land_mask, floor=0.50, exponent=0.45):
     """Cell area scaled by precipitation, normalised so the mean weight is one cell area.
 
     Normalising matters: it keeps Q in area units, so K retains its calibrated meaning and
@@ -54,33 +91,34 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=0.50):
         peak (m)    11950    9531    7735
         wet-dry (m)  -293    -246    -220
 
-    0.50 keeps peaks close to the uncoupled result while retaining most of the contrast.
-    It is also the right shape physically: arid basins erode slowly, not never -- episodic
-    runoff, groundwater and hillslope processes all keep working when the rain does not.
+    0.50 retains most of the contrast. It is also the right shape physically: arid basins
+    erode slowly, not never -- episodic runoff, groundwater and hillslope processes all
+    keep working when the rain does not.
 
-    OPEN ISSUE, resolution dependence. At n=785 the same settings give 13.5 km peaks
-    against 8.4 km for the uncoupled run, where n=256 gives 7.7 km against 6.7 km. Finer
-    grids resolve a more extreme precipitation field (driest quartile reaches 1 mm/yr), so
-    the spread of discharge weights widens and arid ground holds proportionally more
-    relief. Raising the floor cannot fix it -- the algebra needs a floor above 1, which is
-    meaningless. The real fix is upstream: the climate model's precipitation distribution
-    is far more skewed than Earth's, and that skew grows with resolution. Retuning K for
-    the coupled case at each resolution is the workaround; compressing the precipitation
-    distribution is the cure.
+    Note the floor sets the coupled/uncoupled peak ratio, at floor^(-m/n) = 1.37x, and that
+    is a feature. Arid rain-shadow orogens are where the highest ground is, which is why
+    the Altiplano and Tibet stand where they do. The absolute level is set by K, which is
+    recalibrated for the coupled parameterisation -- see stage2.LemParams.
     """
     p = np.asarray(precipitation_mm, dtype=np.float64)
-    # Normalise by the MEDIAN, not the mean. Precipitation is heavily right-skewed (median
-    # 111 mm against a mean of 1000), so dividing by the mean puts the typical land cell
-    # far below 1 and against the floor -- every cell then erodes ~1.7x too slowly, not
-    # just the deserts, and production peaks reached 15.4 km against 8.4 km uncoupled.
-    # The median keeps the typical cell at weight 1, so K stays calibrated and only
-    # genuinely wet or arid ground departs from the uncoupled result.
-    ref = np.median(p[land_mask]) if land_mask.any() else np.median(p)
-    if ref <= 0:
-        ref = p[land_mask].mean() if land_mask.any() else p.mean()
-    if ref <= 0:
+    mask = np.asarray(land_mask, dtype=bool)
+    if not mask.any() or p[mask].max() <= 0:
         return np.ascontiguousarray(area, dtype=np.float32)
-    scale = np.maximum(p / ref, floor)
+
+    # Normalise so that MEAN RELIEF is unchanged, not so that the mean or median weight is
+    # one. Two earlier normalisations both failed, in opposite directions, and both looked
+    # fine on the drainage metrics while getting the vertical scale badly wrong:
+    #
+    #   by the mean    typical cell far below 1 and against the floor, every cell eroding
+    #                  ~1.7x too slowly -> 15.4 km peaks against 8.4 km uncoupled
+    #   by the median  typical weight correct, but relief responds to w^(-m/n) and the
+    #                  skew makes its mean exceed 1 -> 13.7 km peaks, worsening with
+    #                  resolution as the precipitation distribution sharpens
+    #
+    # Solving for the scale that holds mean(w^(-m/n)) at 1 fixes the level by construction
+    # and needs no per-resolution retuning.
+    c = _relief_neutral_scale(p, area, mask, floor, exponent)
+    scale = np.maximum(c * p, floor)
     return np.ascontiguousarray(area * scale, dtype=np.float32)
 
 
@@ -102,7 +140,7 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
         # a loop rather than a one-off post-process.
         cl = climate_mod.compute_climate(grid, z, land_mask, clim)
         weight = discharge_weight(grid.area, cl.precipitation_mm, land_mask,
-                                  floor=discharge_floor)
+                                  floor=discharge_floor, exponent=lem.m / lem.n)
 
         before = z.copy()
         res = stage2.evolve(grid, z, uplift_m_per_myr, is_ocean, lem,

@@ -43,13 +43,26 @@ YR_PER_MYR = 1.0e6
 @dataclasses.dataclass
 class LemParams:
     # Stream power. theta = m/n at steady state, so these set the target concavity.
+    #
     # K sets relief, not shape: steady-state slope is (U/K)^(1/n), so peak elevation scales
-    # as U/K while theta is untouched. K IS RESOLUTION-DEPENDENT -- at 9.8 km cells the
-    # model resolves smaller headwater drainage areas than at 60 km, where steady-state
-    # slope is steepest, so the same K gives far more total relief. Measured: K=1e-6 gave
-    # 5.8 km peaks at n=128 but 17.6 km at n=785. Tuned here for n=785; rescale for other
-    # resolutions. 2.5e-6 is well inside the published 1e-7..1e-4 range for m=0.45, n=1.
-    K: float = 2.5e-6      # erodibility, yr^-1 for m~0.5 n=1
+    # as U/K while theta is untouched. Two things make it a calibration rather than a
+    # constant, and both are measured:
+    #
+    # RESOLUTION. Finer grids resolve smaller headwater drainage areas, where steady-state
+    # slope is steepest, so the same K yields more total relief -- K=1e-6 gave 5.8 km peaks
+    # at n=128 and 17.6 km at n=785.
+    #
+    # COUPLING. Stage 4 replaces drainage area with discharge, which is a different
+    # parameterisation, so K carries a different meaning there and needs its own value. The
+    # coupled run holds ~1.45x the relief of the uncoupled one at the same K, because arid
+    # cells sit at the discharge floor and erode floor^(-m/n) = 1.37x slower -- and arid
+    # rain-shadow orogens are exactly where the highest ground is. That is the behaviour
+    # the stage exists to produce, so the fix is to recalibrate K rather than to suppress it.
+    #
+    # 3.7e-6 targets ~8.5 km peaks for the COUPLED pipeline at n=785, which is the
+    # production configuration. For an uncoupled run at n=785 use ~2.5e-6. Both sit well
+    # inside the published 1e-7..1e-4 range for m=0.45, n=1.
+    K: float = 3.7e-6      # erodibility, yr^-1 for m~0.5 n=1
     m: float = 0.45        # drainage-area exponent
     n: float = 1.0         # slope exponent; n != 1 needs Newton, see solve_stream_power
     # Hillslope diffusion.

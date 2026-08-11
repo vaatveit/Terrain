@@ -34,6 +34,46 @@ def test_uniform_precipitation_leaves_the_weight_equal_to_area(setup):
     assert np.allclose(w, g.area, rtol=1e-5)
 
 
+def test_normalisation_holds_mean_relief_response_at_one(setup):
+    """The weight is normalised on w^(-m/n), the quantity relief actually responds to.
+
+    Normalising the weight itself does not normalise the relief. Precipitation is heavily
+    right-skewed, so the area-weighted mean of w^(-m/n) sits well above 1 even when the
+    median weight is exactly 1, and the coupling then inflates the whole world instead of
+    redistributing erosion within it.
+    """
+    g, crust = setup
+    land = crust.land_mask
+    rng = np.random.default_rng(0)
+    # Deliberately skewed, like real precipitation.
+    p = np.exp(rng.normal(0.0, 1.5, g.cell_count)) * 300.0
+
+    for exponent in (0.3, 0.45, 0.6):
+        w = coupled.discharge_weight(g.area, p, land, exponent=exponent) / g.area
+        response = float((g.area[land] * w[land] ** -exponent).sum() / g.area[land].sum())
+        assert response == pytest.approx(1.0, rel=1e-3), (
+            f"mean w^-{exponent} is {response:.3f}, so coupling shifts global relief")
+
+
+def test_normalisation_does_not_drift_with_resolution(setup):
+    """The skew of the precipitation field sharpens with resolution.
+
+    A median-based normalisation therefore inflated relief more at fine resolution than at
+    coarse -- the coupled/uncoupled peak ratio ran 1.16x at n=256 and 1.63x at n=785. The
+    relief-neutral scale is defined by an invariant, so it does not drift.
+    """
+    from terrain.grid import build_goldberg
+    rng = np.random.default_rng(1)
+    responses = []
+    for n in (48, 72):
+        gg = build_goldberg(n)
+        land = np.ones(gg.cell_count, dtype=bool)
+        p = np.exp(rng.normal(0.0, 1.8, gg.cell_count)) * 300.0
+        w = coupled.discharge_weight(gg.area, p, land) / gg.area
+        responses.append(float((gg.area * w**-0.45).sum() / gg.area.sum()))
+    assert all(r == pytest.approx(1.0, rel=1e-3) for r in responses)
+
+
 def test_weight_tracks_precipitation_and_respects_the_floor(setup):
     g, crust = setup
     land = crust.land_mask

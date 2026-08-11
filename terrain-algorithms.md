@@ -470,16 +470,26 @@ Wet ground incises deeper, arid ground holds its relief, and rain shadows stop b
 
 Worth noting for the testbed: **the drainage metrics are blind to this stage.** θ and Hack's exponent sit at 0.454 and 0.535 whether the run is coupled or not, and stayed there even while a normalisation bug was inflating peaks to 15 km. They measure network *geometry*, which climate does not change — it changes where the erosion goes, not how the channels organise. Judge Stage 4 by the wet/dry elevation contrast, not by the scaling exponents.
 
-**Normalise the discharge weight by the MEDIAN, not the mean.** This was the one real bug in the stage and it hid behind healthy-looking metrics. Precipitation is heavily right-skewed (median 111 mm against a mean of 1000), so dividing by the mean puts the *typical* land cell far below 1 and against the floor. Every cell then erodes ~1.7× too slowly rather than just the deserts, and production peaks reached **15.4 km against 8.4 km uncoupled** — while θ and Hack's exponent stayed comfortably in range throughout, because the drainage network was fine and only its vertical scale was wrong. Normalising by the median keeps the typical cell at weight 1, so `K` stays calibrated. It also *strengthened* the wet/dry contrast rather than trading it away.
+**Normalise on the quantity relief responds to, which is `w^(-m/n)` — not on the weight.** This took three attempts, and every wrong version hid behind healthy-looking metrics, because θ and Hack's exponent describe the drainage *network* and all that was wrong was its vertical scale.
 
-**The discharge floor then trades peak height against contrast.** Relief goes as `Q^(-m/n)`, so an arid cell at half the typical discharge holds 1.4× the relief. Measured at n=256 over three passes, against an uncoupled run peaking at 6,688 m:
+| normalisation | what went wrong | n=785 peaks |
+|---|---|---|
+| mean weight = 1 | skew pushes the typical cell below 1 and against the floor, so *every* cell erodes ~1.7× too slowly | 15.4 km |
+| median weight = 1 | typical cell correct, but relief responds to `w^(-m/n)` and the skew makes *its* mean exceed 1 | 13.7 km |
+| **mean `w^(-m/n)` = 1** | — | **9.1 km** |
+
+Solve for the scale by bisection; it is self-calibrating and needs no per-resolution tuning. That matters because the precipitation skew *sharpens* with resolution, so the earlier normalisations drifted: the coupled/uncoupled peak ratio ran 1.16× at n=256 rising to 1.63× at n=785, and is now 1.43× / 1.50× — flat.
+
+**The residual ~1.45× is not a bug and should not be removed.** Relief goes as `Q^(-m/n)`, so cells at the discharge floor erode `0.5^(-0.45) = 1.37×` slower — and arid rain-shadow orogens are precisely where the highest ground is. The Altiplano and Tibet are high *because* they are dry. Suppressing this would suppress the effect the stage exists to produce.
+
+**So the level is fixed by recalibrating `K`, and that is principled rather than a fudge.** Stage 4 replaces drainage area with discharge, which is a different parameterisation — `K` genuinely carries a different meaning there, and calibrating it against the uncoupled model was the actual mistake. Production `K` is 3.7e-6 coupled against ~2.5e-6 uncoupled at n=785; both sit well inside the published 1e-7–1e-4 range. A useful side effect: the faster erosion converges, so peaks now settle (9,108 m at every pass) where before they were still climbing at the end of the run.
+
+The discharge floor still trades peak height against contrast, measured at n=256 over three passes against an uncoupled peak of 6,688 m:
 
 | floor | 0.15 | 0.30 | 0.50 |
 |---|---|---|---|
 | peak elevation | 11,950 m | 9,531 m | **7,735 m** |
 | wet−dry contrast | −293 m | −246 m | **−220 m** |
-
-0.50 keeps peaks near the uncoupled result while retaining most of the contrast. The parameter is partly absorbing a *climate* limitation — the precipitation distribution is more skewed than Earth's, so the floor is compensating downstream for something better fixed upstream.
 
 **Two or three passes is indeed enough.** Mean elevation change between successive passes ran 356 → 107 → 55 m at n=128; the loop settles quickly because most of the topography is set by uplift and only the *distribution* of erosion responds to climate.
 
