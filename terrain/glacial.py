@@ -68,12 +68,16 @@ class GlacialParams:
     K: float = 2.0e-2
     m: float = 0.30
     n: float = 1.0
-    min_flux_km3_per_yr: float = 1.0e-2   # below this there is snow, not a glacier
+    # Ice flux is volume/time, so it scales as the radius squared: 1e-2 / 98.125^2.
+    min_flux_km3_per_yr: float = 1.04e-6   # below this there is snow, not a glacier
     # Baseline over which the driving slope is measured. Long on purpose -- see `abrade`.
-    slope_baseline_km: float = 120.0
+    # CELL-scale, not world-scale: it is 12 cells of flow path, which is what made 120 km
+    # right at 9.77 km cells and makes 1.22 km right at 100 m. Cell size no longer varies
+    # with n, so this is a constant and must NOT be rescaled with the radius.
+    slope_baseline_km: float = 1.22
     dt_yr: float = 5.0e3
     steps: int = 60
-    max_incision_per_step_m: float = 25.0
+    max_incision_per_step_m: float = 8.0   # vertical, cut with the relief budget
 
 
 def mass_balance(temperature_c, p: GlacialParams):

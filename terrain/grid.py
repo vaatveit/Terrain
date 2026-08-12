@@ -28,8 +28,51 @@ import numpy as np
 
 R_EARTH_KM = 6371.0
 
-# Production frequency: 2*pi*R/4096 = 9.773 km spacing -> ~6.17e6 cells -> n = 785.
+# Production frequency: 4096 cells around the equator -> ~6.17e6 cells -> n = 785.
 N_PRODUCTION = 785
+
+# THE WORLD IS SPECIFIED BY ITS CELL SIZE, not by its radius.
+#
+# The grid is dimensionless -- radius only scales `arc_dist`, `edge_len` and `area` --
+# so this changes no graph algorithm and no topology. What it changes is which physical
+# processes sit above the grid scale. At 9.77 km cells every land cell already carried
+# more drainage area (82.7 km^2) than a real channel head needs (0.01-1 km^2), so there
+# was no hillslope domain at all and `D` acted as a numerical smoother rather than as
+# soil creep. At 100 m cells one cell is 0.0087 km^2, below the channel-head threshold,
+# so hillslopes exist as terrain. See terrain-algorithms.md, "Cell size".
+#
+# THREE SPECS, AND THEY CANNOT ALL HOLD. 100 m cells, 4096 cells around the equator and
+# R = 65.19 km are mutually consistent only for a perfect hexagonal tiling. The 12
+# pentagons make the measured mean spacing 0.4% larger than ideal packing:
+#
+#     held exact        radius       mean cell    equatorial cells
+#     R = 65.190 km     65.190 km    100.40 m     4096
+#     100 m cells       64.927 km    100.00 m     4080
+#
+# Cell size wins, because it is what every retuned length scale below is denominated
+# against. Swap R_WORLD_KM to EQUATOR_CELLS * TARGET_CELL_KM / (2*pi) for the other one;
+# the 0.4% is immaterial to every result.
+EQUATOR_CELLS = 4096
+TARGET_CELL_KM = 0.1
+
+# Measured: n * (mean neighbour arc on the unit sphere). Converged to 6 digits by n=64
+# -- 1.208926 at n=32, 1.209054 at n=256 -- so it extrapolates to n=785 safely.
+MEAN_SPACING_N = 1.209055
+
+
+def radius_for_cell_km(n: int = N_PRODUCTION, cell_km: float = TARGET_CELL_KM) -> float:
+    """Radius giving `cell_km` MEAN neighbour spacing at frequency `n`.
+
+    Cell size is the invariant, not the radius. Every length-scale parameter in the
+    pipeline is now denominated against 100 m cells, so a prototype at low `n` has to
+    shrink the sphere to keep those parameters meaningful -- otherwise the prototype is
+    a coarser world rather than a smaller sample of the same one, and every threshold
+    from `min_lake_area_km2` to the diffusion sub-step count is wrong for it.
+    """
+    return float(cell_km * n / MEAN_SPACING_N)
+
+
+R_WORLD_KM = radius_for_cell_km()  # 64.927 km at n=785, 4*pi*R^2 = 52,970 km^2
 
 
 # --------------------------------------------------------------------------------------
@@ -373,9 +416,14 @@ def _order_neighbours_and_measure(xyz, nbr, radius_km, chunk=500_000):
     return ordered, arc, elen, area
 
 
-def build_goldberg(n: int = N_PRODUCTION, radius_km: float = R_EARTH_KM,
+def build_goldberg(n: int = N_PRODUCTION, radius_km: float = None,
                    verbose: bool = False) -> Grid:
     """Build the frequency-n class-I Goldberg grid.
+
+    `radius_km` defaults to whatever gives TARGET_CELL_KM spacing at this `n`, so every
+    grid the pipeline builds -- production or test fixture -- has 100 m cells and the
+    tuned length scales mean the same thing on all of them. Pass R_EARTH_KM explicitly
+    for an Earth-sized world.
 
     No relaxation pass: with the slerp construction above, measured cell area is already
     sigma/mean 0.89%, max/min 1.16, and that holds constant from n=64 to n=785. Both
@@ -386,6 +434,8 @@ def build_goldberg(n: int = N_PRODUCTION, radius_km: float = R_EARTH_KM,
     """
     if n < 1:
         raise ValueError("n must be >= 1")
+    if radius_km is None:
+        radius_km = radius_for_cell_km(n)
 
     def log(msg):
         if verbose:

@@ -156,18 +156,33 @@ def test_elevation_is_referenced_to_sea_level(g):
 
 def test_continental_crust_sits_above_oceanic(g):
     """Isostasy sanity: thicker, lighter crust must float higher."""
+    p = stage1.CrustParams()
     c = stage1.generate_crust(g, seed=2)
-    thick = c.crust_thickness > 25.0
-    thin = c.crust_thickness < 10.0
-    assert c.elevation[thick].mean() > c.elevation[thin].mean() + 3000
+
+    # Derived from the params rather than hardcoded, because the isostasy is radius-blind
+    # and its thicknesses were cut ~3x when the sphere shrank: absolute 25/10/3000 km/m
+    # bars silently selected nothing at all once t_continental fell from 35 km to 12.
+    def floats_at(t_km, rho):
+        return t_km * (1.0 - rho / p.rho_mantle) * 1000.0
+
+    expect = (floats_at(p.t_continental_km, p.rho_continental)
+              - floats_at(p.t_oceanic_km, p.rho_oceanic))
+    thick = c.crust_thickness > 0.75 * p.t_continental_km
+    thin = c.crust_thickness < 1.5 * p.t_oceanic_km
+    assert thick.any() and thin.any(), "thickness bands must actually select cells"
+    assert c.elevation[thick].mean() > c.elevation[thin].mean() + 0.5 * expect
 
 
 def test_island_pruning_removes_small_landmasses(g):
     loose = stage1.generate_crust(g, stage1.CrustParams(min_island_area_km2=0.0), seed=3)
-    strict_p = stage1.CrustParams(min_island_area_km2=5e6)
+    # As a fraction of the sphere. The old absolute 5e6 km^2 was ~1% of Earth; on a
+    # 53,000 km^2 world it exceeds the whole planet, so every landmass was pruned and
+    # the test died on an empty array rather than on a wrong answer.
+    bar = 0.01 * float(g.area.sum())
+    strict_p = stage1.CrustParams(min_island_area_km2=bar)
     strict = stage1.generate_crust(g, strict_p, seed=3)
     assert strict.landmass_areas.size < loose.landmass_areas.size
-    assert strict.landmass_areas.min() >= 5e6
+    assert strict.landmass_areas.min() >= bar
     assert strict.land_fraction < loose.land_fraction
 
 

@@ -20,14 +20,17 @@ from terrain import (  # noqa: E402
     amplify, biomes, climate, coupled, export, flow, glacial, hydrology, metrics, plates,
     stage1, stage2,
 )
-from terrain.grid import Grid, build_goldberg  # noqa: E402
+from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRTM_EAST = {"concavity_theta": 0.516, "hack_h": 0.543}
 
 
 def load_or_build(n):
-    cached = ROOT / "data" / f"grid_n{n}.npz"
+    # The radius is in the filename because it is no longer Earth's: a cached grid built
+    # before the rescale has the same n and a 98x larger sphere, and would be loaded
+    # silently. Everything downstream would then be tuned for the wrong world.
+    cached = ROOT / "data" / f"grid_n{n}_r{radius_for_cell_km(n) * 1000:.0f}m.npz"
     if cached.exists():
         return Grid.load(cached)
     g = build_goldberg(n, verbose=True)
@@ -90,7 +93,7 @@ def main():
     endo = sum(1 for L in hyd.lakes if L["endorheic"])
     print(f"    {len(hyd.lakes)} lakes ({endo} endorheic), "
           f"{hyd.river_mask.sum():,} river cells, "
-          f"max discharge {hyd.discharge.max():,.0f} km^3/yr")
+          f"max discharge {hyd.discharge.max():,.3g} km^3/yr")
 
     print("[7] biomes")
     biome = biomes.classify(clim.temperature_c, clim.precipitation_mm, land, z, grid.lat)
@@ -99,7 +102,13 @@ def main():
 
     print("[9] metrics on the mesh")
     fr = flow.route(z, grid.neighbours, grid.arc_dist, grid.area, is_ocean)
-    thr = float(np.median(grid.area) * 6)
+    # 40 cells of drainage, not 6. The threshold has to sit ABOVE the channel head or the
+    # slope-area regression is fitted across the hillslope limb as well as the fluvial one,
+    # and theta comes out meaningless. At 9.77 km cells this could not happen -- 6 cells was
+    # 500 km^2, far above any channel head -- but at 100 m cells 6 cells IS the head.
+    # Measured on the production world: theta reads 0.392 at 6 cells, 0.467 at 40 (r2 0.904)
+    # and 0.556 at 400. The binned slope-area curve peaks at 8-13 cells.
+    thr = float(np.median(grid.area) * 40)
     m = metrics.report(z, grid.neighbours, grid.arc_dist, grid.area, is_sink=is_ocean,
                        channel_threshold_km2=thr, label="mesh")
     summary = {k: (float(m[k]) if np.isfinite(m[k]) else None) for k in

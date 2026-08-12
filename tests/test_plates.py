@@ -51,13 +51,15 @@ def test_plate_sizes_are_not_wildly_uneven(g, pl):
 def test_euler_velocity_is_tangent_to_the_sphere(g, pl):
     """Rotation about an Euler pole can have no radial component. A planar velocity field
     cannot satisfy this, which is why the sphere makes the model exact rather than a hack."""
-    v = plates.plate_velocity(g.xyz, pl.euler_axis, pl.euler_rate, pl.plate_id)
+    v = plates.plate_velocity(g.xyz, pl.euler_axis, pl.euler_rate, pl.plate_id,
+                              g.radius_km)
     radial = np.einsum("ij,ij->i", v, g.xyz)
     assert np.abs(radial).max() < 1e-9 * max(np.abs(v).max(), 1.0)
 
 
 def test_plate_speeds_are_earthlike(g, pl):
-    v = plates.plate_velocity(g.xyz, pl.euler_axis, pl.euler_rate, pl.plate_id)
+    v = plates.plate_velocity(g.xyz, pl.euler_axis, pl.euler_rate, pl.plate_id,
+                              g.radius_km)
     speed = np.linalg.norm(v, axis=1)  # km/Myr == mm/yr
     assert 1.0 < speed.mean() < 120.0
     assert speed.max() < 200.0
@@ -82,7 +84,8 @@ def test_convergence_sign_is_right_way_round():
     pid = (g.xyz[:, 0] > 0).astype(np.int16)  # split the sphere at x = 0
     axis = np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
     rate = np.array([0.02, -0.02])  # counter-rotating
-    vel = np.ascontiguousarray(plates.plate_velocity(g.xyz, axis, rate, pid))
+    vel = np.ascontiguousarray(
+        plates.plate_velocity(g.xyz, axis, rate, pid, g.radius_km))
 
     b_type = np.zeros(g.cell_count, np.uint8)
     b_stress = np.zeros(g.cell_count, np.float32)
@@ -112,9 +115,14 @@ def test_boundary_distance_is_zero_on_boundaries_and_grows_inward(g, pl):
 def test_boundary_distance_respects_the_triangle_inequality(g, pl):
     """A cheap correctness check on the relaxation sweeps."""
     d = pl.boundary_dist_km
+    # Cells past the reach carry a sentinel, not a distance, and the sentinel obeys no
+    # triangle inequality. Filter against the reach itself: the old absolute 1e3 km bar
+    # was below the Earth sentinel by luck, and once the sphere shrank to 6 km the
+    # sentinel slid under it and the test started comparing sentinels to distances.
+    reach = plates.UPLIFT_REACH_R * g.radius_km
     for s in range(g.neighbours.shape[1]):
         j = g.neighbours[:, s]
-        ok = (j >= 0) & (d < 1e3) & (d[np.maximum(j, 0)] < 1e3)
+        ok = (j >= 0) & (d < reach) & (d[np.maximum(j, 0)] < reach)
         assert np.all(d[ok] <= d[j[ok]] + g.arc_dist[ok, s] + 1e-3)
 
 
@@ -153,9 +161,13 @@ def test_uplift_is_high_at_convergent_margins_and_low_in_cratons(g, pl):
     p = plates.PlateParams()
     u = plates.derive_uplift(pl, is_cont, land, p)
 
-    near_conv = (pl.boundary_dist_km < 100) & (
+    # Against the orogen decay length as the fixture actually sees it, not absolute km.
+    # 100 and 900 km were 0.5x and 4.5x the Earth decay length; on this world the decay
+    # is a fraction of the radius, so the bands have to be too.
+    decay = p.for_radius(pl.radius_km).orogen_decay_km
+    near_conv = (pl.boundary_dist_km < 0.5 * decay) & (
         pl.boundary_type[np.maximum(pl.nearest_boundary, 0)] == plates.CONVERGENT)
-    interior = pl.boundary_dist_km > 900
+    interior = pl.boundary_dist_km > 4.5 * decay
     assert near_conv.any() and interior.any()
     assert u[near_conv].mean() > 5 * u[interior].mean()
     assert u.max() <= p.u_max_m_per_myr + 1e-6, "shape function must be clamped before scaling"
@@ -222,7 +234,11 @@ def test_tectonic_thickening_builds_crustal_roots(g):
     """Orogens need a root; that is what lifts them isostatically."""
     c = stage1.generate_crust_tectonic(g, seed=2)
     conv = (c.boundary_type == plates.CONVERGENT)
-    assert c.crust_thickness.max() > 45.0, "no crustal root formed"
+    # Against the params: the root is t_continental plus some of the convergent
+    # thickening, and both were cut ~3x with the rest of the isostasy.
+    cp, pp = stage1.CrustParams(), plates.PlateParams()
+    assert c.crust_thickness.max() > cp.t_continental_km + 0.5 * pp.convergent_thickening_km, (
+        "no crustal root formed")
     if conv.any():
         assert c.crust_thickness[conv].mean() > c.crust_thickness.mean()
 

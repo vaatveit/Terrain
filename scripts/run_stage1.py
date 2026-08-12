@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from terrain import metrics, stage1  # noqa: E402
-from terrain.grid import Grid, build_goldberg  # noqa: E402
+from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -28,7 +28,7 @@ SRTM_EAST = {"concavity_theta": 0.516, "hack_h": 0.543, "drainage_density": 0.74
 
 
 def load_or_build(n):
-    cached = ROOT / "data" / f"grid_n{n}.npz"
+    cached = ROOT / "data" / f"grid_n{n}_r{radius_for_cell_km(n) * 1000:.0f}m.npz"
     if cached.exists():
         print(f"Loading {cached.name}...")
         return Grid.load(cached)

@@ -12,6 +12,7 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from terrain import grid as grid_mod  # noqa: E402
 from terrain.grid import R_EARTH_KM, build_goldberg  # noqa: E402
 
 
@@ -61,18 +62,38 @@ def _hex_spacing_km(n, radius_km=R_EARTH_KM):
 
 
 def test_spacing_matches_hex_packing(g):
+    expect = _hex_spacing_km(g.n, g.radius_km)
     d = g.arc_dist[g.neighbours >= 0]
-    assert abs(d.mean() - _hex_spacing_km(g.n)) / _hex_spacing_km(g.n) < 0.01
+    assert abs(d.mean() - expect) / expect < 0.01
 
 
-def test_n785_gives_4096_cells_around_the_equator():
-    """The whole resolution choice rests on this; check it analytically, not by building."""
-    n = 785
+def test_every_grid_has_100_m_cells_whatever_its_frequency(g):
+    """Cell size is the invariant of this world, not the radius.
+
+    Every tuned length scale in the pipeline -- lake and island minima, the channel-head
+    discharge, the diffusion sub-step count -- is denominated against 100 m cells, so a
+    fixture at low n has to shrink the sphere rather than coarsen the grid. If this ever
+    fails, every one of those parameters is wrong for the grid under test.
+    """
+    d = g.arc_dist[g.neighbours >= 0]
+    assert d.mean() == pytest.approx(grid_mod.TARGET_CELL_KM, rel=1e-3)
+
+
+def test_the_production_world_meets_its_spec():
+    """n=785 at 100 m cells. Checked analytically, not by building 6.2M cells.
+
+    Three specs were asked for -- 100 m cells, 4096 cells around the equator, and
+    R = 65.19 km -- and the 12 pentagons mean they cannot all hold at once. Cell size is
+    the one held exact; the other two come out 0.4% off. This pins that trade so it stays
+    a decision rather than drift.
+    """
+    n = grid_mod.N_PRODUCTION
+    assert n == 785
     assert 10 * n**2 + 2 == 6_162_252
-    spacing = _hex_spacing_km(n)
-    around_equator = 2 * np.pi * R_EARTH_KM / spacing
-    assert spacing == pytest.approx(9.777, abs=0.01)
-    assert around_equator == pytest.approx(4096, rel=0.005)
+    r = grid_mod.radius_for_cell_km(n)
+    assert r == pytest.approx(64.927, abs=0.01)
+    around_equator = 2 * np.pi * r / grid_mod.TARGET_CELL_KM
+    assert around_equator == pytest.approx(grid_mod.EQUATOR_CELLS, rel=0.005)
 
 
 def test_positions_are_unit_vectors(g):

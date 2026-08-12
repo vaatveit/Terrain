@@ -25,8 +25,23 @@ def world(tmp_path_factory):
     fr = flow.route(res.elevation, g.neighbours, g.arc_dist, g.area, ~crust.land_mask)
     b = biomes.classify(res.climate.temperature_c, res.climate.precipitation_mm,
                         crust.land_mask, res.elevation, g.lat)
-    hyd = hydrology.analyse(g, res.elevation, ~crust.land_mask,
-                            res.climate.precipitation_mm, res.climate.temperature_c)
+    # This fixture tests the EXPORT PLUMBING and needs a lake to exist to test it with,
+    # so one is carved rather than hoped for. At Earth radius the hope was safe: the
+    # 400 km^2 minimum was under a single cell at n=96, so any one-cell dimple counted.
+    # At 100 m cells the minimum is ~5 real cells, closed basins are rare (0.03% of land),
+    # and hillslope diffusion now actively fills the shallow ones -- so a 792 km^2 fixture
+    # world often has none at all. Lake GENESIS is covered in tests/test_hydrology.py.
+    z = res.elevation.copy()
+    interior = crust.land_mask.copy()
+    for s in range(g.neighbours.shape[1]):
+        j = g.neighbours[:, s]
+        interior &= (j >= 0) & crust.land_mask[np.maximum(j, 0)]
+    pit = int(np.flatnonzero(interior)[0])
+    z[pit] = z[g.neighbours[pit][g.neighbours[pit] >= 0]].min() - 60.0
+
+    hyd = hydrology.analyse(g, z, ~crust.land_mask,
+                            res.climate.precipitation_mm, res.climate.temperature_c,
+                            params=hydrology.HydrologyParams(min_lake_area_km2=0.0))
     out = tmp_path_factory.mktemp("world")
     ex = export.export_world(
         out, g, res.elevation, crust.land_mask, seed=1, slope=fr.slope,

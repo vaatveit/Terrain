@@ -40,7 +40,11 @@ from terrain import noise
 class AmplifyParams:
     # Detail amplitude in metres at the roughest ground. Kept well below the mesh's own
     # cell-to-cell relief so detail reads as texture rather than as new landforms.
-    max_amplitude_m: float = 260.0
+    # Detail has to stay under the mesh's OWN cell-to-cell relief or it reads as new
+    # landforms. The invariant is the drop across one cell at `slope_reference`, not the
+    # world's total relief: that drop was 9770 m * 0.06 = 586 m at Earth radius and is
+    # 100 m * 0.06 = 6 m here, so 260 m (44% of the drop) becomes 3 m.
+    max_amplitude_m: float = 3.0
     # Slope at which detail reaches full strength (m/m). Gentle ground gets proportionally
     # less, which is what keeps plains from looking like crumpled paper.
     slope_reference: float = 0.06
@@ -53,7 +57,14 @@ class AmplifyParams:
     # because sediment fills them. This must be a LARGE-RIVER area, not a few cells: at
     # 3000 km^2 it was roughly four cells of drainage at n=256 and smoothed the entire
     # channel network flat.
-    valley_smoothing_km2: float = 60000.0
+    #
+    # It is a FRACTION OF THE SPHERE, not an absolute area, because "large river" is
+    # defined against the size of the continent rather than against the cell. The old
+    # hardcoded 60000 km^2 hid this: at Earth radius it was 19 cells of drainage at n=128
+    # and 725 at n=785, i.e. it was already tracking sphere area and only looked constant
+    # because the sphere was. 60000 / (4 pi 6371^2) = 1.18e-4, which reproduces the tuned
+    # behaviour at every radius and every n -- 6.2 km^2 on the production world.
+    valley_smoothing_sphere_fraction: float = 1.18e-4
     # Sub-ocean detail is muted: the sea floor is blanketed in sediment.
     ocean_scale: float = 0.35
     # Octave ceiling. The number ACTUALLY used is capped against the raster resolution by
@@ -101,15 +112,24 @@ def octaves_for_width(width, p: AmplifyParams = None):
     return n
 
 
-def detail_amplitude(slope, drainage_km2, land_mask, p: AmplifyParams = None):
+def detail_amplitude(slope, drainage_km2, land_mask, p: AmplifyParams = None,
+                     sphere_km2=None):
     """Per-position detail amplitude, in metres.
 
     Rough where it is steep, smooth where water collects, muted under the sea.
+
+    `sphere_km2` sets the valley-smoothing scale; pass `grid.area.sum()`. It defaults to
+    the Earth-radius sphere purely so the bare three-argument call still means what it
+    used to.
     """
     p = p or AmplifyParams()
+    if sphere_km2 is None:
+        from terrain.grid import R_EARTH_KM
+        sphere_km2 = 4.0 * np.pi * R_EARTH_KM ** 2
+    smoothing = p.valley_smoothing_sphere_fraction * float(sphere_km2)
     s = np.clip(np.asarray(slope, dtype=np.float64) / p.slope_reference, 0.0, 1.0)
     s = p.flat_floor + (1.0 - p.flat_floor) * s
-    valley = np.exp(-np.asarray(drainage_km2, dtype=np.float64) / p.valley_smoothing_km2)
+    valley = np.exp(-np.asarray(drainage_km2, dtype=np.float64) / smoothing)
     amp = p.max_amplitude_m * s * valley
     return np.where(np.asarray(land_mask), amp, amp * p.ocean_scale)
 
@@ -487,6 +507,6 @@ def amplified_raster(grid, elevation, slope, drainage_km2, land_mask, width=8192
 
     s = sample(slope)
     a = sample(drainage_km2)
-    amp = detail_amplitude(s, a, land, p)
+    amp = detail_amplitude(s, a, land, p, sphere_km2=float(grid.area.sum()))
     z = amplify(pts, z, amp, p, seed, octaves=octaves_for_width(width, p))
     return z.reshape(shape).astype(np.float32), land.reshape(shape)

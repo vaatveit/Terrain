@@ -44,13 +44,22 @@ class CrustParams:
     transition: float = 0.12             # width of the continental-slope ramp, in noise units
     relief_octaves: int = 7              # thickness texture, so the interior is not flat
     relief_frequency: float = 6.0
-    relief_km: float = 3.0               # thickness variation amplitude, km
-    t_continental_km: float = 35.0
-    t_oceanic_km: float = 7.0
+    # ISOSTASY IS RADIUS-BLIND: elevation comes out of crustal thickness in km, with no
+    # reference to the sphere at all. Left at Earth values it would put 4,455 m of
+    # continent-to-abyss relief on a world 64.9 km in radius -- 7% of the radius, against
+    # Earth's 0.07% -- which renders as a potato rather than a planet. Thickness is cut
+    # ~3x to a relief budget of ~1,530 m, which is what a 15,000 km^2 landmass should
+    # carry. Noise FREQUENCIES are untouched: they are sampled on the unit sphere, so the
+    # continents keep their shape and only their size in km changes.
+    relief_km: float = 1.0               # thickness variation amplitude, km
+    t_continental_km: float = 12.0
+    t_oceanic_km: float = 2.4
     rho_continental: float = 2.8
     rho_oceanic: float = 2.9             # denser -- this is why ocean floor sits low
     rho_mantle: float = 3.3
-    min_island_area_km2: float = 1000.0  # below this it is speckle, not archipelago
+    # Horizontal AREA, so it scales as the radius squared: 1000 km^2 / 98.125^2. Still
+    # the same 12 cells' worth of speckle it was at Earth radius.
+    min_island_area_km2: float = 0.104
 
 
 @dataclasses.dataclass
@@ -169,8 +178,14 @@ def generate_crust(grid, params: CrustParams = None, seed: int = 0,
     too_small = sizes < p.min_island_area_km2
     pruned = land & too_small[np.clip(labels, 0, None)]
     land[pruned] = False
+    # Drown them properly. Clearing the mask alone left the elevation above the datum, so
+    # a pruned islet was ocean by mask and land by height -- and every downstream stage
+    # reads one or the other. This never fired before the rescale: at Earth radius the
+    # 1000 km^2 threshold was smaller than a single cell on the test fixtures, so nothing
+    # was ever pruned and the inconsistency stayed latent.
+    elevation[pruned] = np.float32(sea_level)
     log(f"{n_lab:,} landmasses, pruned {int(too_small.sum()):,} below "
-        f"{p.min_island_area_km2:,.0f} km^2")
+        f"{p.min_island_area_km2:,.4g} km^2")
 
     kept = np.sort(sizes[~too_small])[::-1]
     land_fraction = float(grid.area[land].sum() / grid.area.sum())
@@ -268,7 +283,10 @@ def generate_crust_tectonic(grid, params: CrustParams = None,
     near_type[ok] = pl.boundary_type[near[ok]]
     near_stress[ok] = pl.boundary_stress[near[ok]]
     strength = np.clip(np.abs(near_stress) / max(scale, 1e-6), 0.0, 1.5)
-    decay = np.exp(-pl.boundary_dist_km / pp.orogen_decay_km)
+    # Same world-scale rescale derive_uplift does; see PlateParams.for_radius.
+    decay_km = pp.for_radius(pl.radius_km).orogen_decay_km if pl.radius_km \
+        else pp.orogen_decay_km
+    decay = np.exp(-pl.boundary_dist_km / decay_km)
 
     thickness = thickness + np.where(
         near_type == plates_mod.CONVERGENT,
@@ -292,7 +310,9 @@ def generate_crust_tectonic(grid, params: CrustParams = None,
     sizes = np.zeros(n_lab, dtype=np.float64)
     np.add.at(sizes, labels[land], grid.area[land].astype(np.float64))
     too_small = sizes < p.min_island_area_km2
-    land[land & too_small[np.clip(labels, 0, None)]] = False
+    pruned = land & too_small[np.clip(labels, 0, None)]
+    land[pruned] = False
+    elevation[pruned] = np.float32(0.0)  # drown them; see generate_crust
     kept = np.sort(sizes[~too_small])[::-1]
     log(f"{n_lab:,} landmasses, {int(too_small.sum()):,} pruned")
 

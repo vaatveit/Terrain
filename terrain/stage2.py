@@ -48,9 +48,14 @@ class LemParams:
     # as U/K while theta is untouched. Two things make it a calibration rather than a
     # constant, and both are measured:
     #
-    # RESOLUTION. Finer grids resolve smaller headwater drainage areas, where steady-state
-    # slope is steepest, so the same K yields more total relief -- K=1e-6 gave 5.8 km peaks
-    # at n=128 and 17.6 km at n=785.
+    # RESOLUTION USED TO MATTER AND NO LONGER DOES. Finer grids resolve smaller headwater
+    # drainage areas, where steady-state slope is steepest, so the same K yielded more
+    # relief -- K=1e-6 gave 5.8 km peaks at n=128 and 17.6 km at n=785 when the sphere was
+    # Earth-sized and cells coarsened with n. Cell size is now fixed at 100 m for every n,
+    # so the smallest resolved drainage area is always 0.0086 km^2 and that dependence is
+    # gone. What is left is a weak dependence on the LARGEST basin, which still grows with
+    # the world: measured peak relief goes as L^0.156 (1289 m at n=192, 1436 m at n=384,
+    # same K), so n=785 runs ~12% above n=384.
     #
     # COUPLING. Stage 4 replaces drainage area with discharge, which is a different
     # parameterisation, so K carries a different meaning there and needs its own value. The
@@ -59,14 +64,43 @@ class LemParams:
     # rain-shadow orogens are exactly where the highest ground is. That is the behaviour
     # the stage exists to produce, so the fix is to recalibrate K rather than to suppress it.
     #
-    # 3.7e-6 targets ~8.5 km peaks for the COUPLED pipeline at n=785, which is the
-    # production configuration. For an uncoupled run at n=785 use ~2.5e-6. Both sit well
-    # inside the published 1e-7..1e-4 range for m=0.45, n=1.
-    K: float = 3.7e-6      # erodibility, yr^-1 for m~0.5 n=1
+    # Measured on the 100 m world, uncoupled at n=384: relief goes as K^-0.668, giving
+    # 1799 m peaks at K=8e-7 and ~2010 m extrapolated to n=785. Times the coupling factor,
+    # 1.2e-6 targets ~2 km peaks for the COUPLED pipeline at n=785. That is the right
+    # order for this world: 15,000 km^2 of land in landmasses ~120 km across, so 2 km of
+    # relief is a mountainous island, not a plateau. It still sits inside the published
+    # 1e-7..1e-4 range for m=0.45, n=1.
+    K: float = 1.2e-6      # erodibility, yr^-1 for m~0.5 n=1
     m: float = 0.45        # drainage-area exponent
     n: float = 1.0         # slope exponent; n != 1 needs Newton, see solve_stream_power
-    # Hillslope diffusion.
-    D: float = 0.05        # m^2/yr
+    # Hillslope diffusion. NOT rescaled, and that is the point of the 100 m grid: D is in
+    # m^2/yr, it was always physical, and it was the cell size that was wrong. At 9.77 km
+    # cells the convex-hilltop-to-concave-valley transition it models sits two orders of
+    # magnitude below the grid, so the term acted as a numerical smoother. At 100 m cells
+    # it resolves, and D and the uplift rate become answerable to each other -- see
+    # `u_max_m_per_myr` in plates.py. 0.05 is mid-range for published soil creep
+    # (0.001-0.1 m^2/yr).
+    #
+    # It is EXPLICIT, so raising it raises the sub-step count in `diffusion_substeps`
+    # linearly. It does not destabilise anything; it just costs more.
+    #
+    # 0.05 -> 0.02 IS A DELIBERATE TRADE, measured at n=384 with 400 steps. Resolving
+    # hillslopes costs concavity, because ground that used to be counted as fluvial
+    # genuinely is not:
+    #
+    #     D      channel head      theta   r2      sub-steps
+    #     0.00   none (monotonic)  0.457   0.991   -
+    #     0.01   0.021 km^2        0.402   0.927   10
+    #     0.02   0.034 km^2        0.362   0.907   20
+    #     0.05   0.056 km^2        0.267   0.748   48
+    #
+    # Every channel head above is inside the real 0.01-1 km^2 band, so that criterion
+    # does not pick between them. 0.02 buys a hillslope regime about two cells deep --
+    # enough for the convex limb to be visible in the slope-area curve -- while keeping
+    # theta near the 0.4-0.6 band and the sub-step cost at 20. At D=0 there is no
+    # hillslope regime at all: slope falls monotonically from the very first bin, which
+    # is what the whole 9.8 km world looked like.
+    D: float = 0.02        # m^2/yr
     # Deposition (Davy & Lague 2009 style). 0 = pure detachment-limited.
     G: float = 0.0
     # Time stepping.
@@ -146,8 +180,12 @@ def hillslope_diffusion(z, nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr,
     0.014 m, but the maximum is 720 m. A small persistent forcing is not a small effect.
 
     Unlike the implicit stream power solve, this is EXPLICIT and so conditionally stable:
-    it needs D*dt*sum_j(e_ij/L_ij) < A_i/2. The defaults leave orders of magnitude of
-    headroom, but raising D or dt far enough will diverge.
+    it needs D*dt*sum_j(e_ij/L_ij) < A_i/2. sum_j(e_ij/L_ij) is dimensionless (6/sqrt(3)
+    = 3.46 for a hexagon) and scale-free, so the limit tracks CELL AREA exactly -- which
+    means it falls as the square of cell size. At 9.77 km cells it was 239 Myr, five
+    hundred times the timestep. At 100 m cells it is 25,000 yr, twenty times SHORTER than
+    the timestep. Call `diffusion_substeps` and sub-cycle; do not call this raw with a
+    fluvial dt.
     """
     n_cells = z.shape[0]
     k = nbr.shape[1]
@@ -163,6 +201,27 @@ def hillslope_diffusion(z, nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr,
             total += edge_len_km[i, s] * (z[j] - z[i]) / arc_dist_km[i, s]
         dz[i] = D * dt_yr * total / (area_km2[i] * SEC_PER_KM2)
     return dz
+
+
+def diffusion_substeps(nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr, safety=0.5):
+    """Explicit sub-steps needed to diffuse stably over `dt_yr`.
+
+    The fluvial solve is implicit and unconditionally stable, so it wants the largest
+    timestep that still resolves the tectonics -- 0.5 Myr. Diffusion is explicit and at
+    100 m cells wants 25 kyr. Dropping the global timestep to satisfy diffusion would
+    multiply the cost of the expensive part (priority-flood, O(N log N) with bad cache
+    behaviour) by 20 to fix the cheap part. Sub-cycling pays only where the constraint
+    actually bites.
+
+    Uses the WORST cell rather than the mean, because the 12 pentagons are the smallest
+    cells on the grid and a scheme that is unstable on twelve cells is unstable.
+    """
+    w = np.where(np.asarray(nbr) >= 0,
+                 np.asarray(edge_len_km) / np.maximum(np.asarray(arc_dist_km), 1e-30),
+                 0.0).sum(axis=1)
+    limit_yr = np.min(np.asarray(area_km2) * SEC_PER_KM2
+                      / (2.0 * D * np.maximum(w, 1e-30)))
+    return max(1, int(np.ceil(dt_yr / (safety * float(limit_yr)))))
 
 
 @njit(cache=True)
@@ -187,7 +246,7 @@ class EvolveResult:
     history: list  # per-step (step, mean |dz| m/Myr, max elevation, relief)
 
 
-def uplift_field(grid, land_mask, seed=0, u_max_m_per_myr=500.0, craton_floor=0.25,
+def uplift_field(grid, land_mask, seed=0, u_max_m_per_myr=100.0, craton_floor=0.25,
                  frequency=1.4, octaves=4, belt_sharpness=3.0):
     """Stand-in for the tectonic uplift the real Stage 1 will derive.
 
@@ -283,6 +342,11 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
         discharge_weight, dtype=np.float32)
 
     dt_yr = p.dt_myr * YR_PER_MYR
+    n_sub = (diffusion_substeps(nbr, edge, arc, area, p.D, dt_yr) if p.D > 0.0 else 1)
+    dt_sub = dt_yr / n_sub
+    if verbose and n_sub > 1:
+        print(f"    diffusion sub-cycled {n_sub}x "
+              f"({dt_sub / 1e3:.1f} kyr per sub-step)", flush=True)
     out = np.empty(n_cells, dtype=np.float64)
     dz = np.empty(n_cells, dtype=np.float64)
     qs = np.empty(n_cells, dtype=np.float64)
@@ -312,8 +376,9 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
             z += deposit
 
         if p.D > 0.0:
-            hillslope_diffusion(z, nbr, edge, arc, area, p.D, dt_yr, is_fixed, dz)
-            z += dz
+            for _ in range(n_sub):
+                hillslope_diffusion(z, nbr, edge, arc, area, p.D, dt_sub, is_fixed, dz)
+                z += dz
 
         z[is_fixed] = z_before[is_fixed]
 

@@ -37,16 +37,32 @@ Run the tests:
 ### Resolution and runtime
 
 `--n` is the geodesic grid frequency; the grid has `10n²+2` cells. Production is **n=785**,
-which is what "4096 cells around the equator" works out to (`2πR/4096 = 9.77 km`).
+which is what "4096 cells around the equator" works out to.
 
-| n | cells | spacing | full pipeline |
-|---|---|---|---|
-| 128 | 163,842 | 60 km | ~20 s |
-| 256 | 655,362 | 30 km | ~70 s |
-| 785 | 6,162,252 | 9.8 km | ~8 min |
+**Cell size is the invariant of this world, not the radius.** Every grid the pipeline
+builds — production or test fixture — has **100 m cells**, and the radius follows from `n`
+(`radius_for_cell_km`). Lower `n` therefore gives a *smaller sample of the same world*, not
+a coarser version of it, so every tuned length scale keeps its meaning at every resolution.
 
-The grid itself is cached to `data/grid_n<N>.npz` on first build (34 s and 650 MB at n=785)
-and reused. It is regenerable from `n` alone, so it is never stored inside a world.
+| n | cells | radius | surface | cell |
+|---|---|---|---|---|
+| 128 | 163,842 | 10.6 km | 1,409 km² | 100 m |
+| 384 | 1,474,562 | 31.8 km | 12,676 km² | 100 m |
+| 785 | 6,162,252 | 64.9 km | 52,973 km² | 100 m |
+
+Three specs were asked of the production grid — 100 m cells, 4096 cells around the equator,
+and `R = 65.19 km` — and the 12 pentagons mean they cannot all hold at once. Measured,
+`n × mean angular spacing` converges to 1.209055, so holding the radius exact gives 100.40 m
+cells and holding cell size exact gives 4080 equatorial cells. **Cell size wins**, because it
+is what every length scale below is denominated against. The 0.4% is immaterial to results.
+
+Why 100 m at all: at the old 9.77 km cells every land cell already carried more drainage
+area (82.7 km²) than a real channel head needs (0.01–1 km²), so there was no hillslope
+domain and `D` acted as a numerical smoother. See **[Cell size](#cell-size)** below.
+
+The grid is cached to `data/grid_n<N>_r<R>m.npz` on first build (34 s and 650 MB at n=785)
+and reused. The radius is in the filename because a grid cached before the rescale has the
+same `n` and a 98× larger sphere, and would otherwise be loaded silently.
 
 ### Command-line options
 
@@ -99,7 +115,7 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_lake_id` | int32 | — | index into `manifest.json` → `lakes`; −1 off-lake |
 | `field_endorheic` | uint8 | — | 1 where the lake is terminal (no outlet to the sea) |
 | `_n` | int64 | — | grid frequency; rebuilds the geometry |
-| `_radius_km` | float64 | km | planet radius (6371) |
+| `_radius_km` | float64 | km | planet radius (64.927) |
 | `_seed` | int64 | — | world seed |
 | `_params_json` | str | — | every parameter dataclass, as JSON |
 
@@ -157,9 +173,9 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | `warp_amp` / `warp_frequency` | 0.35 / 2.2 | domain warp; what makes coastlines fractal rather than blobby |
 | `transition` | 0.12 | width of the continental-slope ramp |
 | `relief_octaves/frequency/km` | 7 / 6.0 / 3.0 | pre-erosion thickness texture |
-| `t_continental_km` / `t_oceanic_km` | 35 / 7 | crustal thickness by type |
+| `t_continental_km` / `t_oceanic_km` | 12 / 2.4 | crustal thickness by type. Isostasy is **radius-blind** — Earth values would put 4,455 m of relief on a 64.9 km sphere |
 | `rho_continental` / `rho_oceanic` / `rho_mantle` | 2.8 / 2.9 / 3.3 | isostasy densities |
-| `min_island_area_km2` | 1000 | below this an island is speckle. **Never express this in cells** — it breaks multi-resolution runs |
+| `min_island_area_km2` | 0.104 | below this an island is speckle. Cell-scale (~12 cells), so it does **not** rescale with the radius |
 
 ### Stage 1 — plates · `plates.PlateParams`
 
@@ -172,9 +188,9 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | `transform_ratio` | 2.5 | a boundary is transform when tangential motion exceeds this × normal. At 1.0 you get 44% transform against Earth's ~20% |
 | `boundary_warp` / `_frequency` | 0.10 / 2.5 | bends plate boundaries. **Set to 0 and mountain ranges render as dead-straight lines** |
 | `stress_smoothing_passes` | 8 | averages boundary stress along strike before it is propagated inland. **At 0, each boundary cell hands its stress to its own wedge of interior cells and orogens render as hard stripes fanning out from the belt** |
-| `u_max_m_per_myr` | 1200 | peak orogenic uplift. Sets relief together with `LemParams.K` |
-| `craton_floor_m_per_myr` | 20 | uplift on stable interiors |
-| `orogen_decay_km` | 200 | how far uplift reaches from a collision boundary |
+| `u_max_m_per_myr` | 100 | peak orogenic uplift. Sets relief with `LemParams.K`, and hilltop curvature (`U/D`) with `LemParams.D` |
+| `craton_floor_m_per_myr` | 2.0 | uplift on stable interiors |
+| `orogen_decay_km` | 2.04 | how far uplift reaches from a collision boundary. **World-scale** — rescaled by `PlateParams.for_radius` |
 | `arc_offset_km` / `arc_width_km` | 150 / 100 | volcanic arc position inland of a trench |
 | `rift_shoulder_km` | 80 | rift flank width. The graben **subsides**, which is what creates tectonic lake basins |
 | `convergent_thickening_km` / `divergent_thinning_km` | 15 / 8 | crustal root and rift thinning |
@@ -184,8 +200,8 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | parameter | default | effect |
 |---|---|---|
 | `m` / `n` | 0.45 / 1.0 | **stream-power exponents. Steady-state concavity θ = m/n exactly**, so these set the primary realism target (0.4–0.6). `n ≠ 1` costs a Newton iteration per node |
-| `K` | 3.7e-6 | **erodibility — sets relief, not shape.** Peak elevation scales as `U/K`. Resolution-dependent *and* different for coupled runs; see below |
-| `D` | 0.05 | hillslope diffusion, m²/yr. Nearly inert at ~10 km cells but not ignorable — it tips drainage divides |
+| `K` | 1.2e-6 | **erodibility — sets relief, not shape.** Peak elevation scales as `U/K`. No longer resolution-dependent (cell size is fixed), but still different for coupled runs; see below |
+| `D` | 0.02 | hillslope diffusion, m²/yr. **Now a first-class term** — it produces a real hillslope regime, and must be sub-cycled (`diffusion_substeps`) because the explicit stability limit fell from 239 Myr to 25 kyr |
 | `G` | 0.0 | sediment deposition (Davy–Lague). 0 = pure detachment-limited |
 | `dt_myr` | 0.5 | timestep. The implicit solver is unconditionally stable, so this can be large |
 | `fill_every` | 1 | priority-flood cadence. 1 is affordable |
@@ -195,7 +211,7 @@ call the modules directly** to change anything not exposed as a CLI flag.
 - **Resolution.** Finer grids resolve smaller headwater areas where slope is steepest, so
   the same `K` gives more relief. `K=1e-6` gave 5.8 km peaks at n=128 and 17.6 km at n=785.
 - **Coupling.** Stage 4 substitutes discharge for drainage area, a different
-  parameterisation in which `K` means something different. Use **3.7e-6 coupled** and
+  parameterisation in which `K` means something different. Use **1.2e-6 coupled** and
   **~2.5e-6 uncoupled** at n=785.
 
 To retarget peak elevation, scale `K` by the ratio you want to remove: relief ∝ 1/K exactly
@@ -236,7 +252,7 @@ for `n=1`.
 | `freeze_c` | −2.0 | ice accumulates below this mean annual temperature |
 | `balance_per_degc` | 0.35 | metres of ice per year per degree below freezing |
 | `K` / `m` / `n` | 0.02 / 0.30 / 1.0 | abrasion law on ice flux. `m` is below the fluvial value on purpose |
-| `slope_baseline_km` | 120 | **driving slope is regional, not local.** With a local slope, overdeepenings are impossible rather than merely rare |
+| `slope_baseline_km` | 1.22 | **driving slope is regional, not local.** With a local slope, overdeepenings are impossible rather than merely rare. Cell-scale (12 cells of flow path) |
 | `min_flux_km3_per_yr` | 0.01 | below this it is snow, not a glacier |
 | `steps` / `dt_yr` | 60 / 5000 | 300 kyr of glaciation |
 | `max_incision_per_step_m` | 25 | explicit-scheme guard |
@@ -247,7 +263,7 @@ for `n=1`.
 |---|---|---|
 | `pet_base_mm` / `pet_linear` / `pet_cubic` | 300 / 25 / 0.05 | Thornthwaite-style potential evapotranspiration from temperature |
 | `endorheic_margin_m` | 5 | how far below spill a lake must settle to count as terminal |
-| `min_lake_area_km2` | 400 | below this a depression is not a lake |
+| `min_lake_area_km2` | 0.0415 | below this a depression is not a lake (~5 cells) |
 | `channel_threshold_km3_per_yr` | 0.5 | discharge defining a river |
 | `width_coeff_m` / `width_exponent` | 90 / 0.5 | `w = c·Q^0.5`, standard hydraulic geometry |
 
@@ -255,10 +271,10 @@ for `n=1`.
 
 | parameter | default | effect |
 |---|---|---|
-| `max_amplitude_m` | 260 | detail height on the roughest ground |
+| `max_amplitude_m` | 3.0 | detail height on the roughest ground. Denominated against the drop across **one cell** at `slope_reference`, not against world relief |
 | `slope_reference` | 0.06 | slope at which detail is full strength |
 | `flat_floor` | 0.18 | detail retained on flat ground. **At 0 the sea bed and every plain go glass-smooth** |
-| `valley_smoothing_km2` | 60000 | drainage area over which alluvial floors smooth out. **Must be a large-river area** — at 3000 it flattened the whole channel network |
+| `valley_smoothing_sphere_fraction` | 1.18e-4 | drainage area over which alluvial floors smooth out, as a **fraction of the sphere** (6.2 km² at production). **Must be a large-river area** — too small and it flattens the whole channel network |
 | `ocean_scale` | 0.35 | sub-sea detail, muted by sediment |
 | `octaves` / `frequency` / `ridged` | 6 / 180 / 0.35 | fractal character; `ridged` blends toward crests over blobs. `octaves` is a **ceiling** — the number actually used is capped against `--width` |
 | `min_px_per_feature` | 3.0 | pixels the finest octave must span. **Detail below the pixel is not detail, it is aliasing** — it folds back as long straight moiré fringes across the terrain |
@@ -310,6 +326,83 @@ lands in a global regression. **Judge worlds by the mesh metrics, not by the exp
 raster**: at ~5 km/px against SRTM's 30 m, no raster window is both wide enough for three
 decades of drainage area and small enough to avoid equirectangular distortion.
 
+## Cell size
+
+The grid is dimensionless. Radius only scales `arc_dist`, `edge_len` and `area`, so moving
+from 9.77 km cells to 100 m changed no graph algorithm and no topology. What it changed is
+**which processes sit above the grid scale**.
+
+The number that decides that is not the angle of repose — it is the channel head. Real
+channels initiate at drainage areas of 0.01–1 km². A cell at 9.77 km was **82.7 km²**, so
+every land cell already carried more drainage than a channel head needs: there was no
+hillslope domain anywhere in the world, and `D` was a numerical smoother rather than soil
+creep. A cell at 100 m is **0.0086 km²**, below the threshold, so hillslopes exist.
+
+**Measured, at n=384 over 400 steps.** With `D=0` slope falls monotonically with drainage
+area from the very first bin — no hillslope regime, which is what the whole 9.77 km world
+looked like. With `D=0.02` the slope–area curve has a hump: slope *rises* over 1→4 cells,
+peaks at the channel head, then falls as `A^-θ`. That rising limb is the convex hillslope.
+
+| D | channel head | θ (fluvial limb) | r² | sub-steps |
+|---|---|---|---|---|
+| 0.00 | none — monotonic | 0.457 | 0.991 | — |
+| 0.01 | 0.021 km² | 0.402 | 0.927 | 10 |
+| **0.02** | **0.034 km²** | **0.362** | 0.907 | 20 |
+| 0.05 | 0.056 km² | 0.267 | 0.748 | 48 |
+
+Every channel head there is inside the real 0.01–1 km² band, so that criterion does not
+pick between them. `D=0.02` is the chosen trade.
+
+**At production the concavity is fine, and the n=384 figures above understate it twice
+over** — that fixture's basins are 4× smaller, and the θ column there is measured close to
+the channel head. Measured on the n=785 world:
+
+| measurement | 9.77 km cells | 100 m cells | real terrain |
+|---|---|---|---|
+| land cells that are local maxima | 4.40% | **0.502%** | 0.14–0.26% (SRTM) |
+| median drainage area | 1.0 cells | **5.98 cells** | 3–4 px (SRTM) |
+| θ, 40 cells and up | — | **0.467** (r² 0.90) | 0.4–0.6 |
+| θ, 400 cells and up | — | **0.556** (r² 0.85) | 0.4–0.6 |
+
+The first two were recorded in terrain-algorithms.md as *unfixed* — a surface genuinely
+rough at the cell scale, with half of all land having no upstream contribution at all. Both
+were symptoms of having no hillslope domain, and both resolved with the grid rather than
+with any change to the drainage code.
+
+**The channel threshold had to move with it.** `metrics.report` uses one threshold both to
+define channels and to fit the slope–area regression, and the regression is only valid on
+the fluvial limb. 6 cells of drainage was safely fluvial at 9.77 km cells (500 km²); at
+100 m cells 6 cells *is* the channel head, so fitting from there mixes the two regimes and
+θ reads 0.392. `generate_world.py` now uses 40 cells.
+
+Three consequences worth knowing before changing anything:
+
+- **Diffusion must be sub-cycled.** The explicit limit is `A_i / (2 D Σ(e_ij/L_ij))`, and
+  `Σ(e_ij/L_ij)` is dimensionless, so the limit tracks *cell area* and falls as the square
+  of cell size — 239 Myr at 9.77 km, 25 kyr at 100 m, against a 0.5 Myr fluvial timestep.
+  `diffusion_substeps` computes the count from the grid; a raw call at a fluvial `dt`
+  violates the discrete maximum principle.
+- **`U` and `D` are now answerable to each other.** Steady-state hilltop curvature is
+  exactly `U/D`. The old `U=1200 m/Myr` with `D=0.05` implies 120 m of convexity *per cell*
+  at 100 m — spikes. That inconsistency was always in the parameters; it was invisible only
+  while hillslopes were sub-grid.
+- **Two classes of length scale, and they scale oppositely.** *Cell-scale* parameters
+  (`min_island_area_km2`, `min_lake_area_km2`, `channel_threshold_km3_per_yr`,
+  `slope_baseline_km`) are absolute and must **not** be rescaled — cell size no longer
+  varies with `n`. *World-scale* parameters (`orogen_decay_km`, `arc_*`, `rift_shoulder_km`,
+  `continentality_scale_km`, `valley_smoothing_sphere_fraction`) are fractions of the world
+  and **are** rescaled, by `PlateParams.for_radius` and equivalents. Getting one into the
+  wrong class is silent: it just makes a fixture at low `n` test the wrong thing.
+
+What this unlocks, with the drop needed for a 33° talus slope as the yardstick: it was
+**6,371 m per cell** at 9.77 km, against 8 km of relief in the entire world, so no cell pair
+ever qualified. At 100 m it is **65 m**, which ordinary mountain terrain clears. Thermal
+talus, cirques, dunes and meanders all move from impossible to viable — none is implemented,
+but `tests/test_glacial.py` now pins the geometry so a future grid change cannot quietly
+take it back.
+
+---
+
 ## Known limitations
 
 Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
@@ -323,4 +416,13 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
   ocean-current heat transport and a seasonal cycle (for monsoons).
 - **Endorheic basins are rare** in generated worlds; the logic is unit-tested on
   constructed basins instead.
-- **No meanders, dunes, wave-cut notches or cirques** — all sub-grid at ~10 km cells.
+- **No meanders, dunes, wave-cut notches, cirques or thermal talus.** All were sub-grid at
+  9.77 km cells; at 100 m all are now above the grid scale, and none is implemented yet.
+  See [Cell size](#cell-size) for the measured thresholds.
+- **Concavity is resolution- and threshold-sensitive.** θ is 0.467–0.556 on the production
+  world when fitted above the channel head, but 0.36 at n=384 and 0.392 if fitted from
+  6 cells. Always state the threshold alongside the number.
+- **No endorheic basins** in the production world (222 lakes, none terminal), and hillslope
+  diffusion now actively fills shallow depressions, making them rarer than before.
+- **An Earth-sized ice sheet is larger than this world.** Continental glaciation is no
+  longer something the model can express; 21% of land glaciates as alpine/polar ice.

@@ -26,6 +26,11 @@ NONE, CONVERGENT, DIVERGENT, TRANSFORM = 0, 1, 2, 3
 # margin_class encoding
 INLAND, PASSIVE, ACTIVE = 0, 1, 2
 
+# How far inland boundary stress is felt, as a FRACTION OF THE SPHERE'S RADIUS. Was a
+# hardcoded 1200 km, which is 0.188 R on Earth and larger than the whole world at
+# R = 64.9 km. See `build_plates`.
+UPLIFT_REACH_R = 0.188
+
 
 @dataclasses.dataclass
 class PlateParams:
@@ -50,22 +55,60 @@ class PlateParams:
     # the stress over roughly 8 cells of strike, which removes the stripes while leaving
     # the along-belt variation that makes one end of a range higher than the other.
     stress_smoothing_passes: int = 8
-    # Uplift geometry, from the boundary-case table in terrain-algorithms.md.
-    orogen_decay_km: float = 200.0   # continental collision, peaked on the boundary
-    arc_offset_km: float = 150.0     # volcanic arc, inland of an oceanic-continental trench
-    arc_width_km: float = 100.0
-    rift_shoulder_km: float = 80.0   # uplifted flanks either side of a continental graben
-    # Crustal thickness response.
-    convergent_thickening_km: float = 15.0
-    divergent_thinning_km: float = 8.0
-    # Magnitudes. Published rock uplift for active orogens spans 500-5000 m/Myr; this sits
-    # at the low end deliberately. Steady-state relief goes as U/K, and at the default
-    # K=2.5e-6 an orogen uplift of 3000 m/Myr drove peaks to 19.3 km. Raising K by the same
-    # factor would work equally well physically, but keeping K identical across both Stage 1
-    # variants means an A/B comparison of crust models is not confounded by a different
-    # erodibility, so the uplift is what gives.
-    u_max_m_per_myr: float = 1200.0
-    craton_floor_m_per_myr: float = 20.0
+    # Uplift geometry, from the boundary-case table in terrain-algorithms.md. These are
+    # HORIZONTAL distances on the sphere, so they scale with the radius: the Earth-radius
+    # values were 200 / 150 / 100 / 80 km, divided by 98.125 for R = 64.927 km.
+    orogen_decay_km: float = 2.04    # continental collision, peaked on the boundary
+    arc_offset_km: float = 1.53      # volcanic arc, inland of an oceanic-continental trench
+    arc_width_km: float = 1.02
+    rift_shoulder_km: float = 0.82   # uplifted flanks either side of a continental graben
+    # Crustal thickness response. VERTICAL, so it does not follow the radius -- it follows
+    # the relief budget instead, cut by 3x with the rest of the isostasy. See CrustParams.
+    convergent_thickening_km: float = 5.0
+    divergent_thinning_km: float = 2.7
+    # Magnitudes. VERTICAL rates, so again not a radius rescale -- but they had to come
+    # down 12x anyway, and the reason is the whole point of the 100 m grid.
+    #
+    # Hillslope diffusion sets a steady-state hilltop curvature of exactly U/D. At the old
+    # U=1200 m/Myr with D=0.05 m^2/yr that is 0.024 1/m, which over a 100 m cell means
+    # 120 m of convexity PER CELL -- the hilltops would be spikes. That inconsistency was
+    # always in the parameters; it was invisible only because hillslopes were sub-grid and
+    # D acted as a smoother. Making hillslopes resolved makes U and D answerable to each
+    # other for the first time.
+    #
+    # At U=100 m/Myr, C = U/D = 2e-3 1/m gives 40 m of convex relief over a 200 m hillslope
+    # and a basal slope of 0.4 -- steep mountain terrain, which is what an active orogen
+    # should look like. The craton floor gives C = 4e-5, so 1.8 m over the same length:
+    # gentle rolling ground. Raising D instead would need 0.6 m^2/yr, well outside the
+    # published 0.001-0.1 range for soil creep, so the uplift is what gives.
+    u_max_m_per_myr: float = 100.0
+    craton_floor_m_per_myr: float = 2.0
+
+    def for_radius(self, radius_km):
+        """Copy with the WORLD-SCALE lengths rescaled from the production sphere.
+
+        The four uplift-geometry distances are fractions of the world wearing kilometres:
+        2.04 km of orogen decay means 3.1% of the radius, which is what 200 km meant on
+        Earth. Authoring them in km keeps them readable against the boundary-case table
+        in terrain-algorithms.md; rescaling here keeps them meaningful on a fixture at a
+        different n, where cell size is still 100 m but the sphere is smaller.
+
+        Without this, a test at n=72 gets a 5.96 km world carrying a 2.04 km decay
+        length, so every cell is effectively on a boundary and the uplift field is flat.
+        Note this is the OPPOSITE of the cell-scale parameters -- lake and island minima,
+        the channel-head discharge -- which are absolute and must NOT be rescaled,
+        because cell size does not vary with n.
+        """
+        from terrain.grid import R_WORLD_KM
+
+        f = float(radius_km) / R_WORLD_KM
+        return dataclasses.replace(
+            self,
+            orogen_decay_km=self.orogen_decay_km * f,
+            arc_offset_km=self.arc_offset_km * f,
+            arc_width_km=self.arc_width_km * f,
+            rift_shoulder_km=self.rift_shoulder_km * f,
+        )
 
 
 @dataclasses.dataclass
@@ -78,6 +121,7 @@ class Plates:
     boundary_stress: np.ndarray  # (N,) f32, signed normal velocity, mm/yr
     boundary_dist_km: np.ndarray  # (N,) f32, great-circle distance to nearest boundary
     nearest_boundary: np.ndarray  # (N,) i32, index of that boundary cell
+    radius_km: float = 0.0       # the sphere these distances were measured on
 
 
 # --------------------------------------------------------------------------------------
@@ -151,24 +195,35 @@ def partition(grid, sites, params: PlateParams = None, seed=0):
     return np.argmax(warped @ sites.T, axis=1).astype(np.int16)
 
 
-def assign_motion(n_plates, params: PlateParams, seed=0):
+def assign_motion(n_plates, params: PlateParams, seed=0, radius_km=None):
     """A random Euler pole and angular rate per plate.
 
     Rate is chosen so the fastest surface speed lands near max_speed_mm_per_yr. Earth's
-    plates run roughly 10-100 mm/yr.
+    plates run roughly 10-100 mm/yr, and that is a SURFACE speed, so it is the right
+    thing to hold fixed on a smaller sphere -- rock does not know the planet's radius.
+
+    The radius cancels between here and `plate_velocity` (rate is v/R, velocity is
+    rate*R), so threading it changes no result. It is threaded anyway because the pair
+    of hardcoded 6371s only agreed by luck, and `euler_rate` is exported as an angular
+    rate that a reader is entitled to interpret on the actual sphere.
     """
+    from terrain.grid import R_EARTH_KM
+
     rng = np.random.default_rng(seed + 991)
     axis = rng.standard_normal((n_plates, 3))
     axis /= np.linalg.norm(axis, axis=1, keepdims=True)
     # v = omega * R * sin(theta); take sin(theta) ~ 1 for the scaling.
-    max_rate = params.max_speed_mm_per_yr / 6371.0  # rad/Myr
+    max_rate = params.max_speed_mm_per_yr / float(radius_km or R_EARTH_KM)  # rad/Myr
     rate = rng.uniform(0.15, 1.0, n_plates) * max_rate
     return axis, rate
 
 
-def plate_velocity(xyz, axis, rate, plate_id):
+def plate_velocity(xyz, axis, rate, plate_id, radius_km=None):
     """Surface velocity in km/Myr (== mm/yr), as the Euler-pole cross product."""
-    return np.cross(axis[plate_id] * rate[plate_id, None], xyz) * 6371.0
+    from terrain.grid import R_EARTH_KM
+
+    return np.cross(axis[plate_id] * rate[plate_id, None], xyz) * float(
+        radius_km or R_EARTH_KM)
 
 
 # --------------------------------------------------------------------------------------
@@ -294,8 +349,9 @@ def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
     p = params or PlateParams()
     sites = seed_plates(grid, p, seed)
     plate_id = partition(grid, sites, p, seed)
-    axis, rate = assign_motion(sites.shape[0], p, seed)
-    vel = np.ascontiguousarray(plate_velocity(grid.xyz, axis, rate, plate_id))
+    axis, rate = assign_motion(sites.shape[0], p, seed, grid.radius_km)
+    vel = np.ascontiguousarray(
+        plate_velocity(grid.xyz, axis, rate, plate_id, grid.radius_km))
 
     n = grid.cell_count
     b_type = np.zeros(n, dtype=np.uint8)
@@ -311,12 +367,18 @@ def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
 
     dist = np.empty(n, dtype=np.float32)
     source = np.empty(n, dtype=np.int32)
-    boundary_distance(is_b, grid.xyz, grid.radius_km, dist, source, np.float32(1200.0))
-    dist[dist > 1e29] = 1e4  # unreachable within the cap: treat as deep interior
+    # Reach as a FRACTION OF THE RADIUS, not an absolute distance. 1200 km on Earth was
+    # 0.188 R; hardcoding the km made it larger than the whole world once the sphere
+    # shrank, which would have marked every cell boundary-adjacent and flattened the
+    # uplift field into a constant.
+    reach = np.float32(UPLIFT_REACH_R * grid.radius_km)
+    boundary_distance(is_b, grid.xyz, grid.radius_km, dist, source, reach)
+    dist[dist > 1e29] = np.float32(10.0 * reach)  # beyond the cap: deep interior
 
     return Plates(plate_id=plate_id, sites=sites, euler_axis=axis, euler_rate=rate,
                   boundary_type=b_type, boundary_stress=b_stress,
-                  boundary_dist_km=dist, nearest_boundary=source)
+                  boundary_dist_km=dist, nearest_boundary=source,
+                  radius_km=float(grid.radius_km))
 
 
 # --------------------------------------------------------------------------------------
@@ -343,6 +405,8 @@ def derive_uplift(plates: Plates, is_continental, land_mask, params: PlateParams
     comparable to published values. Leave it None for realistic tectonics.
     """
     p = params or PlateParams()
+    if plates.radius_km:  # 0.0 means a Plates built without one; leave params alone
+        p = p.for_radius(plates.radius_km)
     d = plates.boundary_dist_km
     src = plates.nearest_boundary
     valid = src >= 0

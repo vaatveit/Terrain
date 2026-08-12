@@ -220,19 +220,72 @@ Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip an
 
 **Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ → **Stage 9 export** ✅. **The pipeline is complete** — `scripts/generate_world.py` runs all nine stages end to end and writes a georeferenced world. See **[README.md](README.md)** for how to run it, what every parameter does, and what the outputs contain.
 
-### Stage 5: secondary erosion — mostly sub-grid
+### Cell size: why the sphere shrank to 64.9 km
 
-**Three of the four processes cannot act at continental resolution**, and it is worth stating that with numbers rather than shipping operators that do nothing. At n=785 the cells are 9.81 km across:
+The grid is dimensionless. Radius scales `arc_dist`, `edge_len` and `area` and nothing else, so moving to 100 m cells changed no graph algorithm and no topology. It changed which processes sit above the grid scale — and the decisive number is not the angle of repose but **the channel head**.
 
-| process | feature scale | verdict at 9.81 km cells |
+Real channels initiate at drainage areas of 0.01–1 km². A 9.77 km cell is **82.7 km²**, so every land cell already carried more drainage than a channel head needs. There was no hillslope domain anywhere in the world; the entire landscape was channel network, and `D` was a numerical smoother wearing the name of soil creep. That single fact explains the whole cluster of symptoms recorded elsewhere in this document: drainage density of 1.0 cells against SRTM's 3–4 px, 4.40% of land cells as local maxima against SRTM's 0.14–0.26%, and hillslope diffusion moving 0.014 m against 4 km of relief. A 100 m cell is **0.0086 km²**, below the threshold, so hillslopes exist as terrain.
+
+**Shrinking the planet is not the same as adding cells, and only one of them was affordable.** Global 100 m on Earth is `510.1×10⁶ km² / 0.0086 km²` ≈ **5.9×10¹³ cells** (`n ≈ 2.4M`), seven orders of magnitude past the 6.16M budget. Shrinking the sphere keeps the cell count and buys the resolution by giving up world size: 4πR² = 52,973 km², about the area of Croatia, with landmasses ~120 km across. That is the trade, stated plainly — this is a large island rendered properly, not a planet.
+
+**What had to move with it, and what emphatically did not.** Three classes:
+
+| class | examples | rule |
 |---|---|---|
-| Thermal talus | needs slope > angle of repose | **impossible** — 33° across one cell is 6,371 m of drop, against ~8 km of total world relief |
-| Aeolian dunes | 0.05–2 km | sub-grid |
-| Wave-cut notches | 1–50 m | sub-grid by 2–4 orders of magnitude |
-| Cirques | 0.5–3 km | sub-grid |
-| **Glacial troughs** | 1–10 km | marginal |
-| **Fjords** | 20–200 km | resolved |
-| **Ice sheets** | 500–4,000 km | resolved |
+| Cell-scale | `min_island_area_km2`, `min_lake_area_km2`, `channel_threshold_km3_per_yr`, `slope_baseline_km` | absolute; **not** rescaled — cell size no longer varies with `n` |
+| World-scale | `orogen_decay_km`, `arc_*`, `rift_shoulder_km`, `continentality_scale_km`, `valley_smoothing_sphere_fraction`, boundary reach | fractions of the world; rescaled by `PlateParams.for_radius` and equivalents |
+| Vertical / physical | `D`, lapse rate, densities, `width_coeff_m`, PET constants | untouched; they never referred to the sphere |
+
+Putting a parameter in the wrong class is silent. `valley_smoothing_km2 = 60000` *looked* constant but was already tracking sphere area — 19 cells of drainage at n=128 and 725 at n=785 — and only looked fixed because the sphere was. It is now stored as the fraction it always was.
+
+**Two findings that only appeared once the scale changed.** Both were latent bugs, not consequences:
+
+- `boundary_distance` was called with a hardcoded 1200 km reach, which is 0.188 R on Earth but *larger than the whole world* at R = 64.9 km. Every cell would have read as boundary-adjacent and the uplift field would have flattened to a constant.
+- `prune_islands` cleared `land_mask` but left the elevation above the datum, so a drowned islet was ocean by mask and land by height. It never fired before because at Earth radius the 1000 km² threshold was smaller than a single cell on every test fixture, so nothing was ever pruned.
+
+**`U` and `D` became answerable to each other.** Steady-state hilltop curvature is exactly `U/D`. The old `U = 1200 m/Myr` with `D = 0.05 m²/yr` implies 0.024 1/m — 120 m of convexity *per 100 m cell*, i.e. spikes. That inconsistency was always in the parameters and was invisible only while hillslopes were sub-grid. Uplift came down 12× rather than raising `D`, because matching `U = 1200` would need `D = 0.6 m²/yr`, well outside the published 0.001–0.1 range for soil creep.
+
+**Diffusion had to be sub-cycled, and this is the real cost of the rescale.** The explicit stability limit is `A_i / (2 D Σ(e_ij/L_ij))`. `Σ(e_ij/L_ij)` is dimensionless (6/√3 = 3.46 for a hexagon) and scale-free, so the limit tracks *cell area* and falls as the square of cell size: **239 Myr at 9.77 km, 25 kyr at 100 m**, against a fluvial timestep of 0.5 Myr. Dropping the global timestep to satisfy it would multiply the cost of the expensive part — priority-flood, `O(N log N)` with poor cache behaviour — by 20 to fix the cheap part. `diffusion_substeps` computes the count from the grid and sub-cycles only the diffusion. Stability is tested by the discrete maximum principle rather than a threshold: a stable scheme cannot carry a cell outside the range the field already occupied, and the raw call at a fluvial `dt` does exactly that.
+
+**The measurement that says it worked, and its price.** At n=384 over 400 steps, binning slope against drainage area: with `D=0` slope falls monotonically from the first bin — no hillslope regime, which is what the whole 9.8 km world looked like. With `D` on, the curve develops a hump, slope rising to a peak at the channel head before falling as `A^-θ`. That rising limb is the convex hillslope, and it is the thing the rescale was for.
+
+| D | channel head | θ (fluvial limb) | r² | sub-steps |
+|---|---|---|---|---|
+| 0.00 | none — monotonic | 0.457 | 0.991 | — |
+| 0.01 | 0.021 km² | 0.402 | 0.927 | 10 |
+| **0.02** | **0.034 km²** | **0.362** | 0.907 | 20 |
+| 0.05 | 0.056 km² | 0.267 | 0.748 | 48 |
+
+Every channel head there sits inside the real 0.01–1 km² band, so that criterion does not discriminate. `D = 0.02` is the chosen trade: about two cells of hillslope and 20 sub-steps.
+
+**The θ column above understates the production world twice over**, and the correction matters more than the table. That fixture's basins are 4× smaller than production's, and its θ is fitted close to the channel head. On the n=785 world, fitted above the head, θ is **0.467 at 40 cells (r² 0.90) and 0.556 at 400 cells (r² 0.85)** — inside the band, not below it.
+
+**This resolved two findings previously recorded here as unfixed.** The section on straight-line artifacts closed by conceding that some mountain flanks still combed with detail off, because the mesh was genuinely rough at cell scale, and called it "a Stage 2 question about drainage density at 9.8 km cells, not an export question." That diagnosis was right and the grid was the answer:
+
+| measurement | 9.77 km cells | 100 m cells | real terrain |
+|---|---|---|---|
+| land cells that are local maxima | 4.40% | **0.502%** | 0.14–0.26% (SRTM) |
+| median drainage area | 1.0 cells | **5.98 cells** | 3–4 px (SRTM) |
+
+Neither needed a change to the drainage code. Both were the same symptom: a landscape with no hillslope domain, where half of all land had no upstream contribution at all.
+
+**One threshold had to move with the grid, and it is an easy trap.** `metrics.report` takes a single `channel_threshold_km2` and uses it both to define the channel mask and to select cells for the slope–area regression — but that regression is only valid on the fluvial limb. At 9.77 km cells, 6 cells of drainage was 500 km², far above any channel head, so the two uses never conflicted. At 100 m cells, 6 cells **is** the channel head, so fitting from there mixes hillslope and fluvial ground and θ reads 0.392. `generate_world.py` now reports at 40 cells. Any θ quoted from this pipeline should carry its threshold.
+
+### Stage 5: secondary erosion — sub-grid at 9.81 km, viable at 100 m
+
+**This section is superseded by the grid rescale and kept because the reasoning still holds — only the verdict changed.** The world is now 100 m cells on a 64.9 km sphere (see "Cell size" below). At the old 9.81 km cells, three of the four processes could not act, and it was worth stating that with numbers rather than shipping operators that do nothing:
+
+| process | feature scale | at 9.81 km cells | at 100 m cells |
+|---|---|---|---|
+| Thermal talus | needs slope > angle of repose | **impossible** — 33° across one cell is 6,371 m of drop, against ~8 km of total world relief | **viable** — 65 m of drop, which mountain terrain clears |
+| Aeolian dunes | 0.05–2 km | sub-grid | resolved |
+| Wave-cut notches | 1–50 m | sub-grid by 2–4 orders of magnitude | marginal |
+| Cirques | 0.5–3 km | sub-grid | resolved |
+| **Glacial troughs** | 1–10 km | marginal | resolved |
+| **Fjords** | 20–200 km | resolved | resolved (world-spanning) |
+| **Ice sheets** | 500–4,000 km | resolved | larger than the world |
+
+None of the newly viable operators is implemented. What changed is that writing one is now worth doing, and `tests/test_glacial.py` pins the geometry so a future grid change cannot quietly take it back. Note the last two rows moved the other way: a 64.9 km sphere is smaller than an Earth ice sheet, so continental glaciation is no longer a thing this world can express.
 
 So Stage 5 is glacial erosion, driven from the Stage 3 temperature field (which already carries the lapse rate, so latitude and altitude are handled together — a latitude-only ELA put ice on 1.2% of land and missed low-lying polar shields entirely).
 
@@ -258,11 +311,11 @@ Verified on constructed basins, holding geometry and rainfall fixed and varying 
 
 Closed basins remain **rare** in generated worlds — 0.03% of land against Earth's roughly 1% lake cover — because fluvial erosion efficiently removes depressions and continental rifts are uncommon. The endorheic machinery is therefore unit-tested on constructed basins rather than on emergent ones.
 
-Sub-grid and deliberately absent: meander migration (0.1–10 km wavelength). River *width* is carried as a per-cell attribute (`w ∝ Q^0.5`, the standard hydraulic-geometry relation) because it is wanted for rendering, but no river is geometrically resolved at ~10 km cells — the Amazon at its mouth would be one cell across.
+Meander migration (0.1–10 km wavelength) was sub-grid and deliberately absent at 9.8 km cells; at 100 m it is resolved and simply not implemented. River *width* is carried as a per-cell attribute (`w ∝ Q^0.5`, the standard hydraulic-geometry relation) because it is wanted for rendering. `width_coeff_m` is **not** rescaled with the radius: the relation is physical, and `Q` already carries the smaller basins — a 100 km² catchment delivers what a 100 km² catchment delivers, whatever planet it is on.
 
 ### Stage 8: amplification
 
-Simulate coarse, add detail afterwards — which only means something if there is a finer target. The mesh is ~9.8 km at n=785 and the export raster is 8192×4096 (~4.9 km/px at the equator), so detail lives in that gap.
+Simulate coarse, add detail afterwards — which only means something if there is a finer target. The mesh is 100 m at n=785 and the default export raster is 6280×3140 (~65 m/px at the equator), so detail lives in that gap — now about 1.5 px per cell, against 2 px before the rescale. `max_amplitude_m` is denominated against the drop across one cell at `slope_reference` (100 m × 0.06 = 6 m), not against world relief, which is why it fell from 260 m to 3 m.
 
 **Two separate problems, worth keeping apart.** Nearest-cell sampling of a hex mesh renders the hexagons — flat-shaded cells with visible seams, which reads as a rendering bug rather than as terrain. Inverse-distance weighting over the three nearest cells cuts measured high-frequency energy by 3× before any detail is considered. Only then does fractal detail go on top.
 
@@ -369,6 +422,8 @@ Two details are load-bearing. The weight must be compactly supported — `((R �
 
 **What this does not fix, and the measurement that says so.** After all four fixes some mountain flanks still render as a regular comb, and it is not the export: it survives with detail off and C1 on, so it is in the mesh field itself. The generated surface is genuinely rough at the cell scale — **4.40% of land cells are local maxima among their own neighbours, against 0.14–0.26% for SRTM pixels**, a 17–31× excess — and half of all land cells have no upstream contribution at all (median drainage area 1.0 cells, against 3–4 pixels on SRTM). No interpolation can smooth away topography that is really there. That is a Stage 2 question about drainage density at 9.8 km cells, not an export question.
 
+**Since resolved by the grid rescale, and the diagnosis above is why.** Both numbers were symptoms of a landscape with no hillslope domain — at 82.7 km² per cell, every land cell already carried more drainage than a real channel head needs, so there was nothing for hillslope diffusion to act on and nothing to smooth the cell-scale roughness. At 100 m cells the local-maxima fraction falls to **0.502%** (from 4.40%, against SRTM's 0.14–0.26%) and median drainage rises to **5.98 cells** (from 1.0, against SRTM's 3–4 px). Neither needed a change to the drainage code. See "Cell size" above.
+
 **A fourth, smaller one: the detail noise was mostly aliasing.** Stage 8 ran 6 octaves from a base frequency of 180 regardless of raster width. At width 8192 the finest octave has 1.1 km features against a 4.9 km pixel — four of the six octaves sat below Nyquist, and energy above Nyquist folds back as long straight moiré fringes, which is the exact artifact detail exists to avoid. The octave count is now derived from the width. The honest consequence: at the default width (8×n) a pixel is only ~1.5× finer than a cell, so **one octave is all that fits**, and getting more detail means exporting a wider raster rather than turning a knob.
 
 **The lesson worth keeping.** Every one of the three real causes sat *upstream* of the thing that looked guilty, and the drainage statistics were normal throughout — the network was never the problem. Rendering intermediate fields directly (uplift, stress, boundary distance) found in one image what four quantitative tests had failed to find, because the artifact was structural rather than statistical.
@@ -463,7 +518,9 @@ A 50× contrast varies slope 50× on its own, while `A^-0.45` spans only ~22× a
 
 **2. `K` is resolution-dependent; `θ` is not.** Steady-state slope is `(U/K)^(1/n)`, so `K` sets relief while leaving the exponent untouched. But finer grids resolve smaller headwater drainage areas, where steady-state slope is steepest, so the same `K` yields far more total relief: `K=1e-6` gave 5.8 km peaks at n=128 and **17.6 km at n=785**. Retune `K` whenever the resolution changes — this is the concrete form of the doc's earlier warning that erosion coefficients don't transfer between resolutions.
 
-**3. Hillslope diffusion does almost no direct work here, but is still not ignorable.** At ~10 km cells the convex-hilltop scale is far below the grid, and one step at the default `D` moves at most 0.014 m against 4 km of relief. Yet because it biases every step in the same direction it eventually tips receiver choices at divides, and a flipped divide re-routes a whole sub-basin: over 100 steps the median difference from a `D=0` run is 0.014 m and the maximum is **720 m**. A small persistent forcing is not a small effect.
+**3. Hillslope diffusion did almost no direct work at 9.8 km cells, and this is why the grid was rescaled.** At ~10 km cells the convex-hilltop scale is far below the grid, and one step at `D=0.05` moved at most 0.014 m against 4 km of relief. Yet because it biased every step in the same direction it eventually tipped receiver choices at divides, and a flipped divide re-routes a whole sub-basin: over 100 steps the median difference from a `D=0` run was 0.014 m and the maximum **720 m**. A small persistent forcing is not a small effect.
+
+At 100 m cells the premise is gone: diffusion is a first-class term that moves the typical cell, and the amplification gap collapsed from ~50,000× to 5.5× because diffusion now acts everywhere rather than only where it happens to tip a divide. See "Cell size" above.
 
 **4. A 1 cm perturbation permanently reorganises part of the world.** ⚠️ *This corrects an earlier claim here that transients decay to bit-identical output.* Measured on a reproducible world: after a one-off 1 cm nudge, 99.2% of land ends up bit-identical, but **0.8% of cells differ by up to 433 m, and that difference is fixed from step 100 onward** rather than decaying. Where the implicit solve contracts a perturbation smoothly it dies; where it tips a receiver choice at a drainage divide, the sub-basin re-routes and never returns. Reproducibility here means identical inputs give identical outputs — not that near-identical inputs give near-identical worlds. The parallel-reduction determinism requirement stands.
 

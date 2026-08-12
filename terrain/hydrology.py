@@ -42,13 +42,24 @@ class HydrologyParams:
     pet_cubic: float = 0.05
     pet_max_mm: float = 2500.0
     # A lake counts as endorheic if it settles more than this far below its spill point.
-    endorheic_margin_m: float = 5.0
+    # Vertical, but cut with the relief budget: basins now hold 50-200 m of depth range
+    # where they held 500-2,000 m, so 5 m would be a much stricter test than it was.
+    endorheic_margin_m: float = 2.0
     # Channel definition and width. w = coeff * Q^exponent with Q in km^3/yr; the 0.5
     # exponent is the standard hydraulic-geometry value.
-    channel_threshold_km3_per_yr: float = 0.5
+    #
+    # Discharge is area x depth / time, so it scales as the radius SQUARED: 0.5 km^3/yr
+    # / 98.125^2. That keeps the threshold at the same ~6 cells of drainage it marked at
+    # Earth radius, and 6 cells is now 0.05 km^2 -- inside the real 0.01-1 km^2 channel-
+    # head band, so the fluvial/hillslope split lands where it physically should.
+    #
+    # `width_coeff_m` is NOT rescaled. w = 90*sqrt(Q) is a physical hydraulic-geometry
+    # relation, and Q already carries the smaller basins: a 100 km^2 catchment delivers
+    # what a 100 km^2 catchment delivers, whatever planet it is on.
+    channel_threshold_km3_per_yr: float = 5.2e-5
     width_coeff_m: float = 90.0
     width_exponent: float = 0.5
-    min_lake_area_km2: float = 400.0
+    min_lake_area_km2: float = 0.0415
 
 
 @dataclasses.dataclass

@@ -49,7 +49,7 @@ import dataclasses
 import numpy as np
 from numba import njit, prange
 
-from terrain.grid import R_EARTH_KM
+from terrain.grid import R_EARTH_KM, R_WORLD_KM
 
 
 @dataclasses.dataclass
@@ -59,7 +59,11 @@ class ClimateParams:
     t_pole_c: float = -25.0
     lapse_rate_c_per_km: float = 6.5      # standard environmental lapse rate
     continentality_c: float = 6.0         # seasonal amplitude gain far from the sea
-    continentality_scale_km: float = 1500.0
+    # Horizontal, so it scales with the radius: 1500 km / 98.125. The temperature and
+    # rainfall constants around it are NOT rescaled -- degrees, mm/yr and the lapse rate
+    # per km of ELEVATION are all physical, and the advection constants are per grid step
+    # on a cell graph whose topology has not changed.
+    continentality_scale_km: float = 15.3
     # Annual-MEAN cooling deep inside a continent, at high latitude. Distinct from the
     # seasonal amplitude above, and the more important of the two here: the sea moderates
     # the annual mean, not just its swing. Siberia at 60N averages about -10 C where the
@@ -413,9 +417,18 @@ def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None) 
 
     dist = np.empty(n, dtype=np.float32)
     src = np.empty(n, dtype=np.int32)
-    plates.boundary_distance(~land_mask, grid.xyz, grid.radius_km, dist, src,
-                             np.float32(6000.0))
-    dist[dist > 1e29] = 6000.0
+    # Cap as a FRACTION OF THE RADIUS. 6000 km on Earth is 0.942 R; as a hardcoded km it
+    # would exceed the antipodal distance on the small sphere, so nothing would ever be
+    # "deep interior" and continentality would lose its ceiling.
+    # Continentality is a world-scale length -- how far inland the sea stops moderating --
+    # so it is a fraction of the radius, not an absolute distance. See
+    # PlateParams.for_radius for the same argument at length.
+    p = dataclasses.replace(p, continentality_scale_km=(
+        p.continentality_scale_km * float(grid.radius_km) / R_WORLD_KM))
+
+    cap = np.float32(0.942 * grid.radius_km)
+    plates.boundary_distance(~land_mask, grid.xyz, grid.radius_km, dist, src, cap)
+    dist[dist > 1e29] = cap
 
     t, seasonality = temperature(grid, elevation_m, dist, p)
     wind = wind_field(grid, p)

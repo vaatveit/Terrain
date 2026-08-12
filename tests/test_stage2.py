@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from terrain import flow, metrics, stage1, stage2  # noqa: E402
-from terrain.grid import build_goldberg  # noqa: E402
+from terrain.grid import R_EARTH_KM, build_goldberg  # noqa: E402
 
 
 def line_graph(n_cells, spacing_km=10.0, cell_area_km2=100.0):
@@ -69,8 +69,15 @@ def test_recovered_concavity_equals_m_over_n(m, n):
     This is the end-to-end check: it only passes if the implicit solver, the flow routing,
     the spherical cell areas and the metrics all agree. Uplift must be UNIFORM -- see
     stage2.uplift_field for why a spatially varying U inflates the measured theta.
+
+    PINNED TO EARTH RADIUS on purpose. theta = m/n is a property of the SOLVER, not of the
+    world, and recovering it needs three or four decades of drainage area. The 100 m world
+    at n=96 is 792 km^2 in total, so its largest basin is ~2000 cells and the regression
+    has barely two decades to work with -- it reads 0.30 for a true 0.45 and would be
+    measuring the fixture rather than the code. Tests of this world's CONFIGURATION use
+    the default radius; tests of solver correctness use whatever has the dynamic range.
     """
-    g = build_goldberg(96)
+    g = build_goldberg(96, radius_km=R_EARTH_KM)
     crust = stage1.generate_crust(g, seed=1)
     is_ocean = ~crust.land_mask
     uplift = np.where(crust.land_mask, 300.0, 0.0).astype(np.float32)
@@ -91,8 +98,11 @@ def test_recovered_concavity_equals_m_over_n(m, n):
 
 
 def test_erosion_moves_concavity_from_noise_toward_real_terrain():
-    """The whole point of Stage 2: noise-only terrain has almost no concavity."""
-    g = build_goldberg(96)
+    """The whole point of Stage 2: noise-only terrain has almost no concavity.
+
+    Earth radius, for the dynamic-range reason in test_recovered_concavity_equals_m_over_n.
+    """
+    g = build_goldberg(96, radius_km=R_EARTH_KM)
     crust = stage1.generate_crust(g, seed=1)
     is_ocean = ~crust.land_mask
     uplift = np.where(crust.land_mask, 300.0, 0.0).astype(np.float32)
@@ -114,8 +124,9 @@ def test_solver_is_stable_at_large_timesteps():
     """Braun-Willett is unconditionally stable; a 10x timestep must not blow up.
 
     An explicit scheme would diverge here, which is the entire reason for the implicit one.
+    Earth radius: this is a claim about the solver, not about this world.
     """
-    g = build_goldberg(64)
+    g = build_goldberg(64, radius_km=R_EARTH_KM)
     crust = stage1.generate_crust(g, seed=4)
     is_ocean = ~crust.land_mask
     uplift = np.where(crust.land_mask, 300.0, 0.0).astype(np.float32)
@@ -236,33 +247,68 @@ def test_diffusion_blows_up_past_the_stability_limit():
     assert z.var() > 1e6 * 100.0**2, "expected divergence past the explicit stability limit"
 
 
-def test_diffusion_does_almost_no_direct_work_at_continental_resolution():
-    """Documents a real limitation rather than pretending the term does something.
+def test_diffusion_does_real_work_at_100_m_cells_but_must_be_sub_cycled():
+    """The whole reason for the 100 m grid, and the cost that comes with it.
 
-    Hillslope diffusion sets the convex-hilltop-to-concave-valley transition, which occurs
-    over tens to hundreds of metres. At ~10 km cells that is far below the grid scale, so at
-    the default D the term moves almost nothing and fluvial incision does all the work.
+    At 9.77 km cells the hillslope term moved at most 0.014 m per step against 4 km of
+    relief: the convex-hilltop-to-concave-valley transition it models happens over tens to
+    hundreds of metres, two orders of magnitude below the grid, so `D` was a numerical
+    smoother rather than soil creep.
 
-    Measured DIRECTLY, as one step applied to evolved terrain. Comparing two full runs
-    instead would conflate this with drainage reorganisation -- see the chaos test below.
+    The catch is that the explicit stability limit is A_i / (2 D sum_j(e_ij/L_ij)), and
+    sum_j(e_ij/L_ij) is dimensionless, so the limit tracks CELL AREA and falls as the
+    square of cell size -- from 239 Myr at 9.77 km to 25 kyr at 100 m, while the fluvial
+    timestep stayed at 0.5 Myr. Both halves are asserted here: the raw call at a fluvial
+    dt diverges, and the sub-cycled path is both stable and no longer negligible.
+
+    Measured DIRECTLY, as one 0.5 Myr interval applied to evolved terrain. Comparing two
+    full runs would conflate this with drainage reorganisation -- see the chaos test below.
     """
     g = build_goldberg(64)
     crust = stage1.generate_crust(g, seed=3)
     is_ocean = ~crust.land_mask
-    uplift = np.where(crust.land_mask, 300.0, 0.0).astype(np.float32)
+    fixed = np.ascontiguousarray(is_ocean)
+    uplift = np.where(crust.land_mask, 100.0, 0.0).astype(np.float32)
     res = stage2.evolve(g, crust.elevation, uplift, is_ocean,
                         stage2.LemParams(D=0.0), n_steps=100)
 
-    z = res.elevation.astype(np.float64)
-    dz = np.empty(g.cell_count)
-    stage2.hillslope_diffusion(z, g.neighbours, g.edge_len, g.arc_dist, g.area,
-                               0.05, 0.5e6, np.ascontiguousarray(is_ocean), dz)
-
     land = crust.land_mask
+    z = res.elevation.astype(np.float64)
+    # Ocean back to base level, as `evolve` holds it during the run. `res.elevation` has
+    # the true bathymetry restored, so a coastal cell would otherwise face a 2 km drop
+    # across 100 m and diffuse against that rather than against its own hillslope.
+    z[is_ocean] = 0.0
     relief = float(z[land].max() - z[land].min())
-    assert np.abs(dz[land]).max() < 1e-3 * relief, (
-        f"diffusion moved up to {np.abs(dz[land]).max():.4f} m per step against "
-        f"{relief:.0f} m of relief; if this grows the docstring needs revisiting")
+    dz = np.empty(g.cell_count)
+
+    n_sub = stage2.diffusion_substeps(g.neighbours, g.edge_len, g.arc_dist, g.area,
+                                      0.05, 0.5e6)
+    assert n_sub > 1, "if diffusion no longer needs sub-cycling, the grid scale changed"
+
+    # Stability is checked by the DISCRETE MAXIMUM PRINCIPLE, not by an arbitrary
+    # threshold: pure diffusion averages a cell toward its neighbours, so a stable scheme
+    # can never carry a cell outside the range the field already occupied. Violating that
+    # is exactly what "unstable" means here.
+    lo, hi = float(z.min()), float(z.max())
+
+    stage2.hillslope_diffusion(z, g.neighbours, g.edge_len, g.arc_dist, g.area,
+                               0.02, 0.5e6, fixed, dz)
+    raw = z + dz
+    assert raw.min() < lo - 1.0 or raw.max() > hi + 1.0, (
+        "a fluvial dt in one explicit step should violate the maximum principle")
+
+    zs = z.copy()
+    for _ in range(n_sub):
+        stage2.hillslope_diffusion(zs, g.neighbours, g.edge_len, g.arc_dist, g.area,
+                                   0.02, 0.5e6 / n_sub, fixed, dz)
+        zs += dz
+    assert zs.min() >= lo - 1e-6 and zs.max() <= hi + 1e-6, (
+        "sub-cycled diffusion must respect the maximum principle")
+
+    moved = np.abs(zs - z)[land]
+    assert moved.max() > 1e-3 * relief, (
+        f"diffusion moved only {moved.max():.4f} m against {relief:.0f} m of relief; at "
+        f"100 m cells it should no longer be negligible")
 
 
 def test_a_tiny_nudge_permanently_reorganises_some_divides():
@@ -304,28 +350,40 @@ def test_a_tiny_nudge_permanently_reorganises_some_divides():
     assert changed[300] == pytest.approx(changed[200], rel=1e-6)
 
 
-def test_persistent_forcing_reorganises_divides():
-    """Diffusion moves <1.5 m directly over 100 steps, yet shifts some cells by hundreds.
+def test_diffusion_reorganises_divides_far_beyond_where_it_acts():
+    """Divide flips amplify diffusion far past its pointwise effect.
 
-    The gap is the point. A term too small to matter pointwise still biases every step in
-    the same direction, and once it tips a receiver choice at a divide the affected
-    sub-basin re-routes wholesale. Measured: median difference 0.014 m, maximum 720 m.
+    At 9.77 km cells this test made a sharper claim: diffusion moved 0.014 m at the median
+    yet 720 m at the maximum, a 50,000x gap, because a term far too small to matter
+    pointwise still biased every step in the same direction until it tipped a receiver
+    choice at a divide and re-routed a whole sub-basin.
+
+    At 100 m cells the premise is gone -- diffusion is now a first-class term and the
+    median cell moves properly, which is the point of the grid. What survives is the
+    AMPLIFICATION: the worst cell still moves orders of magnitude more than the typical
+    one, because divide reorganisation is a discrete event, not a scaled-up nudge.
     """
     g = build_goldberg(64)
     crust = stage1.generate_crust(g, seed=3)
     is_ocean = ~crust.land_mask
-    uplift = np.where(crust.land_mask, 300.0, 0.0).astype(np.float32)
+    uplift = np.where(crust.land_mask, 100.0, 0.0).astype(np.float32)
     land = crust.land_mask
 
     without = stage2.evolve(g, crust.elevation, uplift, is_ocean,
                             stage2.LemParams(D=0.0), n_steps=100)
     with_d = stage2.evolve(g, crust.elevation, uplift, is_ocean,
-                           stage2.LemParams(D=0.05), n_steps=100)
+                           stage2.LemParams(D=0.02), n_steps=100)
 
     delta = np.abs(with_d.elevation[land] - without.elevation[land])
     relief = float(without.elevation[land].max() - without.elevation[land].min())
-    assert np.median(delta) < 0.001 * relief, "the typical cell should barely move"
-    assert delta.max() > 0.05 * relief, "expected divide reorganisation somewhere"
+    assert np.median(delta) > 1e-3 * relief, (
+        "at 100 m cells diffusion should move the typical cell, not just the divides")
+    # Measured 5.5x here, against ~50,000x at 9.77 km cells. The gap collapsed because
+    # diffusion now acts everywhere rather than only where it happens to tip a divide,
+    # so the tail no longer stands out the way it did. The tail is still there.
+    assert delta.max() > 3.0 * np.median(delta), (
+        "expected divide reorganisation to stand out above the pointwise effect")
+    assert delta.max() < relief, "but not to rewrite the whole landscape"
 
 
 def test_same_seed_reproduces_bit_for_bit():
