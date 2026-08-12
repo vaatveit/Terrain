@@ -16,11 +16,24 @@ Solving it needs a water balance rather than geometry, which is why this stage c
 climate: runoff is precipitation minus evapotranspiration, and lake evaporation scales with
 temperature. Both come from Stage 3.
 
-Sub-grid and deliberately absent: meander migration (0.1-10 km wavelength), and deltas and
-alluvial fans, which are depositional landforms that belong to the sediment-flux term in
-Stage 2 rather than being painted on at the end. River WIDTH is carried as a per-cell
-attribute since it is wanted downstream for rendering, but at ~10 km cells no river is
-geometrically resolved -- the Amazon at its mouth would be one cell across.
+Deltas and alluvial fans are deliberately absent: they are depositional landforms that
+belong to the sediment-flux term in Stage 2, not something painted on at the end.
+
+MEANDERS are absent for a weaker reason, and it is worth being honest about which. They used
+to be dismissed as sub-grid at a 0.1-10 km wavelength against ~10 km cells. That figure was
+an Earth-river figure, and it does not carry over: meander wavelength tracks channel width
+(Leopold & Wolman, lambda ~ 11w), and this world's channels are metres wide, so its meanders
+are hundreds of metres -- a few cells across on the largest rivers, sub-cell on the rest. The
+biggest rivers here are therefore wide enough to meander at a resolved scale and do not,
+which makes this a gap rather than a resolution limit.
+
+River WIDTH is the encoding: `river_width_m` is metres, and zero means no river. There is no
+separate boolean, because `width > 0` is exactly the same test -- the channel threshold puts
+a 0.65 m floor under every cell that qualifies, so a mask would have been a second copy of
+the same fact. Width stays sub-cell even after the rescale, but for the opposite reason it
+used to: cells went from ~10 km to 100 m, and the basins on a 65 km sphere shrank with them,
+so `90*sqrt(Q)` tops out in the tens of metres. That is precisely why the number is carried
+rather than a flag -- nothing downstream can recover a river's size from cell geometry.
 """
 
 from __future__ import annotations
@@ -71,8 +84,7 @@ class Hydrology:
     endorheic: np.ndarray      # (N,) bool, cells belonging to a terminal lake
     runoff_mm: np.ndarray      # (N,) f32, precipitation minus evapotranspiration
     discharge: np.ndarray      # (N,) f32, km^3/yr accumulated downstream
-    river_mask: np.ndarray     # (N,) bool
-    river_width_m: np.ndarray  # (N,) f32
+    river_width_m: np.ndarray  # (N,) f32, 0 where there is no river
     lakes: list                # per lake: dict of id, area, level, spill, endorheic
 
 
@@ -205,4 +217,4 @@ def analyse(grid, z, is_ocean, precipitation_mm, temperature_c,
     return Hydrology(lake_mask=lake_mask, lake_level_m=lake_level, lake_depth_m=depth,
                      lake_id=lake_id, endorheic=endorheic,
                      runoff_mm=r_mm.astype(np.float32), discharge=discharge,
-                     river_mask=river, river_width_m=width, lakes=lakes)
+                     river_width_m=width, lakes=lakes)

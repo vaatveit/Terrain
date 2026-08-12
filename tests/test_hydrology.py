@@ -169,17 +169,29 @@ def test_discharge_grows_downstream_and_is_bounded(world):
 def test_rivers_follow_discharge_not_area(world):
     """Width from discharge, w = c*Q^0.5, is the standard hydraulic-geometry relation."""
     g, crust, res, h = world
-    assert h.river_mask.any()
-    w, q = h.river_width_m[h.river_mask], h.discharge[h.river_mask]
+    river = h.river_width_m > 0
+    assert river.any()
+    w, q = h.river_width_m[river], h.discharge[river]
     fit = np.polyfit(np.log10(q), np.log10(w), 1)[0]
     assert fit == pytest.approx(0.5, abs=0.02)
-    assert (h.river_width_m[~h.river_mask] == 0).all()
+
+
+def test_zero_width_means_no_river_and_nothing_else(world):
+    """Width IS the encoding -- there is no separate boolean to disagree with it. So the
+    thing to pin is that zero is reached only the three ways it is supposed to be: below
+    the channel threshold, under a lake, or at sea."""
+    g, crust, res, h = world
+    p = hydrology.HydrologyParams()
+    dry = h.river_width_m == 0
+    assert (dry == ((h.discharge < p.channel_threshold_km3_per_yr)
+                    | h.lake_mask | ~crust.land_mask)).all()
 
 
 def test_rivers_do_not_run_through_lakes_or_ocean(world):
     g, crust, res, h = world
-    assert not (h.river_mask & h.lake_mask).any()
-    assert not (h.river_mask & ~crust.land_mask).any()
+    river = h.river_width_m > 0
+    assert not (river & h.lake_mask).any()
+    assert not (river & ~crust.land_mask).any()
 
 
 def test_arid_ground_yields_less_runoff_than_it_receives(world):

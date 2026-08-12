@@ -83,7 +83,7 @@ def main():
     hyd = hydrology.analyse(grid, z, is_ocean, clim.precipitation_mm, clim.temperature_c)
     endo = sum(1 for L in hyd.lakes if L["endorheic"])
     print(f"    {len(hyd.lakes)} lakes ({endo} endorheic), "
-          f"{hyd.river_mask.sum():,} river cells, "
+          f"{(hyd.river_width_m > 0).sum():,} river cells, "
           f"max discharge {hyd.discharge.max():,.3g} km^3/yr")
 
     print("[7] biomes")
@@ -120,7 +120,7 @@ def main():
     res = export.export_world(
         out_dir, grid, z, land, args.seed, slope=fr.slope, drainage_km2=fr.acc,
         temperature_c=clim.temperature_c, precipitation_mm=clim.precipitation_mm,
-        biome=biome, discharge=hyd.discharge, river_mask=hyd.river_mask,
+        biome=biome, discharge=hyd.discharge,
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,

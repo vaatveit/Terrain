@@ -106,8 +106,7 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_slope` | float32 | m/m | gradient toward the flow receiver |
 | `field_drainage_km2` | float32 | km² | upstream drainage area |
 | `field_discharge_km3_per_yr` | float32 | km³/yr | water volume routed through the cell (Stage 6) |
-| `field_river_mask` | uint8 | — | 1 where discharge clears `channel_threshold_km3_per_yr` |
-| `field_river_width_m` | float32 | m | channel width from discharge; 0 off-river |
+| `field_river_width_m` | float32 | m | channel width, `90·√Q`; **0 means no river**. There is no separate river mask — the channel threshold puts a 0.65 m floor under every river cell, so `> 0` is exactly that test |
 | `field_lake_mask` | uint8 | — | 1 where a lake stands |
 | `field_lake_level_m` | float32 | m | water surface elevation; NaN off-lake |
 | `field_lake_depth_m` | float32 | m | surface minus bed; 0 off-lake |
@@ -269,9 +268,9 @@ for `n=1`.
 | parameter | default | effect |
 |---|---|---|
 | `pet_base_mm` / `pet_linear` / `pet_cubic` | 300 / 25 / 0.05 | Thornthwaite-style potential evapotranspiration from temperature |
-| `endorheic_margin_m` | 5 | how far below spill a lake must settle to count as terminal |
+| `endorheic_margin_m` | 2 | how far below spill a lake must settle to count as terminal |
 | `min_lake_area_km2` | 0.0415 | below this a depression is not a lake (~5 cells) |
-| `channel_threshold_km3_per_yr` | 0.5 | discharge defining a river |
+| `channel_threshold_km3_per_yr` | 5.2e-5 | discharge defining a river (~6 cells of drainage) |
 | `width_coeff_m` / `width_exponent` | 90 / 0.5 | `w = c·Q^0.5`, standard hydraulic geometry |
 
 ### Stage 8 — mesh sampling · `amplify.AmplifyParams`

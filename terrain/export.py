@@ -66,7 +66,7 @@ class ExportResult:
 
 def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  drainage_km2=None, temperature_c=None, precipitation_mm=None,
-                 biome=None, discharge=None, river_mask=None, river_width_m=None,
+                 biome=None, discharge=None, river_width_m=None,
                  lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
                  endorheic=None, lakes=None,
                  params=None, metrics_summary=None) -> ExportResult:
@@ -85,7 +85,7 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                       ("precipitation_mm", precipitation_mm), ("biome", biome),
                       ("slope", slope), ("drainage_km2", drainage_km2),
                       ("discharge_km3_per_yr", discharge),
-                      ("river_mask", as_flag(river_mask)),
+                      # No river_mask: it would be `river_width_m > 0` verbatim.
                       ("river_width_m", river_width_m),
                       ("lake_mask", as_flag(lake_mask)),
                       ("lake_level_m", lake_level_m),

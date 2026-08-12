@@ -47,7 +47,7 @@ def world(tmp_path_factory):
         out, g, res.elevation, crust.land_mask, seed=1, slope=fr.slope,
         drainage_km2=fr.acc, temperature_c=res.climate.temperature_c,
         precipitation_mm=res.climate.precipitation_mm, biome=b,
-        discharge=hyd.discharge, river_mask=hyd.river_mask,
+        discharge=hyd.discharge,
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
@@ -91,13 +91,14 @@ def test_hydrology_reaches_the_archive(world):
     _, fields, _ = export.load_native(ex.files["native"])
 
     assert np.array_equal(fields["discharge_km3_per_yr"], hyd.discharge)
-    assert np.array_equal(fields["river_mask"].astype(bool), hyd.river_mask)
     assert np.array_equal(fields["river_width_m"], hyd.river_width_m)
 
-    rivers = fields["river_mask"].astype(bool)
+    # Width in metres is the whole encoding: zero means no river, and there is no boolean
+    # companion that could drift out of step with it.
+    assert "river_mask" not in fields
+    rivers = fields["river_width_m"] > 0
     assert rivers.any(), "no rivers survived the export"
-    assert (fields["river_width_m"][~rivers] == 0).all()
-    assert (fields["river_width_m"][rivers] > 0).all()
+    assert (fields["river_width_m"][rivers] > 0.6).all(), "channel threshold not respected"
 
 
 def test_lakes_reach_the_archive(world):
