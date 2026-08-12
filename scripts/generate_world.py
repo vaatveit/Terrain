@@ -1,7 +1,8 @@
 """Run the whole pipeline and export a world.
 
 Stages 0-9 end to end: grid, tectonic crust, landscape evolution coupled with climate,
-glacial erosion, hydrology, biomes, amplification, export.
+glacial erosion, hydrology, biomes, export. The output is the native mesh archive;
+scripts/render_world.py turns it into a picture.
 
 Run:  .venv\\Scripts\\python.exe scripts\\generate_world.py --n 256 --out data/world01
 """
@@ -17,7 +18,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from terrain import (  # noqa: E402
-    amplify, biomes, climate, coupled, export, flow, glacial, hydrology, metrics, plates,
+    biomes, climate, coupled, export, flow, glacial, hydrology, metrics, plates,
     stage1, stage2,
 )
 from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
@@ -45,21 +46,11 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=600)
     ap.add_argument("--passes", type=int, default=3)
-    ap.add_argument("--width", type=int, default=0, help="raster width; 0 = 8x grid n")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-glacial", action="store_true")
-    ap.add_argument("--resample", choices=amplify.RESAMPLE_MODES, default="nearest",
-                    help="how mesh fields are sampled onto the raster. 'nearest' (default) "
-                         "blends nothing and carries mesh values unaltered; 'barycentric' "
-                         "is linear over the mesh triangles; 'c1' additionally removes "
-                         "triangle facets from the elevation hillshade and is worth it "
-                         "above ~2 px per mesh cell, so pair it with a larger --width")
-    ap.add_argument("--verify", action="store_true",
-                    help="reload the exported GeoTIFF through the SRTM path and measure it")
     args = ap.parse_args()
 
     out_dir = pathlib.Path(args.out or (ROOT / "data" / f"world_n{args.n}_s{args.seed}"))
-    width = args.width or max(1024, 8 * args.n)
     t_start = time.perf_counter()
 
     print(f"[0] grid n={args.n}")
@@ -118,16 +109,12 @@ def main():
           f"(SRTM east {SRTM_EAST['concavity_theta']}), "
           f"Hack h {m['hack_h']:.3f} (SRTM east {SRTM_EAST['hack_h']})")
 
-    amp_p = amplify.AmplifyParams(resample=args.resample)
-    print(f"[8-9] amplify and export -> {out_dir}  ({width}x{width // 2}, "
-          f"{amplify.octaves_for_width(width, amp_p)} detail octaves, "
-          f"{args.resample} resampling)")
+    print(f"[9] export -> {out_dir}")
     params = {
         "crust": stage1.CrustParams().__dict__, "plates": plates.PlateParams().__dict__,
         "lem": stage2.LemParams().__dict__, "climate": climate.ClimateParams().__dict__,
         "glacial": None if args.no_glacial else glacial.GlacialParams().__dict__,
         "hydrology": hydrology.HydrologyParams().__dict__,
-        "amplify": amp_p.__dict__,
         "steps": args.steps, "passes": args.passes,
     }
     res = export.export_world(
@@ -137,28 +124,14 @@ def main():
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
-        width=width, params=params, metrics_summary=summary, amplify_params=amp_p)
+        params=params, metrics_summary=summary)
     for name, path in res.files.items():
         size = pathlib.Path(path).stat().st_size / 1e6
         print(f"    {name:10s} {size:8.1f} MB  {pathlib.Path(path).name}")
 
-    if args.verify:
-        print("\n[verify] fidelity: raster pixels against the mesh field")
-        f = export.verify_fidelity(res.files["elevation"], grid, z, mode=args.resample)
-        print(f"    mean |error| {f['mean_abs_error_m']:.1f} m, p99 {f['p99_abs_error_m']:.0f} m, "
-              f"bias {f['bias_m']:+.2f} m, against {f['relief_m']:,.0f} m of relief")
-        print("    (non-zero by design: Stage 8 adds sub-grid detail on export)")
-
-        print("[verify] the metrics module reads the export unmodified")
-        r = export.verify_roundtrip(res.files["elevation"], window=min(512, width // 4))
-        print(f"    theta {r['concavity_theta']:.3f}, Hack h {r['hack_h']:.3f}, "
-              f"{r['channel_cells']:,} channel cells")
-        print("    (not SRTM-comparable: ~5 km/px against SRTM's 30 m -- see "
-              "export.verify_roundtrip)")
-
     print(f"\ndone in {time.perf_counter() - t_start:.0f} s")
     print(json.dumps({k: v for k, v in res.manifest.items()
-                      if k in ("grid", "raster", "land_fraction", "metrics")}, indent=2))
+                      if k in ("grid", "land_fraction", "metrics")}, indent=2))
 
 
 if __name__ == "__main__":

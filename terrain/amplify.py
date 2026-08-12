@@ -1,11 +1,21 @@
-"""Stage 8: sub-grid detail, added when sampling the mesh to a finer target.
+"""Stage 8: sampling the mesh onto a raster, and the sub-grid detail that used to need.
 
-The simulation is expensive, so it runs coarse and detail goes on afterwards. That only
-means anything if there is a finer target to add detail to: the mesh is ~9.8 km at n=785
-and the export raster is 8192x4096, which is ~4.9 km per pixel at the equator. Detail lives
-in that gap.
+Two separate problems, and it is worth keeping them apart -- because the rescale to 100 m
+cells killed one of them and left the other more useful than ever.
 
-Two separate problems, and it is worth keeping them apart.
+WHAT THE DETAIL HALF WAS FOR, AND WHY IT IS NOW OFF. The simulation is expensive, so it ran
+coarse and detail went on afterwards. That only means anything if there is a finer target
+to add detail to. At Earth radius the mesh was ~9.8 km at n=785 against ~4.9 km pixels, and
+detail lived in that gap. At 100 m cells the gap is inverted: the render raster is ~1.5 px
+per cell, `octaves_for_width` caps the noise at ONE octave, and that octave has a ~2.3 km
+wavelength -- 23 cells across. That is not sub-grid detail, it is a coarse ripple laid over
+ground the landscape evolution already resolved properly. So nothing calls `amplify` with
+`detail=True` any more; the machinery is kept because it is correct and because a future
+export at 4x the mesh resolution would want it back.
+
+WHAT THE SAMPLING HALF IS FOR. Unchanged and load-bearing: `scripts/render_world.py` reads
+the native mesh archive and has to get it onto a raster to draw it. The `interpolate` modes
+below are that path.
 
 INTERPOLATION. Nearest-cell sampling of a hex mesh renders the hexagons themselves --
 flat-shaded cells with visible seams, which reads as a rendering bug rather than terrain.

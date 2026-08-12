@@ -72,17 +72,16 @@ same `n` and a 98× larger sphere, and would otherwise be loaded silently.
 | `--seed` | 1 | world seed; same seed gives the same world on any machine |
 | `--steps` | 600 | total erosion timesteps, split across passes |
 | `--passes` | 3 | climate–erosion coupling passes |
-| `--width` | `8n` | export raster width in pixels (height is half) |
-| `--resample` | `nearest` | how mesh fields are sampled onto the raster: `nearest` \| `barycentric` \| `c1`. **The default blends nothing** — see Stage 8 |
 | `--out` | `data/world_n<N>_s<S>` | output directory |
 | `--no-glacial` | off | skip stage 5 |
-| `--verify` | off | check export fidelity and re-read the GeoTIFF through the DEM path |
+
+`render_world.py` takes `--width` (default 4096) and `--resample` (`nearest` \| `barycentric` \| `c1`) — the raster is a rendering concern and lives there now, not in the export.
 
 ---
 
 ## Output
 
-`generate_world.py` writes five files.
+`generate_world.py` writes two files: the mesh and its provenance.
 
 ### `world.npz` — the native archive
 
@@ -121,16 +120,24 @@ grid, fields, meta = load_native("data/world01/world.npz")
 
 All field arrays are length `10n²+2` and share cell indexing with `grid`.
 
-### Rasters
+### `manifest.json`
 
-Equirectangular, EPSG:4326, covering the full globe, `width × width/2`.
+Grid, seed, land fraction, elevation range, every parameter dataclass, the measured
+metrics, and the lake table that `field_lake_id` indexes into.
 
-| file | bands | dtype | contents |
-|---|---|---|---|
-| `elevation.tif` | 1 | float32 | elevation in metres, with Stage 8 sub-grid detail |
-| `climate.tif` | 2 | float32 | `temperature_c`, `precipitation_mm` |
-| `biomes.tif` | 1 | uint8 | biome code, nearest-sampled (never interpolated) |
-| `manifest.json` | — | — | grid, seed, raster spec, land fraction, parameters, metrics, lake table |
+### No rasters
+
+The export used to also write three equirectangular GeoTIFFs. It no longer does. Nothing
+consumed them: `render_world.py` samples the mesh directly, and the metrics that judge the
+world run on the mesh graph. The one claim that justified GeoTIFF — one metrics
+implementation serving generated and real terrain — never actually paid out, because the
+export was ~5 km per pixel against SRTM's 30 m and no window was both wide enough for three
+decades of drainage area and small enough to avoid equirectangular distortion. Real DEMs
+still arrive as GeoTIFF and `terrain/dem.py` still reads them; that never needed the export
+to be one too.
+
+To get a raster, sample the mesh — `amplify.equirect_points` plus `amplify.interpolate`,
+which is what `render_world.py` does in five lines.
 
 Biome codes: `0` ocean, `1` ice, `2` tundra, `3` boreal forest, `4` temperate grassland,
 `5` woodland/shrubland, `6` temperate seasonal forest, `7` temperate rainforest,
@@ -267,7 +274,19 @@ for `n=1`.
 | `channel_threshold_km3_per_yr` | 0.5 | discharge defining a river |
 | `width_coeff_m` / `width_exponent` | 90 / 0.5 | `w = c·Q^0.5`, standard hydraulic geometry |
 
-### Stage 8 — amplification · `amplify.AmplifyParams`
+### Stage 8 — mesh sampling · `amplify.AmplifyParams`
+
+> **The detail half of Stage 8 is off, and the rescale to 100 m cells is why.** Detail only
+> means something when the target is finer than the mesh. At Earth radius that held — a
+> ~9.8 km mesh against ~4.9 km pixels. At 100 m cells the render raster is ~1.5 px per cell,
+> `octaves_for_width` caps the noise at **one octave**, and that octave has a ~2.3 km
+> wavelength — **23 cells across**. That is not sub-grid texture, it is a coarse ripple laid
+> over ground the landscape evolution already resolved. Nothing calls `amplify` with
+> `detail=True` any more. The machinery is kept because it is correct and because rendering
+> at 4× the mesh resolution would want it back.
+>
+> What Stage 8 is still *for* is the sampling below: `render_world.py` reads the mesh
+> archive and has to get it onto a raster to draw it.
 
 | parameter | default | effect |
 |---|---|---|
@@ -276,15 +295,11 @@ for `n=1`.
 | `flat_floor` | 0.18 | detail retained on flat ground. **At 0 the sea bed and every plain go glass-smooth** |
 | `valley_smoothing_sphere_fraction` | 1.18e-4 | drainage area over which alluvial floors smooth out, as a **fraction of the sphere** (6.2 km² at production). **Must be a large-river area** — too small and it flattens the whole channel network |
 | `ocean_scale` | 0.35 | sub-sea detail, muted by sediment |
-| `octaves` / `frequency` / `ridged` | 6 / 180 / 0.35 | fractal character; `ridged` blends toward crests over blobs. `octaves` is a **ceiling** — the number actually used is capped against `--width` |
+| `octaves` / `frequency` / `ridged` | 6 / 180 / 0.35 | fractal character; `ridged` blends toward crests over blobs. `octaves` is a **ceiling** — the number actually used is capped against the raster width |
 | `min_px_per_feature` | 3.0 | pixels the finest octave must span. **Detail below the pixel is not detail, it is aliasing** — it folds back as long straight moiré fringes across the terrain |
-| `resample` | `"nearest"` | `nearest` \| `barycentric` \| `c1` — see `--resample` above. **The default blends nothing** |
+| `resample` | `"nearest"` | `nearest` \| `barycentric` \| `c1` — see below. **The default blends nothing** |
 
-> **Detail is limited by `--width`, not by `octaves`.** The raster has to be finer than the
-> mesh for detail to have anywhere to live, and at the default `--width` (8×n) a pixel is
-> only ~1.5× finer than a cell, so one octave is all that fits. Raise `--width` if you want
-> more; at 4×n the export carries essentially none. `amplify.octaves_for_width(width)`
-> reports what a given raster can hold.
+The first six rows only bite when detail is switched back on. `resample` is live.
 
 > **`--resample` — the default blends nothing.** Both smoothing modes are opt-in, so a
 > default raster contains no number the simulation did not produce.
@@ -293,7 +308,7 @@ for `n=1`.
 |---|---|---|
 | `nearest` *(default)* | each pixel takes the value of the cell it falls in — mesh data unaltered, one cell per pixel, traceable | renders the hexagons |
 | `barycentric` | linear over the mesh triangles; exact at cell centres and for a linear field, never overshoots | only C0 — its gradient jumps at triangle edges, which hillshading draws as a herringbone on steep ground |
-| `c1` | Shepard blend of per-cell *linear polynomials* for elevation; facet tail (p99.5 / median of the second difference) on a mountain window falls **8808 → 20.1** | one extra k-nearest query; only pays above ~2 px per mesh cell, so pair it with a larger `--width` |
+| `c1` | Shepard blend of per-cell *linear polynomials* for elevation; facet tail (p99.5 / median of the second difference) on a mountain window falls **8808 → 20.1** | one extra k-nearest query; only pays above ~2 px per mesh cell, so pair it with a larger `--width` on `render_world.py` |
 
 > Neither blend is the old inverse-distance weighting, which had zero gradient at every data
 > point and so dimpled at each cell centre — 0.345 m of manufactured curvature on a

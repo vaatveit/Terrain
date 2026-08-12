@@ -194,6 +194,8 @@ For a first system: a single elevation field with a second channel for sediment 
 
 Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and the seed — the grid is fully regenerable from `n`, so nothing else need be stored. **Static upload file:** resample to an equirectangular GeoTIFF (8192 × 4096 is the natural match for 4096-at-the-equator). GeoTIFF rather than `.npy` because real DEMs arrive as GeoTIFF, so the metrics code runs unmodified against both generated and real terrain.
 
+> **Superseded — the GeoTIFF was built, measured and removed.** The "metrics code runs unmodified on both" argument held literally and bought nothing usable; see Stage 9 below. The export is the native archive alone.
+
 ---
 
 ## Recommended pipeline
@@ -213,7 +215,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 6. Hydrology finalize   →  depression fill/breach, lakes, rivers, channel widths
 7. Biomes               →  Whittaker or Köppen from temperature × precipitation
 8. Amplification        →  slope/curvature-modulated detail; optional ML refine
-9. Export + metrics     →  native field arrays + equirectangular GeoTIFF
+9. Export + metrics     →  native field arrays + manifest
 ```
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
@@ -330,15 +332,13 @@ Two calibration traps, both of which zeroed the detail almost everywhere on the 
 
 ### Stage 9: export
 
-Two artifacts. **Native:** field arrays plus `n` and the seed, at under 40 bytes per cell — the grid is regenerable from `n`, so storing geometry alongside would be paying 650 MB for nothing. **Static:** an equirectangular GeoTIFF at 8192×4096 in EPSG:4326, plus a two-band climate raster and a `uint8` biome raster. Biomes are sampled nearest, never interpolated — the average of "tundra" and "savanna" is not a biome. A manifest records parameters, seed and measured metrics beside the data, because a world whose provenance is lost is not reproducible even when the generator is deterministic.
+**One artifact, after a correction.** The survey specified two — a native archive and an equirectangular GeoTIFF — and the second has since been removed. **Native:** field arrays plus `n` and the seed, at under 40 bytes per cell; the grid is regenerable from `n`, so storing geometry alongside would be paying 650 MB for nothing. A manifest records parameters, seed and measured metrics beside the data, because a world whose provenance is lost is not reproducible even when the generator is deterministic.
 
-**Fidelity is the export's own test**, and it is a different question from realism. Comparing raster pixels against the mesh field at the same coordinates gives mean |error| 4.9 m and p99 22 m against 12,412 m of relief — exactly the sub-grid detail Stage 8 adds, and no more.
+**Why the GeoTIFF went.** It was justified by "the metrics code runs unmodified on both generated and real terrain". That was true and it never paid out. The export did load, route and measure through the same path as the SRTM tiles with no code change — but the numbers were not comparable to the SRTM references, for a reason that is a resolution gap rather than a defect: the export was ~5 km per pixel against SRTM's 30 m, so no window was simultaneously wide enough to span three decades of drainage area and small enough to avoid serious equirectangular distortion. The conclusion was already **judge a generated world by the mesh metrics**, which is what the pipeline does. Nothing else consumed the rasters either: the renderer samples the mesh directly. Real DEMs still arrive as GeoTIFF and `terrain/dem.py` still reads them; that never required the export to be one.
 
-**The GeoTIFF choice was justified by "the metrics code runs unmodified on both generated and real terrain". That is true, and less useful than it sounds.** The export loads, routes and measures through the same path as the SRTM tiles with no code change. But the numbers are not comparable to the SRTM references, and the reason is a resolution gap rather than a defect: the export is ~5 km per pixel against SRTM's 30 m, so no window is simultaneously wide enough to span three decades of drainage area and small enough to avoid serious equirectangular distortion. **Judge a generated world by the mesh metrics; use the round-trip to confirm the file is well-formed.**
+Two hazards found while the round-trip existed are worth keeping, because anything that rasterises a globe meets them. Both gave a concavity of **−0.081** — slope rising with drainage area, which is not a landscape:
 
-Two things had to be right before the round-trip produced anything sane at all, and both gave a concavity of **−0.081** — slope rising with drainage area, which is not a landscape:
-
-- **The window must avoid the poles.** A window tall enough to reach one is measuring a coordinate singularity; equirectangular cells collapse to zero width there and the D8 graph across the pole is meaningless.
+- **A window must avoid the poles.** A window tall enough to reach one is measuring a coordinate singularity; equirectangular cells collapse to zero width there and the D8 graph across the pole is meaningless.
 - **The sea must be declared as base level.** A raster carrying bathymetry is otherwise treated as one continuous land surface, and rivers incise happily across the abyssal plain. Real SRTM tiles never need this because they are land-only — which is exactly why the generated case exposed it.
 
 ### Stage 7: biomes

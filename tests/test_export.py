@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from terrain import biomes, coupled, dem, export, flow, hydrology, stage1  # noqa: E402
+from terrain import biomes, coupled, export, flow, hydrology, stage1  # noqa: E402
 from terrain.grid import build_goldberg  # noqa: E402
 
 
@@ -50,67 +50,28 @@ def world(tmp_path_factory):
         discharge=hyd.discharge, river_mask=hyd.river_mask,
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
-        lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes, width=512,
+        lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
         params={"note": "test"}, metrics_summary={"theta": 0.45})
     return g, crust, res, b, ex, hyd
 
 
 # --------------------------------------------------------------------------------------
-# GeoTIFF
-# --------------------------------------------------------------------------------------
-
-
-def test_geotiff_is_georeferenced_equirectangular(world):
-    import rasterio
-    g, crust, res, b, ex, hyd = world
-    with rasterio.open(ex.files["elevation"]) as ds:
-        assert ds.crs.to_string() == "EPSG:4326"
-        assert (ds.width, ds.height) == (512, 256)
-        assert ds.bounds.left == pytest.approx(-180.0)
-        assert ds.bounds.right == pytest.approx(180.0)
-        assert ds.bounds.top == pytest.approx(90.0)
-        assert ds.bounds.bottom == pytest.approx(-90.0)
-        assert ds.dtypes[0] == "float32"
-
-
-def test_climate_bands_are_labelled(world):
-    import rasterio
-    g, crust, res, b, ex, hyd = world
-    with rasterio.open(ex.files["climate"]) as ds:
-        assert ds.count == 2
-        assert ds.descriptions == ("temperature_c", "precipitation_mm")
-        t = ds.read(1)
-        assert -60 < t.min() and t.max() < 60
-
-
-def test_biome_raster_preserves_codes(world):
-    """Categorical data must be sampled nearest, never interpolated -- the average of
-    'tundra' and 'savanna' is not a biome."""
-    import rasterio
-    g, crust, res, b, ex, hyd = world
-    with rasterio.open(ex.files["biomes"]) as ds:
-        assert ds.dtypes[0] == "uint8"
-        codes = set(np.unique(ds.read(1)).tolist())
-    assert codes.issubset(set(biomes.NAMES)), f"invented biome codes: {codes}"
-    assert codes.issubset(set(np.unique(b).tolist()))
-
-
-def test_raster_carries_the_world_faithfully(world):
-    """The export's own correctness test: pixels against the mesh field at the same coords.
-
-    Error is non-zero by design -- Stage 8 adds sub-grid detail on the way out -- but it
-    must stay small against the relief, and unbiased enough not to shift sea level.
-    """
-    g, crust, res, b, ex, hyd = world
-    f = export.verify_fidelity(ex.files["elevation"], g, res.elevation, samples=40_000)
-    assert f["mean_abs_error_m"] < 0.02 * f["relief_m"]
-    assert f["p99_abs_error_m"] < 0.05 * f["relief_m"]
-    assert abs(f["bias_m"]) < 30.0
-
-
-# --------------------------------------------------------------------------------------
 # Native archive
 # --------------------------------------------------------------------------------------
+
+
+def test_the_archive_is_the_only_artifact(world):
+    """The export writes the mesh and its provenance, and nothing else.
+
+    It used to also write three equirectangular GeoTIFFs. Nothing consumed them: the
+    renderer now samples the mesh directly, and the metrics that judge the world run on the
+    mesh graph. The one claim that justified them -- one metrics implementation for
+    generated and real terrain -- was already conceded in `verify_roundtrip`'s own
+    docstring, which had to state that its numbers were not SRTM-comparable.
+    """
+    g, crust, res, b, ex, hyd = world
+    assert set(ex.files) == {"native", "manifest"}
+    assert not list(pathlib.Path(ex.directory).glob("*.tif"))
 
 
 def test_native_archive_round_trips_exactly(world, tmp_path):
@@ -192,63 +153,25 @@ def test_manifest_records_provenance(world):
     m = json.loads(pathlib.Path(ex.files["manifest"]).read_text())
     assert m["seed"] == 1
     assert m["grid"]["n"] == g.n
-    assert m["raster"]["crs"] == "EPSG:4326"
     assert m["params"]["note"] == "test"
     assert m["metrics"]["theta"] == 0.45
     assert 0.0 < m["land_fraction"] < 1.0
 
 
-# --------------------------------------------------------------------------------------
-# The claim that motivated choosing GeoTIFF
-# --------------------------------------------------------------------------------------
-
-
-def test_the_metrics_module_reads_the_export_unmodified(world):
-    """GeoTIFF was chosen over .npy so one metrics implementation serves generated and real
-    terrain. This exercises that path rather than assuming it.
-
-    The numbers are NOT expected to match the SRTM references -- the export is ~5 km per
-    pixel against SRTM's 30 m, so no window is both wide enough for three decades of
-    drainage area and small enough to avoid serious equirectangular distortion. What is
-    asserted is that it loads, routes and measures without a code change.
-    """
+def test_the_renderer_can_rebuild_its_raster_from_the_archive(world):
+    """render_world.py is now the only consumer, and it samples the mesh itself. If the
+    archive cannot produce a raster, the world cannot be looked at."""
+    from terrain import amplify
     g, crust, res, b, ex, hyd = world
-    # The channel threshold has to suit the raster. The production default assumes an 8192
-    # export; on a 512-pixel test raster it leaves too few channel cells to fit a slope-area
-    # regression at all, and theta comes back nan.
-    import rasterio
-    with rasterio.open(ex.files["elevation"]) as ds:
-        cell_km2 = (360.0 / ds.width) * (180.0 / ds.height) * 111.0 * 111.0
-    r = export.verify_roundtrip(ex.files["elevation"], window=128,
-                                channel_threshold_km2=cell_km2 * 8)
-    assert r["cells"] == 128 * 128
-    assert r["channel_cells"] > 0
-    assert np.isfinite(r["concavity_theta"]), "the regression should at least be fittable"
-    assert np.isfinite(r["hack_h"])
+    _, fields, _ = export.load_native(ex.files["native"], grid=g)
 
+    pts, shape = amplify.equirect_points(256)
+    nearest, _ = amplify.neighbour_weights(g, pts, k=1)
+    z = np.asarray(fields["elevation"])[nearest].reshape(shape)
+    codes = set(np.unique(np.asarray(fields["biome"])[nearest]).tolist())
 
-def test_sea_must_be_declared_as_base_level(world):
-    """Without sink_below, a raster carrying bathymetry is treated as one land surface and
-    rivers incise across the abyssal plain -- measured concavity of -0.081, i.e. slope
-    rising with drainage area."""
-    g, crust, res, b, ex, hyd = world
-    row0, col0 = export.best_land_window(ex.files["elevation"], 128)
-    with_sea = dem.load_window(ex.files["elevation"], size=128, row0=row0, col0=col0,
-                               sink_below=0.0)
-    without = dem.load_window(ex.files["elevation"], size=128, row0=row0, col0=col0)
-    assert with_sea.is_sink.sum() > without.is_sink.sum()
-    assert with_sea.is_sink[with_sea.z <= 0].all()
-
-
-def test_window_selection_avoids_the_poles(world):
-    """Equirectangular cells collapse to zero width at the poles, so a window reaching one
-    is measuring a coordinate singularity rather than terrain."""
-    import rasterio
-    g, crust, res, b, ex, hyd = world
-    size = 128
-    row0, col0 = export.best_land_window(ex.files["elevation"], size, max_abs_lat=55.0)
-    with rasterio.open(ex.files["elevation"]) as ds:
-        dlat = (ds.bounds.top - ds.bounds.bottom) / ds.height
-        lat_hi = ds.bounds.top - row0 * dlat
-        lat_lo = ds.bounds.top - (row0 + size) * dlat
-    assert max(abs(lat_hi), abs(lat_lo)) <= 56.0
+    assert z.shape == (128, 256)
+    assert np.isfinite(z).all()
+    # Nearest sampling manufactures nothing: every pixel is some cell's own value.
+    assert set(np.unique(z).tolist()).issubset(set(np.unique(res.elevation).tolist()))
+    assert codes.issubset(set(biomes.NAMES)), f"invented biome codes: {codes}"
