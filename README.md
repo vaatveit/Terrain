@@ -99,7 +99,7 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | key | dtype | units | meaning |
 |---|---|---|---|
 | `field_elevation` | float32 | m | metres relative to sea level; negative is sea floor |
-| `field_land_mask` | uint8 | — | 1 = land, 0 = ocean (as decided by Stage 1) |
+| `field_land_mask` | uint8 | — | 1 = land, 0 = ocean. Ocean is the largest **connected** body of water, so an inland basin is land even where its floor is below sea level |
 | `field_temperature_c` | float32 | °C | mean annual surface temperature |
 | `field_precipitation_mm` | float32 | mm/yr | mean annual precipitation |
 | `field_biome` | uint8 | code | see the biome table below |
@@ -162,7 +162,12 @@ which is what `render_world.py` does in five lines.
 Biome codes: `0` ocean, `1` ice, `2` tundra, `3` boreal forest, `4` temperate grassland,
 `5` woodland/shrubland, `6` temperate seasonal forest, `7` temperate rainforest,
 `8` subtropical desert, `9` savanna, `10` tropical seasonal forest, `11` tropical rainforest,
-`12` temperate desert, `13` cold desert.
+`12` temperate desert, `13` cold desert, `14` lake.
+
+`0` and `14` are surface types rather than Whittaker classes, and they are how fresh water is
+told from salt. Elevation cannot do it: an inland basin floor sits below sea level exactly as
+the abyssal plain does. A lake is land by `field_land_mask` — it is a body of water enclosed
+by land — so code `14` is the only thing that marks it.
 
 ---
 

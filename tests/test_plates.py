@@ -227,7 +227,9 @@ def test_tectonic_stage1_produces_the_declared_outputs(g):
         assert getattr(c, name).shape[0] == n, f"{name} has the wrong length"
     assert c.land_fraction == pytest.approx(0.29, abs=0.01)
     assert np.all(c.crust_thickness > 0)
-    assert np.all(c.elevation[c.land_mask] > 0)
+    # Not `elevation[land_mask] > 0`: inland basins are land with a floor below the datum.
+    # See test_noise_stage1.test_elevation_is_referenced_to_sea_level for the real invariant.
+    assert np.all(c.elevation[~c.land_mask] <= 0)
 
 
 def test_tectonic_thickening_builds_crustal_roots(g):

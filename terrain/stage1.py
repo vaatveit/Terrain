@@ -102,6 +102,46 @@ def label_components(mask, nbr, labels, stack):
     return n_lab
 
 
+def separate_inland_basins(land, neighbours, area, labels, stack):
+    """Ocean is the largest connected body of water, not everything below sea level.
+
+    `land = elevation > sea_level` is a threshold with no notion of connectivity, so every
+    closed depression that happens to sit below the datum was being handed to the ocean --
+    including deep interior basins with no path to the sea. Measured on an n=128 world:
+    41 water bodies, of which one holds 98.95% of the water and the other 40 are inland.
+    They are 2.59% of land area, which is roughly Earth's lake coverage, and Stage 6 was
+    finding two lakes because these forty had already been classified away from it.
+
+    Marking them as land is the whole fix. They are closed depressions on the land surface,
+    so the flow router fills them, and Stage 6's existing machinery takes it from there --
+    spill point, endorheic water balance, level and depth. No lake code is needed here.
+
+    Mutates `land` in place. Returns (basin count, basin area).
+    """
+    water = np.ascontiguousarray(~land)
+    n_lab = label_components(water, neighbours, labels, stack)
+    if n_lab <= 1:
+        return 0, 0.0
+    sizes = np.zeros(n_lab, dtype=np.float64)
+    np.add.at(sizes, labels[water], area[water].astype(np.float64))
+    inland = water & (labels != int(np.argmax(sizes)))
+    land[inland] = True
+    return n_lab - 1, float(area[inland].sum())
+
+
+def landmass_areas(land, neighbours, area, labels, stack):
+    """Areas of the connected landmasses, largest first.
+
+    Recomputed after the basins join, not carried over from the pruning pass: a basin that
+    touches two islands merges them into one landmass, so the areas from before the join do
+    not describe the same set of components -- and they no longer sum to the land area.
+    """
+    n_lab = label_components(np.ascontiguousarray(land), neighbours, labels, stack)
+    sizes = np.zeros(n_lab, dtype=np.float64)
+    np.add.at(sizes, labels[land], area[land].astype(np.float64))
+    return np.sort(sizes)[::-1]
+
+
 def area_quantile(values, area, q):
     """Value below which fraction `q` of the total AREA lies.
 
@@ -187,7 +227,14 @@ def generate_crust(grid, params: CrustParams = None, seed: int = 0,
     log(f"{n_lab:,} landmasses, pruned {int(too_small.sum()):,} below "
         f"{p.min_island_area_km2:,.4g} km^2")
 
-    kept = np.sort(sizes[~too_small])[::-1]
+    # 6. Everything below the datum that cannot reach the sea is an inland basin, not ocean.
+    #    After pruning, so a drowned islet cannot leave a one-cell "basin" behind.
+    n_basins, basin_km2 = separate_inland_basins(
+        land, np.ascontiguousarray(grid.neighbours), grid.area, labels, stack)
+    log(f"{n_basins:,} inland basins reclassified as land ({basin_km2:,.4g} km^2)")
+
+    kept = landmass_areas(land, np.ascontiguousarray(grid.neighbours), grid.area,
+                          labels, stack)
     land_fraction = float(grid.area[land].sum() / grid.area.sum())
 
     return Crust(
@@ -234,6 +281,7 @@ def generate_crust_tectonic(grid, params: CrustParams = None,
       8 isostatic_elevation
       9 resolve_sea_level  area-weighted quantile for target land fraction
      10 prune_islands
+     10b separate_inland_basins  ocean is the largest CONNECTED water body
      11 classify_margins   passive vs active coast
     and derive_uplift as a separate operator, so uplift models can be swapped without
     regenerating plates.
@@ -313,8 +361,14 @@ def generate_crust_tectonic(grid, params: CrustParams = None,
     pruned = land & too_small[np.clip(labels, 0, None)]
     land[pruned] = False
     elevation[pruned] = np.float32(0.0)  # drown them; see generate_crust
-    kept = np.sort(sizes[~too_small])[::-1]
-    log(f"{n_lab:,} landmasses, {int(too_small.sum()):,} pruned")
+    # See separate_inland_basins: ocean is the largest connected water body, and the rest
+    # are lakes-to-be that Stage 6 will fill. After pruning, as in the throwaway path.
+    n_basins, basin_km2 = separate_inland_basins(
+        land, np.ascontiguousarray(grid.neighbours), grid.area, labels, stack)
+    kept = landmass_areas(land, np.ascontiguousarray(grid.neighbours), grid.area,
+                          labels, stack)
+    log(f"{n_lab:,} landmasses, {int(too_small.sum()):,} pruned, "
+        f"{n_basins:,} inland basins ({basin_km2:,.4g} km^2)")
 
     # 11 + uplift.
     margin = plates_mod.classify_margins(grid, land, pl)

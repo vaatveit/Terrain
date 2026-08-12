@@ -77,7 +77,11 @@ def main():
          amplify.interpolate(grid, fields["elevation"], pts, mode=args.resample, tree=tree)
          .reshape(shape).astype(np.float32))
 
-    land = b != bio.OCEAN
+    # Lakes are land by the mask but water on the map. Excluding them from the hillshade
+    # keeps them flat: `z` on a lake cell is the BED, hundreds of metres down, so shading it
+    # would draw every lake as the pit it geometrically is instead of the surface it is.
+    sea = b == bio.OCEAN
+    land = ~sea & (b != bio.LAKE)
     # Metres per pixel at the equator, from THIS world's radius. It was hardcoded to
     # Earth's 40,030 km circumference, which after the rescale to 100 m cells overstated dx
     # by 98x -- every gradient came out 98x too shallow and the hillshade was flat.
@@ -94,8 +98,8 @@ def main():
     # on a 1400 m-deep world the same flat blue.
     floor = min(float(manifest["elevation_m"]["min"]), -1.0)
     depth = np.clip(z / floor, 0, 1)
-    img[~land] = np.stack([0.03 + 0.05 * (1 - depth), 0.10 + 0.26 * (1 - depth),
-                           0.26 + 0.38 * (1 - depth)], axis=-1)[~land]
+    img[sea] = np.stack([0.03 + 0.05 * (1 - depth), 0.10 + 0.26 * (1 - depth),
+                         0.26 + 0.38 * (1 - depth)], axis=-1)[sea]
     img[land] *= (0.45 + 0.75 * shade)[land, None]
     img = np.clip(img, 0, 1)
 

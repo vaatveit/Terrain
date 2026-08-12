@@ -337,17 +337,28 @@ def test_a_tiny_nudge_permanently_reorganises_some_divides():
     nudged_z[land] += (rng.standard_normal(int(land.sum())) * 0.01).astype(np.float32)
 
     changed = {}
-    for steps in (200, 300):
+    for steps in (300, 400):
         base = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=steps)
         nudged = stage2.evolve(g, nudged_z, uplift, is_ocean, p, n_steps=steps)
         delta = np.abs(base.elevation[land] - nudged.elevation[land])
         changed[steps] = (float((delta > 0).mean()), float(delta.max()))
 
-    frac, worst = changed[300]
-    assert frac < 0.05, f"{frac:.1%} of land moved; expected only scattered divide flips"
+    # 0.30 rather than the old 0.05, and the jump is a real result rather than a slipped
+    # tolerance. Until inland basins were separated from the ocean, 40 closed depressions
+    # scattered across the continents were classified as sea and therefore PINNED at base
+    # level -- fixed-elevation anchors punched into the land. Removing them, on this same
+    # crust: max flow path 1.84 -> 2.56 km, mean top-1% drainage area 0.503 -> 0.675 km^2,
+    # and this figure 0.26% -> 17.85%. A longer, more integrated network has more divide to
+    # flip, so the old stability was an artifact of the anchors and not a property of the
+    # solver. What the test is actually for -- flips happen, and they stay -- is below.
+    frac, worst = changed[400]
+    assert frac < 0.30, f"{frac:.1%} of land moved; expected divide flips, not a reset"
     assert worst > 1.0, "expected at least one divide to flip and stay flipped"
-    # Settled, not still decaying: the same cells differ by the same amount at 200 and 300.
-    assert changed[300] == pytest.approx(changed[200], rel=1e-6)
+    # Settled, not still decaying: the same cells differ by the same amount at 300 and 400.
+    # The window was 200/300 until the basin change; the longer network takes longer to come
+    # to rest, and 200 now lands inside the transient (18.18% / 911 m against 17.85% / 842).
+    # From 300 the result is bit-identical at 400, 600, 900 and 1400.
+    assert changed[400] == pytest.approx(changed[300], rel=1e-6)
 
 
 def test_diffusion_reorganises_divides_far_beyond_where_it_acts():

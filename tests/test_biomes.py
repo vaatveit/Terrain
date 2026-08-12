@@ -45,6 +45,26 @@ def test_ocean_overrides_everything():
     assert b[0] == biomes.OCEAN
 
 
+def test_lake_overrides_land_climate_and_ice():
+    """Fresh water is a surface type, not a climate outcome, so it wins over both.
+
+    Ice included: a frozen lake is still a lake. This is the only way anything downstream
+    can tell fresh water from salt -- elevation cannot, because an inland basin floor sits
+    below sea level exactly as the abyssal plain does.
+    """
+    t = np.array([26.0, -40.0, 10.0])
+    p = np.array([3000.0, 500.0, 800.0])
+    land = np.array([True, True, False])
+    lake = np.array([True, True, False])
+    b = biomes.classify(t, p, land, lake_mask=lake)
+    assert b[0] == biomes.LAKE, "warm wet climate must not beat the water surface"
+    assert b[1] == biomes.LAKE, "a frozen lake is a lake, not ice"
+    assert b[2] == biomes.OCEAN, "salt water must stay distinguishable from fresh"
+    # Omitting the mask leaves the classification exactly as it was.
+    assert (biomes.classify(t, p, land) == np.array(
+        [biomes.TROPICAL_RAINFOREST, biomes.ICE, biomes.OCEAN])).all()
+
+
 def test_snowline_falls_from_equator_to_pole():
     assert biomes.snowline_m(0.0) > biomes.snowline_m(45.0) > biomes.snowline_m(80.0)
     assert biomes.snowline_m(90.0) == pytest.approx(0.0, abs=1.0)

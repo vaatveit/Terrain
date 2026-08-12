@@ -87,7 +87,8 @@ def main():
           f"max discharge {hyd.discharge.max():,.3g} km^3/yr")
 
     print("[7] biomes")
-    biome = biomes.classify(clim.temperature_c, clim.precipitation_mm, land, z, grid.lat)
+    biome = biomes.classify(clim.temperature_c, clim.precipitation_mm, land, z, grid.lat,
+                            lake_mask=hyd.lake_mask)
     shares = biomes.summary(biome, grid.area, land)
     print("    " + ", ".join(f"{n} {s:.0%}" for n, s in shares[:4]))
 

@@ -155,10 +155,15 @@ def test_erosion_is_confined_to_glaciated_ground(world):
     assert moved[bare].mean() < 0.05 * moved[iced].mean()
     # A handful of cells drop out of the glaciated set as routing shifts mid-run, so a few
     # "unglaciated" cells carry old incision. It should be a handful, not a pattern.
-    # 1% rather than the old 0.5%: measured 0.62% at 100 m cells against under 0.5% at
-    # 9.77 km. Finer cells make flow routing more volatile between steps, so more cells
-    # change glaciated status mid-run. The mean-ratio assertion above is the real test.
-    assert (moved[bare] > 1.0).mean() < 0.01
+    # 2% now; it was 1% (measured 0.62%) at 100 m cells and 0.5% at 9.77 km. Each raise has
+    # the same cause: anything that makes flow routing more volatile between steps moves
+    # more cells in and out of the glaciated set. This one is separating inland basins from
+    # the ocean, which lengthens trunk streams by ~39% and takes the figure to 1.14% -- see
+    # the measurement in test_stage2.test_a_tiny_nudge_permanently_reorganises_some_divides.
+    # Checked before raising it: the extra cells are NOT in the basins (1 of 432), so this
+    # is the global drainage reorganisation, not a local artifact of the new land. The
+    # mean-ratio assertion above is the real test and it moved the other way, to 0.0014.
+    assert (moved[bare] > 1.0).mean() < 0.02
 
 
 def test_ocean_is_untouched(world):

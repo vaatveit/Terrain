@@ -41,6 +41,11 @@ TROPICAL_RAINFOREST = 11
 # Earth's 9%. The Gobi sits at 43N and Patagonia at 45S; neither is a warm desert.
 TEMPERATE_DESERT = 12
 COLD_DESERT = 13
+# Fresh water. Not a Whittaker class -- it is a surface type, and it wins over whatever
+# climate would otherwise have put here, the same way OCEAN does. Salt and fresh water need
+# to be told apart by anything reading the map, and elevation cannot do it: an inland basin
+# floor sits below sea level just as the abyssal plain does.
+LAKE = 14
 
 NAMES = {
     OCEAN: "ocean", ICE: "ice", TUNDRA: "tundra", BOREAL_FOREST: "boreal forest",
@@ -50,6 +55,7 @@ NAMES = {
     SAVANNA: "savanna", TROPICAL_SEASONAL_FOREST: "tropical seasonal forest",
     TROPICAL_RAINFOREST: "tropical rainforest",
     TEMPERATE_DESERT: "temperate desert", COLD_DESERT: "cold desert",
+    LAKE: "lake",
 }
 
 # Map colours, roughly the conventional ones so the render reads without a legend.
@@ -66,6 +72,9 @@ COLOURS = {
     TROPICAL_RAINFOREST: (0.13, 0.42, 0.16),
     TEMPERATE_DESERT: (0.76, 0.64, 0.44),
     COLD_DESERT: (0.68, 0.65, 0.58),
+    # Deliberately lighter and cooler than OCEAN's navy: the two are adjacent on the map and
+    # the whole point of the class is that you can tell them apart at a glance.
+    LAKE: (0.29, 0.53, 0.75),
 }
 
 
@@ -84,8 +93,9 @@ def snowline_m(lat_deg, equatorial_m=4900.0, polar_m=0.0):
     return polar_m + (equatorial_m - polar_m) * c ** 1.6
 
 
-def classify(temperature_c, precipitation_mm, land_mask, elevation_m=None, lat_deg=None):
-    """Whittaker classification, plus permanent ice above the snowline."""
+def classify(temperature_c, precipitation_mm, land_mask, elevation_m=None, lat_deg=None,
+             lake_mask=None):
+    """Whittaker classification, plus permanent ice above the snowline and open water."""
     t = np.asarray(temperature_c, dtype=np.float64)
     p = np.asarray(precipitation_mm, dtype=np.float64)
     out = np.full(t.shape, OCEAN, dtype=np.uint8)
@@ -126,6 +136,11 @@ def classify(temperature_c, precipitation_mm, land_mask, elevation_m=None, lat_d
     out[ice] = ICE
 
     out[~np.asarray(land_mask)] = OCEAN
+    # Lakes last. They sit on the land side of the mask, so they must be painted after the
+    # ocean sweep or that line would have to know about them. Ice wins nothing here: a
+    # frozen lake is still a lake, and the surface type is what this class exists to record.
+    if lake_mask is not None:
+        out[np.asarray(lake_mask)] = LAKE
     return out
 
 
