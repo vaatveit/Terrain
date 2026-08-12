@@ -120,7 +120,7 @@ def main():
     res = export.export_world(
         out_dir, grid, z, land, args.seed, slope=fr.slope, drainage_km2=fr.acc,
         temperature_c=clim.temperature_c, precipitation_mm=clim.precipitation_mm,
-        biome=biome, discharge=hyd.discharge,
+        biome=biome, flow_receiver=fr.rec, discharge=hyd.discharge,
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,

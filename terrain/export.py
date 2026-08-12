@@ -66,7 +66,7 @@ class ExportResult:
 
 def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  drainage_km2=None, temperature_c=None, precipitation_mm=None,
-                 biome=None, discharge=None, river_width_m=None,
+                 biome=None, flow_receiver=None, discharge=None, river_width_m=None,
                  lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
                  endorheic=None, lakes=None,
                  params=None, metrics_summary=None) -> ExportResult:
@@ -84,6 +84,11 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
     for name, arr in (("temperature_c", temperature_c),
                       ("precipitation_mm", precipitation_mm), ("biome", biome),
                       ("slope", slope), ("drainage_km2", drainage_km2),
+                      # The flow tree, as cell ids rather than edge slots. A slot would need
+                      # a sentinel for the terminating case; `rec[i] == i` gets it free, and
+                      # cell ids chain -- follow them and you walk downstream to the sea.
+                      # The exit EDGE is `nbr[i] == rec[i]`, derived on load, not stored.
+                      ("flow_receiver", flow_receiver),
                       ("discharge_km3_per_yr", discharge),
                       # No river_mask: it would be `river_width_m > 0` verbatim.
                       ("river_width_m", river_width_m),

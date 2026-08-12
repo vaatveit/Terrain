@@ -47,7 +47,7 @@ def world(tmp_path_factory):
         out, g, res.elevation, crust.land_mask, seed=1, slope=fr.slope,
         drainage_km2=fr.acc, temperature_c=res.climate.temperature_c,
         precipitation_mm=res.climate.precipitation_mm, biome=b,
-        discharge=hyd.discharge,
+        flow_receiver=fr.rec, discharge=hyd.discharge,
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
@@ -99,6 +99,32 @@ def test_hydrology_reaches_the_archive(world):
     rivers = fields["river_width_m"] > 0
     assert rivers.any(), "no rivers survived the export"
     assert (fields["river_width_m"][rivers] > 0.6).all(), "channel threshold not respected"
+
+
+def test_the_flow_tree_survives_as_cell_ids_and_stays_edge_derivable(world):
+    """The archive carries the receiver as a CELL id, and the exit EDGE is derived from it.
+    That only works if every receiver is a neighbour -- so it is asserted rather than
+    assumed, since a consumer drawing rivers has no way to recover from it being false."""
+    g, crust, res, b, ex, hyd = world
+    _, fields, _ = export.load_native(ex.files["native"])
+    rec = fields["flow_receiver"]
+
+    assert rec.dtype == np.int32
+    terminal = rec == np.arange(rec.size)
+    assert terminal.any(), "nothing terminates the tree"
+
+    # Exactly one exit slot per flowing cell, none at a terminator. This is the derivation
+    # README documents; if it stops holding, the documented recipe silently returns nothing.
+    hit = (g.neighbours == rec[:, None]) & (g.neighbours >= 0)
+    assert (hit.sum(axis=1) == ~terminal).all(), "a receiver is not a neighbour"
+
+    # And the tree terminates: follow the ids down and you reach a sink, never a cycle.
+    walk = np.flatnonzero(~terminal)[::97]
+    for start in walk:
+        i, steps = int(start), 0
+        while rec[i] != i:
+            i, steps = int(rec[i]), steps + 1
+            assert steps < rec.size, f"flow from {start} does not terminate"
 
 
 def test_lakes_reach_the_archive(world):

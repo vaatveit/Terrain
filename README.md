@@ -105,6 +105,7 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_biome` | uint8 | code | see the biome table below |
 | `field_slope` | float32 | m/m | gradient toward the flow receiver |
 | `field_drainage_km2` | float32 | km² | upstream drainage area |
+| `field_flow_receiver` | int32 | — | **cell id** the water flows into, always a neighbour. `rec[i] == i` terminates the tree (ocean or outlet). Chain it to walk downstream |
 | `field_discharge_km3_per_yr` | float32 | km³/yr | water volume routed through the cell (Stage 6) |
 | `field_river_width_m` | float32 | m | channel width, `90·√Q`; **0 means no river**. There is no separate river mask — the channel threshold puts a 0.65 m floor under every river cell, so `> 0` is exactly that test |
 | `field_lake_mask` | uint8 | — | 1 where a lake stands |
@@ -118,6 +119,26 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `_params_json` | str | — | every parameter dataclass, as JSON |
 
 All field arrays are length `10n²+2` and share cell indexing with `grid`.
+
+### Which edge does the water cross?
+
+`field_flow_receiver` is a cell id, not an edge. The edge is one step away, and nothing extra
+needs to be stored to get it — `grid.neighbours` is azimuthally ordered, so the slot the
+water leaves by is just where the receiver sits in that list, and the cells draining *in* are
+the neighbours whose own receiver is this cell:
+
+```python
+exit_slot   = np.flatnonzero(grid.neighbours[i] == rec[i])          # empty at ocean/outlets
+entry_slots = [s for s, j in enumerate(grid.neighbours[i])
+               if j >= 0 and rec[j] == i]                           # >1 is a confluence
+```
+
+D6 steepest descent picks exactly one receiver, so there is always exactly one exit and up to
+five entries. The crossing point on a shared edge is `normalize(xyz[i] + xyz[j])`: a spherical
+Voronoi edge lies on the perpendicular bisector of the centre-to-centre arc, so that arc's
+midpoint is on the edge by construction. Note the tree is built on the depression-**filled**
+surface, so flow directions stay defined across lake interiors rather than stopping at the
+shore.
 
 ### `manifest.json`
 
