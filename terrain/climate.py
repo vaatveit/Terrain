@@ -413,8 +413,7 @@ def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None) 
 
     dist = np.empty(n, dtype=np.float32)
     src = np.empty(n, dtype=np.int32)
-    plates.boundary_distance(~land_mask, np.ascontiguousarray(grid.neighbours),
-                             np.ascontiguousarray(grid.arc_dist), dist, src,
+    plates.boundary_distance(~land_mask, grid.xyz, grid.radius_km, dist, src,
                              np.float32(6000.0))
     dist[dist > 1e29] = 6000.0
 

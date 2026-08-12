@@ -44,6 +44,12 @@ class PlateParams:
     # orogens that track them -- are not dead-straight great-circle arcs.
     boundary_warp: float = 0.10
     boundary_warp_frequency: float = 2.5
+    # Passes of along-strike averaging applied to boundary stress before it is propagated
+    # inland. Each boundary cell hands its stress to a wedge of interior cells, so raw
+    # cell-to-cell scatter becomes hard stripes fanning out from the belt. 8 passes spreads
+    # the stress over roughly 8 cells of strike, which removes the stripes while leaving
+    # the along-belt variation that makes one end of a range higher than the other.
+    stress_smoothing_passes: int = 8
     # Uplift geometry, from the boundary-case table in terrain-algorithms.md.
     orogen_decay_km: float = 200.0   # continental collision, peaked on the boundary
     arc_offset_km: float = 150.0     # volcanic arc, inland of an oceanic-continental trench
@@ -215,56 +221,73 @@ def _classify_boundaries(xyz, nbr, plate_id, vel, transform_ratio, b_type, b_str
     return b_type, b_stress
 
 
-@njit(cache=True)
-def boundary_distance(is_boundary, nbr, arc_dist, dist, source, max_km):
-    """Great-circle distance to the nearest boundary cell, by relaxation sweeps.
+def boundary_distance(is_boundary, xyz, radius_km, dist, source, max_km):
+    """True great-circle distance to the nearest boundary cell, and which cell that is.
 
-    Gauss-Seidel relaxation rather than Dijkstra: a heap over 6M cells would need a few
-    hundred MB of scratch, and uplift only cares out to a few hundred km. Sweeps converge in
-    roughly (max_km / cell spacing) rounds and stop early once nothing changes.
+    This used to accumulate `arc_dist` along the cell graph by Gauss-Seidel relaxation,
+    which measures the wrong thing. Graph distance on a hex lattice is ANISOTROPIC: a path
+    at 30 degrees to a lattice row has to zigzag, costing 2/sqrt(3) = 1.155x the direct
+    route, so the level sets come out hexagonal rather than circular. Measured against the
+    true distance at n=256 it ran 8% long on median and up to 21.8% in the worst direction.
+
+    Uplift is an exponential in this distance, so that error became lattice-aligned ridges
+    fanning out from every mountain belt -- the artifact was baked into the uplift field
+    before a single erosion step ran.
+
+    A KD-tree over just the boundary cells fixes it exactly and is also far cheaper than
+    400 relaxation sweeps: there are ~15k boundary cells at n=256, not 6M.
     """
-    n = is_boundary.shape[0]
-    k = nbr.shape[1]
-    INF = np.float32(1e30)
-    for i in range(n):
-        if is_boundary[i]:
-            dist[i] = 0.0
-            source[i] = i
-        else:
-            dist[i] = INF
-            source[i] = -1
+    from scipy.spatial import cKDTree
 
-    for _ in range(400):
-        changed = False
-        for i in range(n):
-            di = dist[i]
-            if di >= max_km:
-                continue
-            for s in range(k):
-                j = nbr[i, s]
-                if j < 0:
-                    continue
-                nd = di + arc_dist[i, s]
-                if nd < dist[j] and nd <= max_km:
-                    dist[j] = nd
-                    source[j] = source[i]
-                    changed = True
-        for i in range(n - 1, -1, -1):  # reverse sweep: roughly halves the round count
-            di = dist[i]
-            if di >= max_km:
-                continue
-            for s in range(k):
-                j = nbr[i, s]
-                if j < 0:
-                    continue
-                nd = di + arc_dist[i, s]
-                if nd < dist[j] and nd <= max_km:
-                    dist[j] = nd
-                    source[j] = source[i]
-                    changed = True
-        if not changed:
-            break
+    src_idx = np.flatnonzero(np.asarray(is_boundary))
+    if src_idx.size == 0:
+        dist[:] = np.float32(1e30)
+        source[:] = -1
+        return dist, source
+
+    xyz = np.asarray(xyz, dtype=np.float64)
+    chord, hit = cKDTree(xyz[src_idx]).query(xyz, k=1, workers=-1)
+    # Chord length on the unit sphere -> arc length.
+    d = 2.0 * float(radius_km) * np.arcsin(np.clip(chord * 0.5, 0.0, 1.0))
+    beyond = d > float(max_km)
+    dist[:] = np.where(beyond, 1e30, d).astype(np.float32)
+    source[:] = np.where(beyond, -1, src_idx[hit]).astype(np.int32)
     return dist, source
+
+
+@njit(cache=True)
+def smooth_along_boundary(is_boundary, stress, nbr, passes, out):
+    """Average boundary stress with its neighbours ALONG the belt.
+
+    `derive_uplift` gives every interior cell the stress of the single nearest boundary
+    cell, so each boundary cell owns a wedge of territory -- a median of 7 cells at n=256.
+    Adjacent boundary cells carry unrelated stress values, so those wedges render as hard
+    stripes fanning out from the belt, which is the second half of the same artifact.
+
+    Smoothing along strike is also the physically right move. Stress on a real plate
+    boundary varies smoothly along its length; the cell-to-cell scatter here is
+    discretisation noise from classifying each cell's velocity jump independently.
+    """
+    n = stress.shape[0]
+    k = nbr.shape[1]
+    cur = stress.copy()
+    for _ in range(passes):
+        for i in range(n):
+            if not is_boundary[i]:
+                out[i] = cur[i]
+                continue
+            acc = cur[i]
+            cnt = 1.0
+            for s in range(k):
+                j = nbr[i, s]
+                if j < 0 or not is_boundary[j]:
+                    continue
+                acc += cur[j]
+                cnt += 1.0
+            out[i] = acc / cnt
+        for i in range(n):
+            cur[i] = out[i]
+    return out
 
 
 def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
@@ -281,11 +304,14 @@ def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
                          np.ascontiguousarray(plate_id), vel, p.transform_ratio,
                          b_type, b_stress)
 
+    is_b = b_type != NONE
+    b_stress = smooth_along_boundary(np.ascontiguousarray(is_b), b_stress,
+                                     np.ascontiguousarray(grid.neighbours),
+                                     p.stress_smoothing_passes, np.empty_like(b_stress))
+
     dist = np.empty(n, dtype=np.float32)
     source = np.empty(n, dtype=np.int32)
-    boundary_distance(b_type != NONE, np.ascontiguousarray(grid.neighbours),
-                      np.ascontiguousarray(grid.arc_dist), dist, source,
-                      np.float32(1200.0))
+    boundary_distance(is_b, grid.xyz, grid.radius_km, dist, source, np.float32(1200.0))
     dist[dist > 1e29] = 1e4  # unreachable within the cap: treat as deep interior
 
     return Plates(plate_id=plate_id, sites=sites, euler_axis=axis, euler_rate=rate,

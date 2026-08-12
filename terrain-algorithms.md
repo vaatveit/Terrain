@@ -333,6 +333,46 @@ Two things the raw diagram needs: **permanent ice**, which it has no cell for, p
 
 Note what the throwaway Stage 1 does **not** produce: meaningful continental relief. Its highest land sits ~560 m above sea level and mean continental freeboard is ~220 m, against a real ~840 m. That is the expected consequence of skipping tectonics — real high topography comes from crustal thickening under orogens (sub-step 7), not from noise on an undeformed crust. Mountains are Stage 2's uplift term's job, so this is not worth fixing in the throwaway.
 
+### Straight-line artifacts: three causes, none of them the one that looked obvious
+
+Rendered worlds showed ruled parallel streaks fanning out from every mountain range, plus a pervasive scaly texture over flat ground. The instinct is to blame the drainage network — D6 steepest descent can only pick one of six directions, so rivers *are* quantised. Measurement said otherwise, and the order in which the suspects fell is the useful part.
+
+**What was measured and cleared first.** Depression filling raised 0.0% of land cells, so the `+eps` fill ramp was not it. The winning downhill direction beat the runner-up by a median 40%, so it was not tie-breaking either. Downstream straightness ran 73% against SRTM's 58–65% under the same routing — elevated, but not enough to explain the picture. Lateral coherence, which separates a comb from a tree, came out at 4.22× chance against SRTM's 4.54× and 4.95×: *lower* than real terrain. And seeding the initial surface with cell-scale roughness, the standard LEM remedy, moved straightness only from 45.5% to 43.9%. Four plausible mechanisms, four negatives.
+
+**Cause 1 — graph distance is not distance.** `boundary_distance` accumulated `arc_dist` along the cell graph. On a hex lattice a path at 30° to a lattice row has to zigzag, costing 2/√3 = 1.155× the direct route, so the level sets are hexagons, not circles. Measured against true great-circle distance at n=256: 8% long on median, 21.8% at worst. Uplift is an *exponential* in that distance, so the error became lattice-aligned ridges — and rendering the uplift field directly showed the full artifact **before a single erosion step ran**. Replaced with a KD-tree query over the boundary cells: exact, and cheaper than 400 relaxation sweeps because there are ~15k boundary cells rather than 6M cells.
+
+**Cause 2 — stress propagated from one cell.** `derive_uplift` gives every interior cell the stress of its single nearest boundary cell, so each boundary cell owns a wedge of territory — a median of 7 cells at n=256. Adjacent boundary cells carry unrelated stress, so the wedges render as hard stripes fanning out from the belt. Averaging stress along strike first is both the fix and the physically honest move: stress on a real plate boundary varies smoothly along its length, and the cell-to-cell scatter is discretisation noise from classifying each cell's velocity jump independently.
+
+**Cause 3 — the interpolator invented texture.** Sampling the mesh to the export raster used inverse-distance weighting, and Shepard's method has *zero gradient at every data point*: the resampled field acquires a dimple at each cell centre. That is invisible in the elevations — 0.13 m rms — and glaring once hillshaded, because hillshading is a derivative. Resampling a perfectly smooth analytic field (a low-order spherical harmonic, no ridges and no noise) and measuring the mean |second difference| it manufactures:
+
+| interpolation | manufactured curvature |
+|---|---|
+| IDW, 3 neighbours (was) | 0.345 m |
+| IDW, 12 neighbours | 0.274 m |
+| **barycentric over mesh triangles** | **0.0007 m** |
+
+A wider stencil does not help, because the flaw is the kernel rather than the support. Barycentric is exact for a linear field, adds no blur, and needs no extra data — the grid already stores azimuthally ordered neighbours, so the triangle fan around each cell is free.
+
+**Shipped as opt-in, with `nearest` the default.** The measured comparison above is a reason to prefer barycentric *over IDW* if you are going to blend at all; it is not a reason to blend by default. Nearest-cell sampling gives one cell per pixel, every value traceable to a cell, and nothing manufactured on the way out — which is the right default for a data export whose whole point is that the metrics run on it unmodified. The blends are `--resample barycentric` and `--resample c1`.
+
+**But barycentric is only C0, and hillshading finds that too.** Linear interpolation has a constant gradient within each triangle, so the gradient jumps at every edge; the render shows a herringbone on steep ground, where the jump is large, and nothing on plains, where it is not. What identified it: rendering the same ground at 4× the raster width made the pattern *bigger* rather than finer — it was pinned to the mesh, not the pixel. That also rules out the obvious remedy, since exporting wider reveals faceting rather than hiding it, and the extra detail octaves a wider raster unlocks are far too low-amplitude to mask it.
+
+The fix is Shepard's method applied to per-cell **linear polynomials** rather than to bare values. Plain IDW dimples precisely because it blends constants; blending `z_i + g_i·(p − x_i)` with a least-squares gradient fitted in each cell's tangent plane makes the interpolant reproduce `g_i` at cell i, which gives C1 everywhere, exact linear precision, and no blur. Facet tail (p99.5 / median of the second difference) on a mountain window: **barycentric 8808, C1 20.1**. Against the alternative of simply smoothing:
+
+| scheme | facets | peak elevation (mesh peak 10,365 m) |
+|---|---|---|
+| barycentric | reference | 10,252 m |
+| smooth kernel, σ = 0.85 spacings | 0.53× curvature | 9,647 m (−528 m) |
+| **C1 Shepard–Franke** | **438× lower facet tail** | **10,365 m** |
+
+Two details are load-bearing. The weight must be compactly supported — `((R − d)/(R·d))²` with R the distance to the k-th neighbour — because plain `1/d²` is discontinuous wherever the k-nearest *set* changes, which puts creases straight back in. And the blend must be clamped to the range of the contributing cells: gradient extrapolation goes Gibbs-like across the continental shelf break, where the mesh field is very nearly a step, and undershot the abyssal plain by 471 m without the limiter. The clamp costs nothing in smooth ground, where the blend is already inside the range.
+
+**What this does not fix, and the measurement that says so.** After all four fixes some mountain flanks still render as a regular comb, and it is not the export: it survives with detail off and C1 on, so it is in the mesh field itself. The generated surface is genuinely rough at the cell scale — **4.40% of land cells are local maxima among their own neighbours, against 0.14–0.26% for SRTM pixels**, a 17–31× excess — and half of all land cells have no upstream contribution at all (median drainage area 1.0 cells, against 3–4 pixels on SRTM). No interpolation can smooth away topography that is really there. That is a Stage 2 question about drainage density at 9.8 km cells, not an export question.
+
+**A fourth, smaller one: the detail noise was mostly aliasing.** Stage 8 ran 6 octaves from a base frequency of 180 regardless of raster width. At width 8192 the finest octave has 1.1 km features against a 4.9 km pixel — four of the six octaves sat below Nyquist, and energy above Nyquist folds back as long straight moiré fringes, which is the exact artifact detail exists to avoid. The octave count is now derived from the width. The honest consequence: at the default width (8×n) a pixel is only ~1.5× finer than a cell, so **one octave is all that fits**, and getting more detail means exporting a wider raster rather than turning a knob.
+
+**The lesson worth keeping.** Every one of the three real causes sat *upstream* of the thing that looked guilty, and the drainage statistics were normal throughout — the network was never the problem. Rendering intermediate fields directly (uplift, stress, boundary distance) found in one image what four quantitative tests had failed to find, because the artifact was structural rather than statistical.
+
 ---
 
 ## Validation: how to actually *test* the algorithms

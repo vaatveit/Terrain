@@ -57,6 +57,7 @@ and reused. It is regenerable from `n` alone, so it is never stored inside a wor
 | `--steps` | 600 | total erosion timesteps, split across passes |
 | `--passes` | 3 | climate–erosion coupling passes |
 | `--width` | `8n` | export raster width in pixels (height is half) |
+| `--resample` | `nearest` | how mesh fields are sampled onto the raster: `nearest` \| `barycentric` \| `c1`. **The default blends nothing** — see Stage 8 |
 | `--out` | `data/world_n<N>_s<S>` | output directory |
 | `--no-glacial` | off | skip stage 5 |
 | `--verify` | off | check export fidelity and re-read the GeoTIFF through the DEM path |
@@ -170,6 +171,7 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | `max_speed_mm_per_yr` | 80 | plate speed; Earth runs 10–100 |
 | `transform_ratio` | 2.5 | a boundary is transform when tangential motion exceeds this × normal. At 1.0 you get 44% transform against Earth's ~20% |
 | `boundary_warp` / `_frequency` | 0.10 / 2.5 | bends plate boundaries. **Set to 0 and mountain ranges render as dead-straight lines** |
+| `stress_smoothing_passes` | 8 | averages boundary stress along strike before it is propagated inland. **At 0, each boundary cell hands its stress to its own wedge of interior cells and orogens render as hard stripes fanning out from the belt** |
 | `u_max_m_per_myr` | 1200 | peak orogenic uplift. Sets relief together with `LemParams.K` |
 | `craton_floor_m_per_myr` | 20 | uplift on stable interiors |
 | `orogen_decay_km` | 200 | how far uplift reaches from a collision boundary |
@@ -258,8 +260,32 @@ for `n=1`.
 | `flat_floor` | 0.18 | detail retained on flat ground. **At 0 the sea bed and every plain go glass-smooth** |
 | `valley_smoothing_km2` | 60000 | drainage area over which alluvial floors smooth out. **Must be a large-river area** — at 3000 it flattened the whole channel network |
 | `ocean_scale` | 0.35 | sub-sea detail, muted by sediment |
-| `octaves` / `frequency` / `ridged` | 6 / 180 / 0.35 | fractal character; `ridged` blends toward crests over blobs |
-| `neighbours` | 3 | IDW interpolation. **At 1 the raster renders the hexagons** |
+| `octaves` / `frequency` / `ridged` | 6 / 180 / 0.35 | fractal character; `ridged` blends toward crests over blobs. `octaves` is a **ceiling** — the number actually used is capped against `--width` |
+| `min_px_per_feature` | 3.0 | pixels the finest octave must span. **Detail below the pixel is not detail, it is aliasing** — it folds back as long straight moiré fringes across the terrain |
+| `resample` | `"nearest"` | `nearest` \| `barycentric` \| `c1` — see `--resample` above. **The default blends nothing** |
+
+> **Detail is limited by `--width`, not by `octaves`.** The raster has to be finer than the
+> mesh for detail to have anywhere to live, and at the default `--width` (8×n) a pixel is
+> only ~1.5× finer than a cell, so one octave is all that fits. Raise `--width` if you want
+> more; at 4×n the export carries essentially none. `amplify.octaves_for_width(width)`
+> reports what a given raster can hold.
+
+> **`--resample` — the default blends nothing.** Both smoothing modes are opt-in, so a
+> default raster contains no number the simulation did not produce.
+
+| `--resample` | what it does | cost |
+|---|---|---|
+| `nearest` *(default)* | each pixel takes the value of the cell it falls in — mesh data unaltered, one cell per pixel, traceable | renders the hexagons |
+| `barycentric` | linear over the mesh triangles; exact at cell centres and for a linear field, never overshoots | only C0 — its gradient jumps at triangle edges, which hillshading draws as a herringbone on steep ground |
+| `c1` | Shepard blend of per-cell *linear polynomials* for elevation; facet tail (p99.5 / median of the second difference) on a mountain window falls **8808 → 20.1** | one extra k-nearest query; only pays above ~2 px per mesh cell, so pair it with a larger `--width` |
+
+> Neither blend is the old inverse-distance weighting, which had zero gradient at every data
+> point and so dimpled at each cell centre — 0.345 m of manufactured curvature on a
+> perfectly smooth analytic control, against 0.0007 m for barycentric. `c1` also adds no
+> blur: it recovers the full mesh peak (10,365 m against barycentric's 10,252 m), where a
+> smoothing kernel at σ=0.85 cell spacings cost 528 m. Elevation is the only field offered
+> `c1` — it is the only one whose derivative anyone looks at. The land mask and biome codes
+> are always nearest, categorical values being unaverageable.
 
 > **Do not apply amplification to the simulation mesh.** It perturbs elevations, which
 > changes flow receivers, which rewires the drainage network — measured as θ moving

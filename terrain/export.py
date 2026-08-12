@@ -108,6 +108,7 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
     out_dir = pathlib.Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     files = {}
+    mode = getattr(amplify_params, "resample", None) or amp_mod.AmplifyParams().resample
 
     def as_flag(arr):
         # Masks travel as uint8, matching land_mask, so the archive carries one boolean
@@ -138,19 +139,28 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                                                seed=seed, detail=True)
     else:
         pts, shape = amp_mod.equirect_points(width)
-        z_r = amp_mod.interpolate(grid, elevation, pts).reshape(shape).astype(np.float32)
-        land_r = (amp_mod.interpolate(grid, land_mask.astype(np.float64), pts, k=1)
-                  .reshape(shape) > 0.5)
+        z_r = (amp_mod.interpolate(grid, elevation, pts, mode=mode)
+               .reshape(shape).astype(np.float32))
+        # Nearest for the mask: land/ocean is categorical and must not be averaged.
+        near, _ = amp_mod.neighbour_weights(grid, pts, k=1)
+        land_r = np.asarray(land_mask, dtype=bool)[near].reshape(shape)
     files["elevation"] = str(write_geotiff(out_dir / "elevation.tif", z_r, "float32",
                                            descriptions=["elevation_m"]))
 
     if (temperature_c is not None and precipitation_mm is not None) or biome is not None:
         pts, shape = amp_mod.equirect_points(width)
-        idx, w = amp_mod.neighbour_weights(grid, pts)
-        nearest = idx[:, 0] if w is not None else idx
+        if mode == "nearest":
+            nearest, _ = amp_mod.neighbour_weights(grid, pts, k=1)
+            idx = w = None
+        else:
+            idx, w = amp_mod.barycentric_weights(grid, pts)
+            nearest = idx[:, 0]
         if temperature_c is not None and precipitation_mm is not None:
-            t_r = amp_mod.apply_weights(temperature_c, idx, w).reshape(shape)
-            p_r = amp_mod.apply_weights(precipitation_mm, idx, w).reshape(shape)
+            def sample(f):
+                return (np.asarray(f)[nearest] if idx is None
+                        else amp_mod.apply_weights(f, idx, w))
+            t_r = sample(temperature_c).reshape(shape)
+            p_r = sample(precipitation_mm).reshape(shape)
             files["climate"] = str(write_geotiff(
                 out_dir / "climate.tif", [t_r, p_r], "float32",
                 descriptions=["temperature_c", "precipitation_mm"]))
@@ -224,12 +234,15 @@ def best_land_window(tif_path, size, max_abs_lat=55.0, sea_level=0.0):
     return best
 
 
-def verify_fidelity(tif_path, grid, elevation, samples=200_000, seed=0):
+def verify_fidelity(tif_path, grid, elevation, samples=200_000, seed=0, mode="nearest"):
     """Does the exported raster carry the world faithfully? This is the export's own test.
 
-    Compares raster pixels against the mesh field interpolated at the same coordinates.
-    Any disagreement beyond the sub-grid detail deliberately added in Stage 8 means the
+    Compares raster pixels against the mesh field sampled at the same coordinates. Any
+    disagreement beyond the sub-grid detail deliberately added in Stage 8 means the
     georeferencing, the resampling or the write is wrong.
+
+    `mode` must match what the export used, or this measures the difference between two
+    resampling schemes rather than the fidelity of the write.
     """
     import rasterio
     from terrain import amplify as amp_mod
@@ -247,7 +260,7 @@ def verify_fidelity(tif_path, grid, elevation, samples=200_000, seed=0):
     la, lo = np.radians(lat), np.radians(lon)
     pts = np.stack([np.cos(la) * np.cos(lo), np.cos(la) * np.sin(lo), np.sin(la)], axis=1)
 
-    expect = amp_mod.interpolate(grid, elevation, pts)
+    expect = amp_mod.interpolate(grid, elevation, pts, mode=mode)
     got = z_r[rows, cols].astype(np.float64)
     err = got - expect
     return {"samples": int(samples), "mean_abs_error_m": float(np.abs(err).mean()),
