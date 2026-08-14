@@ -68,6 +68,115 @@ def test_seasonality_grows_inland(world):
 
 
 # --------------------------------------------------------------------------------------
+# Ocean heat transport
+# --------------------------------------------------------------------------------------
+
+
+def test_currents_stay_in_the_sea_and_follow_the_shore(world):
+    """A current that runs into a continent stops advecting, so it must turn instead.
+
+    Turning is not a tidiness measure -- it is the mechanism. A gyre only acquires a
+    poleward western boundary because the flow cannot cross the coast.
+    """
+    g, _, land, _ = world
+    cur = climate.current_field(g, land, climate.ClimateParams())
+    speed = np.linalg.norm(cur, axis=1)
+
+    assert np.allclose(speed[land], 0.0), "current on land"
+    assert (speed[~land] > 0.99).mean() > 0.99, "sea cells should carry a unit current"
+    # Tangent to the sphere, like the wind.
+    assert np.abs(np.einsum('ij,ij->i', cur, g.xyz)).max() < 1e-9
+
+    # No cell flows into land. Checked against the same tangent direction the advection
+    # weights use, so this is exactly the quantity that would leak.
+    for s in range(g.neighbours.shape[1]):
+        j = g.neighbours[:, s]
+        jj = np.maximum(j, 0)
+        d = g.xyz[jj] - np.einsum('ij,ij->i', g.xyz[jj], g.xyz)[:, None] * g.xyz
+        dn = np.linalg.norm(d, axis=1)
+        into = np.einsum('ij,ij->i', cur, d) / np.where(dn > 0, dn, 1.0)
+        shore = ~land & (j >= 0) & land[jj] & (dn > 0)
+        if shore.any():
+            assert into[shore].max() < 1e-6, "current flows into the coast"
+
+
+def test_the_anomaly_cannot_manufacture_heat(world):
+    """The sweep gathers a weighted MEAN of its upwind neighbours, so the result is bounded
+    by the extremes of the equilibrium profile it started from. `_advect_step` needed a
+    saturation cap to get this property for moisture; a mean has it for free.
+
+    Tested with `strip_zonal_mean` off, because the bound belongs to the advection and
+    removing the zonal mean afterwards can legitimately push a cell outside the original
+    range -- measured -26.9 C against an equilibrium floor of -25.0.
+    """
+    import dataclasses
+    g, _, land, _ = world
+    p = dataclasses.replace(climate.ClimateParams(), strip_zonal_mean=False)
+    eq = climate.equilibrium_temperature(g, p)
+    anom = climate.sst_anomaly(g, land, eq, p)
+    sst = eq + anom
+    assert sst[~land].min() >= eq.min() - 1e-6
+    assert sst[~land].max() <= eq.max() + 1e-6
+    assert np.allclose(anom[land], 0.0), "land is not sea surface"
+
+
+def test_ocean_heat_transport_switches_off_cleanly(world):
+    """`ocean_heat_c = 0` must return the pre-transport climate exactly.
+
+    Note it is the GAIN that switches this off, not `wind_speed = 0`. With no wind there is
+    still the isotropic `eddy` share, so the sweep degenerates to Laplacian smoothing of a
+    curved equilibrium profile and leaves a small real anomaly near the equator and poles.
+    """
+    import dataclasses
+    g, z, land, _ = world
+    off = dataclasses.replace(climate.ClimateParams(), ocean_heat_c=0.0)
+    c_off = climate.compute_climate(g, z, land, off)
+    assert np.allclose(c_off.sst_anomaly_c, 0.0)
+
+    # Fully disconnected, not merely scaled to nothing: changing how far a current carries
+    # its heat must make no difference at all once the gain is zero.
+    other = dataclasses.replace(off, current_scale_km=off.current_scale_km * 8,
+                                maritime_scale_km=off.maritime_scale_km * 8)
+    assert np.array_equal(c_off.temperature_c,
+                          climate.compute_climate(g, z, land, other).temperature_c)
+
+
+def test_onshore_coasts_feel_the_sea_and_offshore_coasts_do_not(world):
+    """Norway against Labrador, which is the whole point of the exercise.
+
+    The contrast is not that one coast sits beside warmer water -- it is that the
+    westerlies carry maritime air INTO Europe, while at the same latitude the wind leaves
+    Labrador for the sea and the warm water offshore never reaches the land. So the test is
+    directional, and it is the one an isotropic model cannot pass.
+
+    Measured: an earlier version decayed the anomaly as exp(-distance) from the coast and
+    scored 0.64x here -- offshore coasts came out MORE maritime than onshore ones, because
+    a geometric decay carries no direction and was really just re-deriving continentality.
+    """
+    g, z, land, _ = world
+    p = climate.ClimateParams()
+    wind = climate.wind_field(g, p)
+    anom = climate.sst_anomaly(g, land, climate.equilibrium_temperature(g, p), p)
+    maritime = climate.maritime_anomaly(g, land, anom, wind, p)
+
+    # How strongly the wind blows from a sea neighbour onto each coastal land cell.
+    onshore = np.zeros(g.cell_count)
+    for s in range(g.neighbours.shape[1]):
+        j = g.neighbours[:, s]
+        jj = np.maximum(j, 0)
+        d = g.xyz[jj] - np.einsum('ij,ij->i', g.xyz[jj], g.xyz)[:, None] * g.xyz
+        dn = np.linalg.norm(d, axis=1)
+        towards = -np.einsum('ij,ij->i', wind, d) / np.where(dn > 0, dn, 1.0)
+        onshore += np.where((j >= 0) & ~land[jj] & (dn > 0), towards, 0.0)
+
+    windward = land & (onshore > 0.2)
+    leeward = land & (onshore < -0.2)
+    assert windward.sum() > 100 and leeward.sum() > 100
+    ratio = np.abs(maritime[windward]).mean() / np.abs(maritime[leeward]).mean()
+    assert ratio > 1.1, f"onshore/offshore maritime influence {ratio:.2f}x; expected > 1.1"
+
+
+# --------------------------------------------------------------------------------------
 # Wind
 # --------------------------------------------------------------------------------------
 

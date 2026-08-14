@@ -289,6 +289,41 @@ def drainage_density(fr: flow.FlowResult, is_channel, area, valid=None) -> float
     return float(fr.step[m].sum() / total_area)
 
 
+def zonality(field, lat_deg, valid=None, band_deg=2.0) -> float:
+    """Share of a field's variance explained by latitude alone. 1.0 is perfectly banded.
+
+    This is the diagnostic that located the ruler-straight biome bands: measuring it first
+    showed temperature at 0.962 against log-precipitation at 0.187, so the cause was in the
+    temperature field and not, as it looked, in the rainfall. It was computed ad hoc at the
+    time; it belongs here, because it is the success measure for anything claiming to break
+    zonality and the number is only comparable if the estimator is.
+
+    Binned rather than regressed, because the latitude profile is not linear or even
+    monotonic -- it has a tropical maximum -- so a linear fit would credit a perfectly zonal
+    field with almost no zonality at all.
+
+    `valid` should normally be the land mask. Including the ocean inflates the result: sea
+    surface temperature genuinely is close to a function of latitude, and there is far more
+    of it than land.
+    """
+    v = np.asarray(field, dtype=np.float64)
+    lat = np.asarray(lat_deg, dtype=np.float64)
+    if valid is not None:
+        v, lat = v[valid], lat[valid]
+    if v.size < 2:
+        return np.nan
+    total = v.var()
+    if total <= 0:
+        return np.nan
+
+    n_bands = max(int(round(180.0 / band_deg)), 1)
+    idx = np.clip(((lat + 90.0) / 180.0 * n_bands).astype(np.int64), 0, n_bands - 1)
+    count = np.bincount(idx, minlength=n_bands)
+    mean = np.bincount(idx, weights=v, minlength=n_bands)
+    np.divide(mean, count, out=mean, where=count > 0)
+    return float(1.0 - (v - mean[idx]).var() / total)
+
+
 # --------------------------------------------------------------------------------------
 
 

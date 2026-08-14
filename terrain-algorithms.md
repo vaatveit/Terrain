@@ -388,6 +388,36 @@ Precipitation was already varied; temperature was almost purely latitudinal, and
 
 **And an honest limit: the bands are still visible.** Deserts now span more latitudes but are not much patchier, and a wide uniform band reads much like a narrow one. Breaking zonality properly needs mechanisms this model does not have: **ocean-current heat transport** (the Gulf Stream is why Norway is not Labrador) and a **seasonal cycle** (monsoons, and the prerequisite for Köppen classification). Both are stage-scale additions rather than tuning.
 
+### Ocean heat transport: built, correct, and not enough
+
+The first of those two was built. Surface currents come from the wind — the three-cell circulation already alternates easterly and westerly, so a constant Ekman deflection closes it into a gyre in each basin without anything needing to know where the basins are — and the flow is made tangential at coasts, which is what gives a gyre its poleward western boundary. A temperature anomaly advects along it, and then along the *wind* to reach inland.
+
+**It works, and it moves the headline number almost not at all: temperature zonality 0.9926 → 0.9898.** Both halves of that are worth recording.
+
+| non-zonal contribution to land temperature | std |
+|---|---|
+| continental cooling | 1.07 °C |
+| **maritime anomaly** | **0.66 °C** |
+| latitude profile (residual) | 0.35 °C |
+| lapse rate | 0.28 °C |
+| *total* | *1.46 °C* |
+
+The mechanism is the second-largest source of non-zonal temperature in the world. The aggregate does not move because the latitude term has a standard deviation of **13.7 °C** against 1.46 °C for everything else combined — no horizontal process can compete with that ratio.
+
+**So the aggregate is the wrong measure, and the right one is directional.** The Norway–Labrador contrast is not that one coast sits beside warmer water; it is that the westerlies carry maritime air *into* Europe while at the same latitude the wind leaves Labrador for the sea. Measured: onshore-wind coasts carry **1.9×** the maritime anomaly of offshore-wind coasts. An earlier version decaying the anomaly as `exp(−distance)` from the coast scored **0.64×** — offshore coasts came out *more* maritime — because a geometric decay carries no direction and was really re-deriving continentality under another name. It scored better on zonality while getting the physics backwards, which is the whole argument for testing the mechanism rather than the statistic.
+
+**What the temperature field is actually short of is relief, not distance.** The horizontal length scales are already Earth-equivalent by construction — `continentality_scale_km = 15.3` on a 64.927 km world *is* 1500 km on Earth, and scaling both distances and parameters up changes nothing, since only the ratio enters. Vertically it is a different story:
+
+| | this world | Earth |
+|---|---|---|
+| land mean elevation | 15 m | ~840 m |
+| land elevation std | 61 m | ~800 m |
+| lapse-rate signal available | 0.28 °C | ~5 °C |
+
+Scaling elevation ×13 takes the lapse-rate term to 3.63 °C — more than every other non-zonal term combined — and zonality below 0.94. The bands are a symptom of a flat world, and fixing them is a Stage 1/2 vertical-scale question rather than a climate one.
+
+**A resolution bug fell out of this.** Every transport constant here was a fraction lost *per advection step*, which is an e-folding length denominated in **cells, not kilometres**. The same `background_rainout = 0.012` reached 0.13 R at n=785 and **1.57 R at n=64** — moisture crossed a small test world entirely before decaying, so the fixtures were running different physics from production. They are now e-folding distances in world km, rescaled by radius like every other horizontal length, giving 0.1283 R at every resolution; the values chosen reproduce the old per-step numbers exactly at n=785, where they were tuned.
+
 **A subtropical desert belt appears in the biomes even though it is absent from the precipitation profile.** Stage 3 declines monotonically from the equator with no dip at 30°, yet the map has clear desert bands near ±20°. Whittaker's threshold is on temperature *and* rainfall jointly (T > 20 °C with P < 250 mm), so warm-and-moderately-dry ground classifies as desert without needing a rainfall minimum. Worth knowing before reading too much into it: the belt is real on the map but arrives for a different reason than it does on Earth.
 
 Two things the raw diagram needs: **permanent ice**, which it has no cell for, placed by a latitude-dependent snowline (~4900 m at the equator falling to sea level at the poles) — this is what makes mountains read as mountains; and a guard against `cos(lat)**1.6` returning NaN at the poles from a slightly negative cosine, which would compare false against every elevation and silently leave the ice caps unmarked.

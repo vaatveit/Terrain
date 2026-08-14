@@ -269,13 +269,26 @@ for `n=1`.
 | `meander_deg` / `_frequency` | 7 / 1.8 | Rossby-like waviness. **At 0 the zero-wind latitudes render as ruler-straight rainfall stripes** |
 | `orographic_coeff` | 0.004 | rainout per metre of forced ascent. Raising it strengthens rain shadows and dries interiors |
 | `land_recycling` | 0.70 | evapotranspiration returned to the air. **In direct tension with `orographic_coeff`** — recycled moisture refills the lee |
-| `background_rainout` | 0.012 | fraction lost per advection step |
+| `background_rainout_km` | 8.33 | distance over which airborne moisture decays to 1/e (818 km on Earth) |
 | `subsidence_floor` | 0.10 | rainout suppression where Hadley air descends |
 | `eddy` | 0.07 | isotropic mixing. **Must be > 0** or the zero-wind latitudes become moisture traps |
 | `saturation_gain` | 0.06 | how fast warm air holds more water |
 | `evaporation` | 1.0 | ocean source strength |
 | `iterations` | 400 | fixed-point sweeps |
 | `target_mean_precip_mm` | 1000 | final scaling; the model gives a pattern, not absolute depths |
+| `ekman_deg` | 45 | deflection of the surface current from the wind; right in the north, left in the south |
+| `current_scale_km` | 10 | distance a current carries its heat anomaly (981 km on Earth) |
+| `maritime_scale_km` | 5 | how far inland maritime air keeps that anomaly (491 km on Earth) |
+| `ocean_heat_c` | 1.0 | gain on the anomaly where it comes ashore. **0 disables ocean heat transport**; zeroing `wind_speed` does not |
+| `strip_zonal_mean` | true | keep only the departure from the latitude mean, so poleward transport is not counted twice against `t_pole_c` |
+
+**Every `_km` above is world km at the reference radius (64.927 km) and is rescaled by the
+actual radius**, so it denotes a fixed fraction of the sphere. `background_rainout_km`,
+`current_scale_km` and `maritime_scale_km` were fractions lost *per advection step* until
+that turned out to be a length in cells rather than in kilometres: the same 0.012 rainout
+reached 0.13 R at n=785 but 1.57 R at n=64, so a small test world had moisture crossing it
+entirely before decaying. The values above reproduce the old per-step numbers exactly at
+n=785, where they were tuned.
 
 ### Stage 5 — glacial · `glacial.GlacialParams`
 

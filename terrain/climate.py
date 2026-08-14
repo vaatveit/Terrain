@@ -1,4 +1,4 @@
-"""Stage 3: temperature, prevailing wind, and orographic precipitation.
+"""Stage 3: temperature, prevailing wind, ocean heat transport, and orographic rainfall.
 
 Geometry alone is not realistic terrain once anything is rendered on it, and climate feeds
 back into geometry: precipitation modulates erodibility, so wet windward slopes incise
@@ -40,6 +40,27 @@ Fixing it properly needs a second vertical level, which is a much larger change 
 stage warrants. What this model does produce -- rain shadows at 1.9-2.9x, a coast-to-
 interior gradient, and a wet-tropics-to-dry-poles trend -- is what Stage 4 needs to
 modulate erodibility, so the limitation is recorded rather than papered over.
+
+OCEAN HEAT TRANSPORT is the one non-zonal mechanism here. Everything else in the
+temperature field is a function of where a cell IS -- its latitude, its height, its
+distance from the sea -- and a field built only from those is a latitude profile with
+decorations. The maritime anomaly is a function of where a cell's AIR CAME FROM, which is
+the only thing on the list that can distinguish two coasts at the same latitude.
+
+It is worth being exact about what it buys, because the honest answer is "less than the
+zonality statistic wants". Temperature zonality moves 0.9926 -> 0.9898 on an n=256 world,
+which looks like nothing; the same measurement says the maritime term supplies 0.66 C of
+the world's 1.46 C of non-zonal temperature signal, second only to continental cooling.
+Both are true. The latitude term has a standard deviation of 13.7 C and everything else put
+together has 1.5 C, so no horizontal process can move the aggregate. The measurement that
+actually shows the mechanism working is directional: onshore-wind coasts carry 1.9x the
+maritime anomaly of offshore-wind coasts, which is Norway against Labrador, and which an
+isotropic distance decay scores at 0.64x -- backwards.
+
+The limit is vertical, not horizontal. Land elevation on these worlds has a standard
+deviation of 61 m against Earth's several hundred, so the lapse rate contributes 0.28 C
+where on Earth it would contribute around 5. Relief, not distance, is what the temperature
+field is short of.
 """
 
 from __future__ import annotations
@@ -76,6 +97,30 @@ class ClimateParams:
     # Wind. Bands are Hadley / Ferrel / Polar: easterly, westerly, easterly.
     wind_speed: float = 1.0               # arbitrary units; only direction and ratio matter
     meridional_fraction: float = 0.3
+    # Ocean currents. Surface Ekman transport runs about 45 degrees to the right of the wind
+    # in the north and to the left in the south; that deflection is what closes the trades
+    # and the westerlies into a gyre instead of two opposed zonal streams.
+    ekman_deg: float = 45.0
+    # Distance a current carries its temperature anomaly before relaxing back to the local
+    # equilibrium, in world km at the reference radius: 10 km here is 981 km on Earth.
+    # Short against a real western boundary current, which reaches several thousand km --
+    # this value is what the per-step form worked out to at n=785 and is kept so the change
+    # of units alters nothing at production resolution. Worth revisiting on its merits.
+    current_scale_km: float = 10.0
+    current_iterations: int = 400
+    # Gain on the sea surface anomaly where it comes ashore. 0.0 disables ocean heat
+    # transport entirely and is the regression switch -- see `sst_anomaly` for why zeroing
+    # the current speed instead does NOT give a null result.
+    ocean_heat_c: float = 1.0
+    # How far inland maritime air keeps its anomaly, world km at the reference radius.
+    # 5 km here is 491 km on Earth, which is the right order for how far Atlantic air
+    # reaches into Europe.
+    maritime_scale_km: float = 5.0
+    maritime_iterations: int = 300
+    # Keep only the departure from the zonal mean; see `sst_anomaly` for why the mean has
+    # to go. Off is available for diagnosing the transport itself, not for production.
+    strip_zonal_mean: bool = True
+    zonal_band_deg: float = 2.0
     # Moisture
     evaporation: float = 1.0              # source strength over ocean
     # Rainout per metre of forced ascent. Expressed per metre it is resolution-robust: the
@@ -88,7 +133,13 @@ class ClimateParams:
     # inland. The raw number is almost entirely the coast-to-interior gradient. An earlier
     # version of this file reported 1.9-2.9x "rain shadows" that were nothing of the kind.
     orographic_coeff: float = 0.004
-    background_rainout: float = 0.012     # fraction lost per advection step
+    # Distance over which airborne moisture decays to 1/e, in the same units as
+    # `continentality_scale_km` -- world km at the reference radius, so 8.33 here is 818 km
+    # on Earth. It used to be a fraction lost per advection STEP, which is a length in CELLS
+    # and therefore a different physical distance on every sphere: the same 0.012 reached
+    # 0.13 R at n=785 and 0.39 R at n=256, so anything tuned at one resolution was wrong at
+    # the other. 8.33 reproduces the old 0.012 exactly at n=785, where it was tuned.
+    background_rainout_km: float = 8.33
     # Vertical motion of the three-cell circulation. Air rises at the ITCZ and the polar
     # front and subsides at the horse latitudes and the poles, which is why the world's
     # great deserts sit near 25-30 degrees rather than at the poles. Without this the
@@ -136,6 +187,7 @@ class Climate:
     precipitation_mm: np.ndarray  # (N,) f32, mm/yr
     moisture: np.ndarray          # (N,) f32, steady-state airborne moisture
     coast_distance_km: np.ndarray  # (N,) f32
+    sst_anomaly_c: np.ndarray = None  # (N,) f32, sea surface departure from its latitude
 
 
 # --------------------------------------------------------------------------------------
@@ -143,22 +195,63 @@ class Climate:
 # --------------------------------------------------------------------------------------
 
 
-def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams):
-    """Latitude insolation, elevation lapse rate, and continentality.
+def mean_spacing_km(grid):
+    """Mean centre-to-centre distance between neighbouring cells."""
+    return float(np.mean(grid.arc_dist[grid.neighbours >= 0]))
+
+
+def per_step_relax(grid, scale_km, spacing_km=None):
+    """Convert an e-folding DISTANCE into the per-step rate the advection sweeps take.
+
+    Every transport constant in this module was originally a fraction lost per advection
+    step, which is an e-folding length denominated in CELLS. That is not a physical
+    distance: the same 0.012 background rainout reached 0.13 of the radius at n=785 and
+    0.39 at n=256, so a value tuned at one resolution was simply wrong at another -- the
+    same failure mode as the hardcoded lengths the rescale to 100 m cells had to find.
+
+    Expressing the constant as a distance and dividing by the cell spacing fixes the
+    physical length and lets the step count follow the grid. The distance itself is in
+    world km at the reference radius, exactly as `continentality_scale_km` is, so it also
+    tracks the size of the sphere.
+    """
+    if spacing_km is None:
+        spacing_km = mean_spacing_km(grid)
+    scale = float(scale_km) * float(grid.radius_km) / R_WORLD_KM
+    if scale <= 0.0:
+        return 1.0
+    # Capped below 1: a step longer than the e-folding distance would otherwise ask for
+    # more than complete decay in a single sweep.
+    return min(spacing_km / scale, 0.9)
+
+
+def equilibrium_temperature(grid, p: ClimateParams):
+    """Sea-level temperature from latitude alone: the profile everything departs from."""
+    lat = np.radians(grid.lat.astype(np.float64))
+    return p.t_pole_c + (p.t_equator_c - p.t_pole_c) * np.cos(lat) ** 1.5
+
+
+def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams,
+                maritime_anom=None):
+    """Latitude insolation, elevation lapse rate, continentality, and ocean heat transport.
 
     Continentality affects the annual MEAN, not only the seasonal swing. The latitude
     weighting matters: the sea moderates a cold winter far more than it moderates a warm
     one, so the effect is strong at high latitude and vanishes at the equator -- the
     interior of the Amazon is not colder than its coast.
+
+    The maritime term is the only one here that is not a function of latitude, elevation or
+    distance, and it is the reason this field can stop being zonal at all. Everything else
+    varies with WHERE a cell is; the anomaly varies with where its air came FROM.
     """
     lat = np.radians(grid.lat.astype(np.float64))
-    sea_level_t = p.t_pole_c + (p.t_equator_c - p.t_pole_c) * np.cos(lat) ** 1.5
-
     inland = 1.0 - np.exp(-np.asarray(coast_distance_km, dtype=np.float64)
                           / p.continentality_scale_km)
-    t = (sea_level_t
+    t = (equilibrium_temperature(grid, p)
          - p.lapse_rate_c_per_km * np.maximum(elevation_m, 0.0) / 1000.0
          - p.continental_cooling_c * inland * np.abs(np.sin(lat)) ** 1.5)
+
+    if maritime_anom is not None and p.ocean_heat_c != 0.0:
+        t += p.ocean_heat_c * np.asarray(maritime_anom, dtype=np.float64)
 
     seasonality = p.continentality_c * inland
     return t.astype(np.float32), seasonality.astype(np.float32)
@@ -201,6 +294,262 @@ def wind_field(grid, p: ClimateParams):
 
     wind = u[:, None] * east + v[:, None] * north
     return np.ascontiguousarray(wind, dtype=np.float64)
+
+
+# --------------------------------------------------------------------------------------
+# Ocean currents and heat transport
+# --------------------------------------------------------------------------------------
+
+
+@njit(cache=True, parallel=True)
+def _deflect_and_bound(xyz, nbr, lat, wind, is_ocean, ekman_rad, cur):
+    """Ekman-deflect the wind over water, then make the result follow the coast.
+
+    Two steps, and the second is the one that matters for heat transport. Deflection alone
+    gives a gyre-like swirl but lets flow run straight into a continent, where the advection
+    would simply stop. Removing the shoreward component instead turns the flow ALONG the
+    coast -- which is how a subtropical gyre acquires a poleward western boundary, and the
+    poleward western boundary is the entire Norway-against-Labrador effect.
+    """
+    n = xyz.shape[0]
+    k = nbr.shape[1]
+    for i in prange(n):
+        cur[i, 0] = 0.0
+        cur[i, 1] = 0.0
+        cur[i, 2] = 0.0
+        if not is_ocean[i]:
+            continue
+        # Rotate the tangent vector about the outward normal. n x v is v turned 90 degrees
+        # anticlockwise seen from outside, so a positive angle turns left; the north needs
+        # a right turn, hence the sign of the latitude.
+        a = -ekman_rad if lat[i] >= 0.0 else ekman_rad
+        ca, sa = np.cos(a), np.sin(a)
+        nx, ny, nz = xyz[i, 0], xyz[i, 1], xyz[i, 2]
+        wx, wy, wz = wind[i, 0], wind[i, 1], wind[i, 2]
+        vx = wx * ca + (ny * wz - nz * wy) * sa
+        vy = wy * ca + (nz * wx - nx * wz) * sa
+        vz = wz * ca + (nx * wy - ny * wx) * sa
+
+        # Collect the unit tangent direction toward each land neighbour, then project the
+        # flow off every one of them that it still points into.
+        #
+        # Projecting off their AVERAGE is not enough, and the failure is not exotic: a cell
+        # in a strait or at the head of a bay has land on two sides, the mean normal points
+        # between them, and removing that one component leaves flow running straight into
+        # one of the two. Measured before this loop: 1,580 coastal cells leaking, the worst
+        # of them at full speed into the shore.
+        ld = np.empty((6, 3), dtype=np.float64)
+        n_land = 0
+        for s in range(k):
+            j = nbr[i, s]
+            if j < 0 or is_ocean[j]:
+                continue
+            dot = xyz[j, 0] * nx + xyz[j, 1] * ny + xyz[j, 2] * nz
+            dx = xyz[j, 0] - dot * nx
+            dy = xyz[j, 1] - dot * ny
+            dz = xyz[j, 2] - dot * nz
+            dn = np.sqrt(dx * dx + dy * dy + dz * dz)
+            if dn > 0.0:
+                ld[n_land, 0] = dx / dn
+                ld[n_land, 1] = dy / dn
+                ld[n_land, 2] = dz / dn
+                n_land += 1
+        # Sweeping repeatedly because removing one component can reintroduce another; a
+        # cell walled in on every side converges to no current at all, which is correct.
+        for _ in range(8):
+            worst = 0.0
+            for m in range(n_land):
+                into = vx * ld[m, 0] + vy * ld[m, 1] + vz * ld[m, 2]
+                if into > 0.0:
+                    vx -= into * ld[m, 0]
+                    vy -= into * ld[m, 1]
+                    vz -= into * ld[m, 2]
+                    if into > worst:
+                        worst = into
+            if worst <= 1e-12:
+                break
+
+        # Normalise, then CHECK, and drop the cell entirely if the result still runs ashore.
+        # A cell whose land neighbours span more than half the compass has no admissible
+        # direction at all: the sweeps shrink the vector toward zero, and normalising that
+        # turns leftover rounding into a confident unit vector pointing wherever the noise
+        # lay -- often straight inland. Enforcing the invariant on the final vector is both
+        # exact and self-describing, where thresholds on the magnitude only ever moved the
+        # worst leak around (0.89 into the shore, then 0.028).
+        speed = np.sqrt(vx * vx + vy * vy + vz * vz)
+        if speed <= 1e-12:
+            continue
+        vx, vy, vz = vx / speed, vy / speed, vz / speed
+        ok = True
+        for m in range(n_land):
+            if vx * ld[m, 0] + vy * ld[m, 1] + vz * ld[m, 2] > 1e-9:
+                ok = False
+                break
+        if ok:
+            cur[i, 0] = vx
+            cur[i, 1] = vy
+            cur[i, 2] = vz
+    return cur
+
+
+def current_field(grid, land_mask, p: ClimateParams):
+    """Surface ocean current, as tangent vectors. Zero on land.
+
+    Wind-driven rather than prescribed. The three-cell circulation already alternates
+    easterly (0-30) and westerly (30-60), and a constant Ekman deflection turns that
+    alternation into a closed anticyclonic gyre in each basin without anything having to
+    know where the basins are.
+    """
+    wind = wind_field(grid, p)
+    cur = np.zeros((grid.cell_count, 3), dtype=np.float64)
+    _deflect_and_bound(np.ascontiguousarray(grid.xyz), np.ascontiguousarray(grid.neighbours),
+                       np.ascontiguousarray(grid.lat, dtype=np.float64), wind,
+                       np.ascontiguousarray(~np.asarray(land_mask)),
+                       float(np.radians(p.ekman_deg)), cur)
+    return cur
+
+
+@njit(cache=True, parallel=True)
+def _advect_relax(field, nbr, rev, out_w, target, relax, pinned, new):
+    """One relaxation sweep: what arrives from upwind, pulled back toward a local target.
+
+    Used twice with different flow fields. Over the sea it advects temperature along the
+    CURRENT, pinned on land, and gives the sea surface anomaly. Over land it advects that
+    anomaly along the WIND, pinned at sea, and is how maritime air reaches inland.
+
+    A weighted MEAN of the upwind cells, not a weighted sum. `_advect_step` below documents
+    what happens with a sum: incoming weights exceed one wherever flow converges, the
+    operator is not a contraction, and moisture had to be capped at saturation to stop it
+    diverging to 1.3e7 mm/yr. A mean is bounded by the extremes of its inputs by
+    construction, so temperature needs no cap and nothing to tune -- and it is the right
+    physics anyway, since mixing two bodies of water averages their heat rather than
+    accumulating it.
+    """
+    n = field.shape[0]
+    k = nbr.shape[1]
+    for i in prange(n):
+        if pinned[i]:
+            new[i] = target[i]
+            continue
+        acc = 0.0
+        total = 0.0
+        for s in range(k):
+            j = nbr[i, s]
+            t = rev[i, s]
+            if j < 0 or t < 0:
+                continue
+            w = out_w[j, t]
+            if w <= 0.0:
+                continue
+            acc += w * field[j]
+            total += w
+        upstream = acc / total if total > 0.0 else target[i]
+        new[i] = (1.0 - relax) * upstream + relax * target[i]
+    return new
+
+
+def sst_anomaly(grid, land_mask, equilibrium_c, p: ClimateParams, spacing_km=None):
+    """Departure of sea surface temperature from its own latitude's equilibrium.
+
+    Positive where a current has brought warmer water than belongs here, negative where it
+    has brought colder. Land is zero.
+
+    NOTE that `wind_speed = 0` is not the way to switch this off. With no wind there is no
+    advection, but `_outgoing_weights` still returns the isotropic `eddy` share, so the
+    sweep degenerates to Laplacian smoothing of a curved equilibrium profile and leaves a
+    small anomaly near the equator and the poles. That is diffusion, and it is real; the
+    switch is `ocean_heat_c = 0`.
+    """
+    is_ocean = np.ascontiguousarray(~np.asarray(land_mask))
+    if not is_ocean.any() or p.ocean_heat_c == 0.0:
+        return np.zeros(grid.cell_count, dtype=np.float32)
+
+    nbr = np.ascontiguousarray(grid.neighbours)
+    out_w = np.zeros(nbr.shape, dtype=np.float64)
+    _outgoing_weights(np.ascontiguousarray(grid.xyz), nbr,
+                      current_field(grid, land_mask, p), p.eddy, out_w)
+    rev = np.empty(nbr.shape, dtype=np.int32)
+    _reverse_slots(nbr, rev)
+
+    eq = np.ascontiguousarray(equilibrium_c, dtype=np.float64)
+    sst = eq.copy()
+    new = np.empty_like(sst)
+    pinned = np.ascontiguousarray(~is_ocean)
+    relax = per_step_relax(grid, p.current_scale_km, spacing_km)
+    for _ in range(p.current_iterations):
+        _advect_relax(sst, nbr, rev, out_w, eq, relax, pinned, new)
+        sst, new = new, sst
+    anom = np.where(is_ocean, sst - eq, 0.0)
+
+    # Strip the zonal mean, and not as a cosmetic step. What is left after advection is a
+    # net POLEWARD heat transport -- measured -5.4 C in the zonal mean at 30-45 degrees and
+    # +2.8 C at 60-75 -- which is correct physics and must still not be added here, because
+    # it is already in `t_equator_c` and `t_pole_c`. Those are calibrated against Earth, and
+    # Earth's equator-to-pole gradient is as shallow as it is BECAUSE its oceans move heat
+    # poleward. Adding a modelled transport on top of a profile that already contains one
+    # counts it twice, and the result was a redistributed latitude profile rather than a
+    # broken one: zonality 0.9926 -> 0.9830 with the mean left in.
+    #
+    # The departure from the zonal mean is the part that is genuinely new information -- it
+    # is where a basin's western boundary differs from its eastern -- and it is what
+    # `t_equator_c` cannot contain, because a single latitude profile has nowhere to put it.
+    if p.strip_zonal_mean:
+        anom -= _band_mean(anom, grid.lat, is_ocean, p.zonal_band_deg)[1]
+        anom = np.where(is_ocean, anom, 0.0)
+    return anom.astype(np.float32)
+
+
+def maritime_anomaly(grid, land_mask, sst_anom, wind, p: ClimateParams, spacing_km=None):
+    """Carry the sea surface anomaly inland ON THE WIND.
+
+    The first version of this decayed the anomaly isotropically with distance from the
+    coast, and it could not produce the effect it exists for. Measured: a mean land
+    temperature change of 1.1 C and zonality 0.9926 -> 0.9805, against a maximum of 10.4 C
+    at the coast. The extremes were right and the field was still a latitude profile.
+
+    Isotropic decay was the wrong model, because the Norway-against-Labrador contrast is
+    not that one coast sits next to warmer water. It is that the westerlies carry Atlantic
+    air hundreds of kilometres INTO Europe, while at the same latitude in Labrador the wind
+    blows from the continent out to sea and the warm water offshore never reaches the land.
+    Direction is the whole mechanism, and distance alone throws it away.
+
+    So the anomaly advects on the wind field, using the same sweep the currents use and
+    relaxing toward zero over land -- an air mass losing its maritime character as the
+    continent works on it. `maritime_scale_km` sets how far inland it gets.
+    """
+    anom = np.asarray(sst_anom, dtype=np.float64)
+    if p.ocean_heat_c == 0.0 or not np.any(anom):
+        return np.zeros(grid.cell_count, dtype=np.float32)
+
+    nbr = np.ascontiguousarray(grid.neighbours)
+    out_w = np.zeros(nbr.shape, dtype=np.float64)
+    _outgoing_weights(np.ascontiguousarray(grid.xyz), nbr, wind, p.eddy, out_w)
+    rev = np.empty(nbr.shape, dtype=np.int32)
+    _reverse_slots(nbr, rev)
+
+    # Ocean cells hold the sea surface anomaly; land relaxes toward zero.
+    is_ocean = np.ascontiguousarray(~np.asarray(land_mask))
+    target = np.ascontiguousarray(np.where(is_ocean, anom, 0.0))
+    air = target.copy()
+    new = np.empty_like(air)
+    relax = per_step_relax(grid, p.maritime_scale_km, spacing_km)
+    for _ in range(p.maritime_iterations):
+        _advect_relax(air, nbr, rev, out_w, target, relax, is_ocean, new)
+        air, new = new, air
+    return air.astype(np.float32)
+
+
+def _band_mean(values, lat_deg, valid, band_deg):
+    """Latitude-band means of `values` over `valid`, and those means scattered per cell."""
+    n_bands = max(int(round(180.0 / band_deg)), 1)
+    idx = np.clip(((np.asarray(lat_deg, dtype=np.float64) + 90.0) / 180.0
+                   * n_bands).astype(np.int64), 0, n_bands - 1)
+    w = np.asarray(valid, dtype=np.float64)
+    count = np.bincount(idx, weights=w, minlength=n_bands)
+    total = np.bincount(idx, weights=w * np.asarray(values, dtype=np.float64),
+                        minlength=n_bands)
+    np.divide(total, count, out=total, where=count > 0)
+    return total, total[idx]
 
 
 # --------------------------------------------------------------------------------------
@@ -340,7 +689,8 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
     return new_m, precip
 
 
-def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateParams):
+def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateParams,
+                  spacing_km=None):
     """Steady-state moisture transport with orographic and background rainout."""
     n = grid.cell_count
     nbr = np.ascontiguousarray(grid.neighbours)
@@ -361,7 +711,8 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
     # this cell. Averaged over the upwind neighbours, weighted by how much comes from each.
     ascent = _weighted_ascent(xyz, nbr, rev, out_w, elevation_m.astype(np.float64))
     lift_loss = np.exp(-p.orographic_coeff * np.maximum(ascent, 0.0))
-    retain = np.ascontiguousarray(1.0 - p.background_rainout * rainout_factor(grid, p))
+    rainout = per_step_relax(grid, p.background_rainout_km, spacing_km)
+    retain = np.ascontiguousarray(1.0 - rainout * rainout_factor(grid, p))
 
     recycle = np.ascontiguousarray(np.where(land_mask, p.land_recycling, 0.0))
 
@@ -430,10 +781,16 @@ def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None) 
     plates.boundary_distance(~land_mask, grid.xyz, grid.radius_km, dist, src, cap)
     dist[dist > 1e29] = cap
 
-    t, seasonality = temperature(grid, elevation_m, dist, p)
+    # Wind comes first now: temperature depends on it, because the sea surface anomaly has
+    # to be blown ashore before it can be added. It used to be the other way round, when
+    # temperature was a function of latitude, elevation and coast distance only.
     wind = wind_field(grid, p)
-    precip, moisture = precipitation(grid, elevation_m, land_mask, t, wind, p)
+    spacing = mean_spacing_km(grid)
+    anom = sst_anomaly(grid, land_mask, equilibrium_temperature(grid, p), p, spacing)
+    maritime = maritime_anomaly(grid, land_mask, anom, wind, p, spacing)
+    t, seasonality = temperature(grid, elevation_m, dist, p, maritime_anom=maritime)
+    precip, moisture = precipitation(grid, elevation_m, land_mask, t, wind, p, spacing)
 
     return Climate(temperature_c=t, seasonality_c=seasonality,
                    wind=wind.astype(np.float32), precipitation_mm=precip,
-                   moisture=moisture, coast_distance_km=dist)
+                   moisture=moisture, coast_distance_km=dist, sst_anomaly_c=anom)
