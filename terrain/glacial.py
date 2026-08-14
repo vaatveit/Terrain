@@ -32,8 +32,8 @@ solver; it is the abrasion law with a plausible flux, which is what the resolved
 actually support.
 
 WHAT THIS DOES AND DOES NOT DELIVER, measured. It reliably confines erosion to cold ground:
-44.9 m of mean lowering under ice against 0.00 m off it, with a handful of exceptions where
-routing shifted mid-run. It does NOT reliably flatten channel long profiles. That is the
+mean lowering under ice against 0.00 m off it, with a handful of exceptions where routing
+shifted mid-run. It does NOT reliably flatten channel long profiles. That is the
 textbook glacial signature and it did not survive measurement -- concavity in glaciated
 channels went 0.507 -> 0.408 at n=256 (flattening, as predicted) but 0.559 -> 0.631 at
 n=128 (steepening). The sign flips with resolution, so concavity is not a usable glacial
@@ -61,11 +61,47 @@ class GlacialParams:
     freeze_c: float = -2.0                # accumulation below this mean annual temperature
     balance_per_degc: float = 0.35        # m of ice per year per degree below freezing
     max_balance_m_per_yr: float = 3.0
-    # Abrasion law, E = K * Q_ice^m * S^n, calibrated to a glacial erosion rate of roughly
-    # 0.1-10 mm/yr. m is lower than the fluvial 0.45 on purpose: a weaker dependence on
-    # flux gives a flatter long profile, which is the U-shaped trough with its overdeepened
-    # floor rather than a concave river valley.
-    K: float = 2.0e-2
+    # Abrasion law, E = K * Q_ice^m * S^n. m is lower than the fluvial 0.45 on purpose: a
+    # weaker dependence on flux gives a flatter long profile, which is the U-shaped trough
+    # with its overdeepened floor rather than a concave river valley.
+    #
+    # K WAS 2.0e-2 AND THAT WAS TOO HIGH, though not for the reason the old comment implied.
+    # It cut 148 m of mean lowering under ice over the 300 kyr run, which is 0.49 mm/yr and
+    # sits comfortably inside the published 0.1-10 mm/yr band -- so "calibrated to the band"
+    # was true and still wrong. The band spans two orders of magnitude, and which END of it
+    # belongs here is a question about this world's relief, not about glaciers in general.
+    # The pre-glacial relief budget is 432 m; Earth's glaciated terrain has several km. At
+    # 0.49 mm/yr the ice was removing 34% of the world's entire relief in 300 kyr, against
+    # the 5-10% that Quaternary glaciation took off Earth's shields.
+    #
+    # This was invisible until the reflood pass (Stage 5b) went in, because the overdeepened
+    # ground stayed dry: it read as odd elevations rather than as a drowned continent.
+    #
+    # Cheap to fix, because K turns out to be a pure incision-depth knob. Swept at n=128,
+    # the glaciated fraction (21.8-22.1%), the overdeepening count (404-417) and the lakes
+    # (11-15, ~1.3% of land) are all flat across a twentyfold change in K -- so lowering it
+    # costs none of the glacial signature, which is the whole reason this stage exists.
+    #
+    #     K        lowering  rate      % of relief  drowned  Koppen E
+    #     2.0e-2    148 m    0.49mm/yr    34.3%      21.4%     4.7%
+    #     1.0e-2     95 m    0.32mm/yr    21.9%      18.7%     7.8%
+    #     5.0e-3     57 m    0.19mm/yr    13.1%      16.0%    10.8%
+    #     3.0e-3     37 m    0.12mm/yr     8.6%      14.2%    12.7%   <- ships
+    #     2.0e-3     25 m    0.08mm/yr     5.9%      12.7%    14.2%
+    #     1.0e-3     13 m    0.04mm/yr     3.0%      10.0%    16.8%
+    #
+    # 3.0e-3 is the value that satisfies all three criteria at once: the rate stays inside
+    # the published band, the share of relief lands inside Earth's 5-10%, and Koppen's polar
+    # share comes out at 12.7% against Earth's 14%. 2.0e-3 scores better on the last two but
+    # falls below the published rate floor, which is not a trade worth making for a
+    # classification share.
+    #
+    # WHAT THIS DOES NOT FIX is that 14.2% of land still floods. Only 1.0% does with the ice
+    # switched off entirely, so the drowning really is glacial -- but it is amplified out of
+    # all proportion by hypsometry. Median land elevation on these worlds is about 10 m, so
+    # ground that is lowered at all tends to go under. That is the relief shortfall showing
+    # up somewhere new, not a glacial parameter left mistuned.
+    K: float = 3.0e-3
     m: float = 0.30
     n: float = 1.0
     # Ice flux is volume/time, so it scales as the radius squared: 1e-2 / 98.125^2.

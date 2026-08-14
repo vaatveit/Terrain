@@ -379,11 +379,23 @@ def test_wind_goes_slack_between_bands(world):
 
 
 def test_precipitation_is_finite_and_bounded(world):
+    """Anchored on the area-weighted land MEDIAN, not the mean.
+
+    The mean is a statistic of this model's wet tail rather than of its world -- the
+    wettest 5% of land takes about half of all land rain -- so pinning it put the median
+    at 321 mm against Earth's ~600 and made half the world arid by construction. The
+    seasonal path normalises each of the four solves separately and then averages them,
+    and the median is not linear, so the annual median only lands NEAR the target; the
+    tolerance is loose on purpose and the mean is deliberately not pinned at all.
+    """
     g, _, land, cl = world
     p = cl.precipitation_mm
     assert np.isfinite(p).all()
     assert (p >= 0).all()
-    assert p[land].mean() == pytest.approx(1000.0, rel=0.01)
+    med = climate._area_median(p, g.area, land)
+    target = climate.ClimateParams().target_median_precip_mm
+    assert med == pytest.approx(target, rel=0.25), (
+        f"land median {med:.0f} mm against a {target:.0f} mm anchor")
 
 
 def test_moisture_never_exceeds_saturation(world):
@@ -483,7 +495,7 @@ def _shadow_ratio(g, land, cl, ridges, steps=4):
     return float(np.mean(up) / max(np.mean(down), 1.0)) if up else np.nan
 
 
-def test_the_shadow_is_actually_orographic(world):
+def test_the_shadow_is_actually_orographic():
     """Flatten the terrain and re-measure at the SAME points: the excess is the mountain.
 
     The control is the whole test. Flat ground scores about 1.9x on its own, because
@@ -494,32 +506,51 @@ def test_the_shadow_is_actually_orographic(world):
     Two other framings that do NOT work: comparing the p90/p10 spread (flat terrain gives a
     *wider* spread, 154 against 44.9, because interiors go bone dry without orographic
     rain), and expecting the flat ratio to approach 1.0 (it does not, for the reason above).
+
+    THREE WORLDS, NOT ONE, and this test used to build only the shared fixture. The single
+    world was passing on a bar of 1.0 that the surrounding comment already admitted was at
+    the edge of the measured spread, and exempting closed depressions from erosion knocked
+    it over -- to 0.94 on seed 1. Reading that as a lost rain shadow would have been wrong:
+    the orographic ratio barely moved there (1.82 -> 1.75), while the FLAT CONTROL jumped
+    1.44 -> 1.86, because `ridges` is drawn from the topography and the new topography puts
+    the sample somewhere else. Per-seed isolated ratios before and after that change:
+
+        seed        1       2       3      mean
+        before    1.26    2.24    1.38    1.63
+        after     0.94    2.30    1.31    1.52
+
+    So the effect is real and the per-world estimate is noise on the same order. Averaging
+    the seeds is what the estimate can actually support -- and it is what the note in the
+    old version of this test was already doing by hand, outside the suite.
     """
-    g, z, land, cl = world
-    flat = np.where(land, 100.0, -3000.0).astype(np.float32)
-    flat_cl = climate.compute_climate(g, flat, land)
+    from terrain import coupled
 
-    # EVERY ridge cell, not a sample. Drawing 400 of the ~2,100 gave this ratio a spread of
-    # 0.86-1.51 across draw seeds on a single fixed world -- wider than the effect being
-    # measured, so the old 400-point version was asserting partly on the luck of the draw.
-    # The full pool is deterministic and costs nothing.
-    ridges = np.flatnonzero(land & (z > np.percentile(z[land], 92)))
+    g = build_goldberg(96)
+    isolated = []
+    for seed in (1, 2, 3):
+        crust = stage1.generate_crust_tectonic(g, seed=seed)
+        land = crust.land_mask
+        res = coupled.run(g, crust.elevation, crust.uplift, ~land,
+                          passes=2, steps_per_pass=150)
+        z = res.elevation
+        flat = np.where(land, 100.0, -3000.0).astype(np.float32)
+        flat_cl = climate.compute_climate(g, flat, land)
 
-    relief_ratio = _shadow_ratio(g, land, cl, ridges)
-    flat_ratio = _shadow_ratio(g, land, flat_cl, ridges)
-    isolated = relief_ratio / flat_ratio
-    # The bound is weak, and that IS the finding: the orographic signal in this model is
-    # weak, and it varies more between worlds than it does between settings. Measured on
-    # the full ridge pool over three seeds and two uplift configurations, the isolated
-    # ratio spans 1.05-2.53, with no systematic difference between the configurations
-    # (means 1.77 and 1.67). One world therefore cannot support a bar above about 1.0;
-    # a tighter one passes or fails on which seed the fixture happens to use.
-    #
-    # It also fights two other knobs: land_recycling refills the lee (see the trade-off
-    # table in ClimateParams) and wind meandering makes the upwind/downwind walk noisier.
-    assert isolated > 1.0, (
-        f"relief adds only {isolated:.2f}x over flat ground "
-        f"({relief_ratio:.2f} vs {flat_ratio:.2f}) -- the shadow is not orographic")
+        # EVERY ridge cell, not a sample. Drawing 400 of the ~2,100 gave this ratio a
+        # spread of 0.86-1.51 across draw seeds on a single fixed world -- wider than the
+        # effect being measured. The full pool is deterministic and costs nothing.
+        ridges = np.flatnonzero(land & (z > np.percentile(z[land], 92)))
+        isolated.append(_shadow_ratio(g, land, res.climate, ridges)
+                        / _shadow_ratio(g, land, flat_cl, ridges))
+
+    mean_isolated = float(np.mean(isolated))
+    # Still a weak bound, and that IS the finding: the orographic signal in this model is
+    # weak, and it varies more between worlds than it does between settings. It also fights
+    # two other knobs -- land_recycling refills the lee (see the trade-off table in
+    # ClimateParams) and wind meandering makes the upwind/downwind walk noisier.
+    assert mean_isolated > 1.15, (
+        f"relief adds only {mean_isolated:.2f}x over flat ground across three seeds "
+        f"({[round(v, 2) for v in isolated]}) -- the shadow is not orographic")
 
 
 def test_climate_is_reproducible(world):

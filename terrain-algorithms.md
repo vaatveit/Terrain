@@ -212,6 +212,8 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 4. Coupled re-run       →  modulate K by precipitation, repeat step 2 (×2–3)
 5. Secondary erosion    →  glacial above snowline, aeolian in arid zones,
                            coastal at sea level, thermal talus everywhere
+5b. Reflood             →  re-derive the coastline; ice cuts below its outlet and
+                           the sea has to be let into what it carved
 6. Hydrology finalize   →  depression fill/breach, lakes, rivers, channel widths
 7. Biomes               →  Whittaker or Köppen from temperature × precipitation
 8. Amplification        →  slope/curvature-modulated detail; optional ML refine
@@ -295,7 +297,7 @@ So Stage 5 is glacial erosion, driven from the Stage 3 temperature field (which 
 
 Getting that to happen took one non-obvious change. Simply removing the "don't cut below the receiver" clamp achieves **nothing**: with `E ∝ S`, erosion vanishes exactly as a cell approaches its receiver's elevation, so the bed asymptotes flat and never crosses (measured: minimum drop-to-receiver +0.0 m and zero overdeepenings at every erosion rate tried). The driving slope has to be **regional**, measured over a long flow path, which is also the physically right choice since ice responds to surface not bed slope.
 
-**A negative result worth recording.** The textbook signature — glaciation flattens channel long profiles — did not survive measurement. Concavity in glaciated channels went 0.507 → 0.408 at n=256 (flattening, as predicted) but 0.559 → 0.631 at n=128 (steepening). **The sign flips with resolution**, so concavity is not a usable glacial diagnostic at continental cell sizes, and no test asserts it. What does hold is that erosion is cleanly confined to cold ground: 44.9 m of mean lowering under ice against 0.00 m off it.
+**A negative result worth recording.** The textbook signature — glaciation flattens channel long profiles — did not survive measurement. Concavity in glaciated channels went 0.507 → 0.408 at n=256 (flattening, as predicted) but 0.559 → 0.631 at n=128 (steepening). **The sign flips with resolution**, so concavity is not a usable glacial diagnostic at continental cell sizes, and no test asserts it. What does hold is that erosion is cleanly confined to cold ground: 36.9 m of mean lowering under ice against 0.03 m off it, a ratio of 0.00084.
 
 Glacier tongues correctly extend past the freezing line — mean temperature under ice is −11.3 °C but the warmest glaciated cell is +13.6 °C, because a glacier flows downhill past its own equilibrium line and keeps eroding until it melts out. An assertion that every glaciated cell is below freezing would be asserting a bug.
 
@@ -309,6 +311,8 @@ Verified on constructed basins, holding geometry and rainfall fixed and varying 
 
 **Choosing that test climate needs care, and the trap is instructive.** Push the temperature too high and land runoff drops to *exactly zero* — PET exceeds rainfall, nothing reaches the basin at all, and the answer is "no lake" rather than "endorheic lake". The endorheic window needs positive runoff that lake-surface evaporation can still outpace, roughly `P < 2·PET`.
 
+**That trap was not confined to the test fixture — it was the shape of the water balance itself.** `AET = min(P, PET)` puts a kink at `P = PET` and hands back exactly zero runoff everywhere drier than that, which on a generated world was **59% of all land**: 92% of the 15–30° belt, 84% of 30–45°, and 65% of the tropics. Not thin rivers across the subtropics — no rivers at all. Real catchments do not work that way, because rain arrives in events and some of it runs off before the atmosphere can take it back, however arid the annual means look. Turc–Pike, `AET = P / sqrt(1 + (P/PET)²)`, is the standard smooth alternative and has no free parameter; it approaches both physical limits correctly but reaches them asymptotically, so a desert yields a trickle rather than nothing. Zero-runoff land 59% → 0%, mean land runoff 530 → 600 mm. Note the direction: mean runoff *rises*, because this pipeline already produces more land runoff than Earth (600 mm against ~315). What it has is the wrong distribution, and that is Stage 3's problem, not this stage's.
+
 **This stage exposed a bug two stages upstream.** The first run found four tiny coastal lakes and not one endorheic basin, because the world had essentially no closed depressions — the fluvial solver forbids them by construction, and nothing else was making any. The cause was in Stage 1: the boundary table specifies *"continental divergent → subsiding graben flanked by uplifted rift shoulders"*, `derive_uplift` computed exactly that, and then `np.clip(u, 0.0, 1.0)` threw the subsidence away. Tectonic subsidence is where the Dead Sea, Baikal and the East African rift lakes come from. Restoring it took a matching change in Stage 2, because the stream-power solver clamps every cell to stay at or above its receiver — right for incision, since water cannot cut a closed basin, but it would equally forbid a graben from dropping below its outlet. Uplift now goes through the solver and subsidence is applied outside it. Lakes went from 4 to 24, with the first endorheic basin appearing.
 
 Closed basins remain **rare** in generated worlds — 0.03% of land against Earth's roughly 1% lake cover — because fluvial erosion efficiently removes depressions and continental rifts are uncommon. The endorheic machinery is therefore unit-tested on constructed basins rather than on emergent ones.
@@ -319,7 +323,78 @@ The fix is a flood fill: ocean is the largest connected body of water, and every
 
 Two consequences worth recording. **`target_land_fraction` now overshoots**, because basins move to the land side after the datum is fixed; chasing it would be a fixed point, since moving the datum changes which basins connect to the sea. The overshoot is bounded by the basin area — well under a point at the 29% target, though a 50%-land world runs 4 points over as the water fragments. And **the landscape got markedly more sensitive to perturbation**: those forty basins had been *pinned* at base level, fixed-elevation anchors punched into the continents. Removing them, on the same crust, took max flow path 1.84 → 2.56 km, mean top-1% drainage area 0.503 → 0.675 km², and the divide-reorganisation figure 0.26% → 17.85%. The old stability was an artifact of the anchors.
 
-**What did not follow is a lake-covered world.** The forty basins are 2.59% of land at Stage 1 and the surviving lakes are 0.06%; the deep basins persist as *dry* depressions below sea level. That is the endorheic water balance doing its job against this pipeline's precipitation, whose land p25 is about 15 mm against Earth's ~250 — the same dry tail that pushes temperate desert to 20% of land. The lake shortfall is downstream of Stage 3, not of the classification.
+**What did not follow is a lake-covered world.** The forty basins are 2.59% of land at Stage 1 and the surviving lakes were 0.03%; the deep basins persisted as *dry* depressions below sea level.
+
+**That was blamed on Stage 3's precipitation, and the attribution was wrong.** The claim recorded here was that the endorheic water balance was doing its job against rainfall too meagre to fill anything — land p25 about 15 mm against Earth's ~250, the same dry tail that pushes temperate desert to 20% of land. The dry tail is real. It is not what limited the lakes, and the test that settles it is to substitute the suspected cause and see whether the lakes move:
+
+| | lakes | % of land |
+|---|---|---|
+| as shipped | 2 (1 endorheic) | 0.029% |
+| Turc–Pike runoff — land with zero runoff **59% → 0%** | 2 | 0.031% |
+| precipitation compressed to Earth's spread (log₁₀ sd 0.83 → 0.42, median 298 → 750 mm) | 2 | 0.031% |
+| both | 2 | 0.031% |
+
+Giving every cell on the planet positive runoff changes the lake count by nothing at all. **The binding constraint was that erosion had already destroyed the basins**, and the numbers were never ambiguous once anyone counted them: closed depressions are 19.6% of land on the Stage 1 crust, 0.016% after the coupled loop, and 0.084% after glacial erosion puts a few back. Two of those clear the minimum lake area, and those two were the two lakes.
+
+**Two terms erase them and each is sufficient on its own,** which is exactly why this hid for so long — exempting either one alone looks like it barely helps, because whichever is left finishes the job. The stream-power update snaps any cell below its receiver straight up to the receiver in a single step (that clamp is right for incision, and catastrophic for a cell that is lake bed rather than channel), and hillslope diffusion drags the rim down into the hole. It is not slow: a 1,392 m graben is filled to +11 m within ten of six hundred steps, floor rising rather than rim breaching — the eight largest Stage 1 basins gain +237 to +1,402 m of floor over 100 steps while their spill points fall only 12–112 m. Measured after 200 steps at n=128:
+
+| exemption | closed depressions | over minimum lake area |
+|---|---|---|
+| none (as shipped) | 0.002% of land | 0 |
+| hillslope diffusion only | 0.854% | 26 |
+| stream-power clamp only | 0.002% | 0 |
+| **both** | **3.240%** | **30** |
+
+Exempting both is what ships. Land relief rises with it — standard deviation 45 → 106 m on the same crust — because the basins were being planed away along with everything else.
+
+**It also uncovered a runaway that the clamp had been hiding.** Erosion balances uplift, and nothing balances subsidence: deposition is off, so a graben subsiding at 16.9 m/Myr over a 300 Myr run reaches 5,063 m, and the first run after the exemption duly reported a lake **5,265 m deep on a world whose highest peak is 361 m**. The clamp had been cancelling the subsidence as fast as it was applied, so grabens stayed shallow for a reason that had nothing to do with tectonics. Rift subsidence is finite in nature — McKenzie stretching gives a basin a total, set by how far the crust thinned, after which it stops — so `max_subsidence_m` bounds the total rather than trimming the rate. At 500 m the deepest basin floor lands at −1,710 m, in the range real continental rifts occupy.
+
+### Stage 5b: reflood — the coastline is not a constant of the pipeline
+
+Stage 1 solves the land mask and Stages 2 and 5 then move the surface underneath it by hundreds of metres, with nothing re-deriving it. Glacial erosion is why that matters: ice is driven by its own surface slope and will gouge below its own outlet, which is precisely what carves a fjord — and the water then has to be let in.
+
+Measured after a full n=128 run: **20.9% of land sat below the datum, and 99.9% of that was connected to the sea**, median depth 106 m at median latitude 63°. Glacially overdeepened coastal troughs, correctly cut and left dry. The fix reuses Stage 1's two rules verbatim on the new surface — below the datum is water, ocean is the largest connected body of it — so a trough joined to the sea floods and a hole that is not joined to the sea stays land and becomes a lake candidate. Land goes 29.6% → 23.3%.
+
+The climate is then re-solved on the coastline that ships (**Stage 5c**). Everything downstream reads absolute millimetres and degrees against the new mask, and the old fields were solved for a continent that is now part sea — coast distance, the ocean moisture source and the sea-surface anomaly all move when a fifth of the land floods. It does not feed back into erosion; Stages 2 and 5 have run. Stage 5 keeps the *pre*-reflood temperature, which is correct: that is the coastline the ice grew on. It is also what makes the precipitation anchor land exactly on its target rather than near it, since the median is now taken over the mask it is normalising for.
+
+**The reflood immediately reported a Stage 5 calibration error it had previously been concealing** — see the recalibration below. Once that was fixed, the four changes together take **lakes from 0.029% of land to 1.278%**, against Earth's roughly 1%, river cells from 4.96% to 12.6% of land, and endorheic basins from one to two.
+
+### Stage 5 recalibrated: "inside the published band" was true and not enough
+
+Glacial `K` was 2.0e-2, cutting 148 m of mean lowering under ice over the 300 kyr run. That is 0.49 mm/yr, comfortably inside the published 0.1–10 mm/yr band, and the old comment said so. The band spans two orders of magnitude, and **which end of it belongs here is a question about this world's relief, not about glaciers in general.** The pre-glacial relief budget is 432 m against several kilometres on Earth's glaciated terrain, so at 0.49 mm/yr the ice was removing 34% of the world's entire relief in 300 kyr, where Quaternary glaciation took 5–10% off Earth's shields.
+
+This was invisible before Stage 5b, because the overdeepened ground stayed dry — it read as odd elevations rather than as a drowned continent.
+
+It was also cheap to fix, because `K` turns out to be a pure incision-*depth* knob. Across a twentyfold change the glaciated fraction (21.8–22.1%), the overdeepening count (404–417) and the lakes (11–15, ~1.3% of land) barely move, so lowering it costs none of the glacial signature this stage exists to produce:
+
+| `K` | lowering | rate | % of relief | drowned | Köppen E |
+|---|---|---|---|---|---|
+| 2.0e-2 | 148 m | 0.49 mm/yr | 34.3% | 21.4% | 4.7% |
+| 1.0e-2 | 95 m | 0.32 mm/yr | 21.9% | 18.7% | 7.8% |
+| 5.0e-3 | 57 m | 0.19 mm/yr | 13.1% | 16.0% | 10.8% |
+| **3.0e-3** | **37 m** | **0.12 mm/yr** | **8.6%** | **14.2%** | **12.7%** |
+| 2.0e-3 | 25 m | 0.08 mm/yr | 5.9% | 12.7% | 14.2% |
+| 1.0e-3 | 13 m | 0.04 mm/yr | 3.0% | 10.0% | 16.8% |
+
+3.0e-3 satisfies all three criteria at once — rate inside the published band, share of relief inside Earth's 5–10%, Köppen polar share 12.7% against Earth's 14%. 2.0e-3 scores better on the last two but falls below the published rate floor, which is not a trade worth making for a classification share.
+
+**What it does not fix is that 14.2% of land still floods.** With the ice switched off entirely only 1.0% does, so the drowning genuinely is glacial — but it is amplified out of all proportion by hypsometry. Median land elevation on these worlds is about 10 m, so ground that is lowered at all tends to go under. That is the relief shortfall recorded elsewhere in this document turning up somewhere new, not a glacial parameter left mistuned.
+
+**Net effect of the four changes, measured on the same n=128 world:**
+
+| | before | after | Earth |
+|---|---|---|---|
+| lakes | 0.029% of land | **1.278%** | ~1% |
+| endorheic lakes | 1 of 2 | 2 of 12 | |
+| river cells | 4.96% of land | 12.55% | |
+| land precipitation median | 298 mm | 600 mm | ~600 mm |
+| log₁₀ sd of precipitation | 0.833 | 0.761 | ~0.45 |
+| rain in the wettest 5% of land | 47.5% | 45.4% | ~15% |
+| Köppen mean error vs Earth | 9.1% | **7.3%** | |
+| Köppen B / E | 41.0% / 24.4% | 36.1% / 12.7% | 30% / 14% |
+| land fraction | 29.6% | 25.4% | |
+
+The remaining large Köppen gap is **D at 7.1% against Earth's 24%** — continental climates, which need the winters that a world this size and this flat does not produce. That is the relief and continentality shortfall again, not anything these four changes touch.
 
 Meander migration (0.1–10 km wavelength) was sub-grid and deliberately absent at 9.8 km cells; at 100 m it is resolved and simply not implemented. River *width* is carried as a per-cell attribute (`w ∝ Q^0.5`, the standard hydraulic-geometry relation) because it is wanted for rendering. `width_coeff_m` is **not** rescaled with the radius: the relation is physical, and `Q` already carries the smaller basins — a 100 km² catchment delivers what a 100 km² catchment delivers, whatever planet it is on.
 
@@ -632,6 +707,33 @@ Temperature, three-cell wind, and precipitation as a steady-state advection-reac
 Also note what does *not* work as a test: comparing the p90/p10 spread of precipitation with and without relief. Flat terrain gives a **wider** spread, because without orographic rain the interiors go bone dry and p10 collapses.
 
 **The circulation must meander.** Perfectly zonal bands put the four zero-wind latitudes on exact circles, and they showed up in the output as ruler-straight stripes of anomalous rainfall — plainly visible in the biome map as a dark line along the equator. Perturbing the band latitudes with low-frequency noise (standing in for Rossby waves) drops the equatorial stripe from 2.05× its neighbours to 1.61×, and a wet ITCZ at that ratio is physically correct anyway. It costs some of the orographic signal, because a less consistent wind direction makes the upwind/downwind comparison noisier.
+
+**The output distribution is twice as wide as Earth's, the obvious diagnosis is wrong, and no knob fixes it.** Land rainfall comes out with a log₁₀ standard deviation of 0.83 against Earth's ~0.45, and the wettest 5% of land takes **47.5% of all land rain** where Earth is nearer 15%.
+
+The natural suspect is the convergence zones — the saturation cap above exists precisely because convergent flow concentrates moisture — and it is not them. The wettest 5% of land has a median incoming advection weight of **1.001** against **0.999** for the other 95%: identical, and only 11.9% of those cells are even saturated. A `convective_efficiency` factor scaling the overflow was written and measured before being reverted; a tenfold change moved log₁₀ sd from 0.837 to 0.823.
+
+What the tail is instead is the two *intended* mechanisms multiplying. The wettest cells hold 5.3× the moisture of the rest **and** sit where the ascent factor is ~1 rather than at `subsidence_floor`. Wet-and-ascending against dry-and-subsiding is a product, not a sum, so the spread is the direct consequence of the three-cell circulation being the only thing shaping rainfall. Every knob on it trades one Earth comparison for another:
+
+| | log₁₀ sd | land median | rain in wettest 5% | |
+|---|---|---|---|---|
+| shipped | 0.833 | 321 mm | 47.5% | |
+| `background_rainout_km` ×2 | 1.048 | 264 mm | 55.0% | drier median, fatter tail |
+| `background_rainout_km` ×0.5 | 1.072 | 321 mm | 42.1% | |
+| `eddy` 0.07 → 0.70 | 0.916 | 231 mm | 51.9% | narrower, median falls |
+| `land_recycling` 0.85 | 1.047 | 357 mm | 42.6% | mild, and fights the shadow |
+| `iterations` 400 → 1200 | 1.055 | 317 mm | 47.0% | converged; not a solver artifact |
+
+(The single-solve figures run wider than the shipped 0.833 because averaging four seasons compresses the distribution.) This is the same limit as the missing desert belt below: a surface-only model has no aloft.
+
+**What can be fixed is the anchor, and it was set on the wrong statistic.** Absolute depths are not derivable from this model, so the anchor is a free choice — and the mean was the wrong free choice, because with a tail that heavy, pinning the mean at Earth's 1000 mm divided everyone else down to a median of 321 mm where Earth's is ~600. Half the world was arid by construction. Judged on Köppen's arid share, which is what actually reads absolute millimetres:
+
+| anchor | mean 1000 | median 450 | median 600 | median 750 |
+|---|---|---|---|---|
+| Köppen B (Earth 30%) | 41.3% | 35.4% | **30.5%** | 27.0% |
+| tropical rainforest (Earth 11%) | ~7% | 11% | 15% | 18% |
+| runoff ratio R/P (Earth ~0.40) | 0.59 | 0.66 | 0.72 | 0.76 |
+
+600 mm ships because it is Earth's figure, not because it scored best. The costs are the shape showing through: the wet tail overshoots the rainforest share, and a heavy-tailed rainfall runs off more efficiently than an even one, so R/P drifts further from Earth. One wrinkle worth knowing — the seasonal path normalises each of its four solves and the median is not linear, so averaging four fields that each read 600 mm gave a year reading 803. The year is re-anchored after averaging and the same factor carried into the season stack, which leaves the seasonal *shape* Köppen reads untouched.
 
 **Two limitations, recorded rather than papered over:**
 

@@ -233,7 +233,28 @@ class ClimateParams:
     land_recycling: float = 0.70
     saturation_gain: float = 0.06         # how fast warm air holds more water, per degC
     iterations: int = 400
-    target_mean_precip_mm: float = 1000.0  # Earth's land average, for the final scaling
+    # Anchor for the final scaling. Earth's land MEDIAN, and the median is the point.
+    #
+    # This model produces a pattern, not depths, so the anchor is a free choice -- and the
+    # mean is the wrong free choice, because this pattern has a very heavy wet tail. The
+    # wettest 5% of land takes 47.5% of all the rain that falls on land, against roughly
+    # 15% on Earth, so pinning the mean at Earth's 1000 mm divided everyone else down to a
+    # median of 321 mm where Earth's is ~600. Half the world was arid by construction.
+    #
+    # Judged on the classification, which is what actually reads absolute millimetres.
+    # Koppen arid share against Earth's 30%, on one n=128 world:
+    #
+    #   anchor       mean 1000   med 450   med 600   med 750
+    #   Koppen B        41.3%     35.4%     30.5%     27.0%
+    #   tropical rf     ~7%        11%       15%       18%     (earth 11%)
+    #   runoff R/P       0.59      0.66      0.72      0.76    (earth ~0.40)
+    #
+    # 600 is Earth's figure rather than the one that scored best, and B lands on 30.5%.
+    # The costs are real and are the SHAPE showing through: the wet tail overshoots the
+    # rainforest share, and runoff ratio drifts further from Earth because a heavy-tailed
+    # rainfall runs off more efficiently than an even one. No anchor fixes that; see the
+    # note on why the shape does not respond to tuning in `_advect_step`.
+    target_median_precip_mm: float = 600.0
 
 
 @dataclasses.dataclass
@@ -945,6 +966,36 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
     in convergence zones: measured 1.3e7 mm/yr before this was added. Capping at the
     Clausius-Clapeyron capacity bounds the operator and supplies the mechanism that makes
     convergence zones like the ITCZ rain heavily rather than diverge.
+
+    THE OUTPUT DISTRIBUTION IS TWICE AS WIDE AS EARTH'S AND NOTHING HERE FIXES IT. Land
+    rainfall comes out with a log10 standard deviation of 0.83 against Earth's ~0.45, and
+    the wettest 5% of land takes 47.5% of all land rain against roughly 15%. Recorded here
+    because the obvious diagnosis is wrong and the obvious knobs do not work.
+
+    It is NOT convergence. The wettest 5% of land has a median incoming advection weight of
+    1.001 against 0.999 for the other 95% -- identical -- and only 11.9% of those cells are
+    even saturated. A `convective_efficiency` factor scaling the overflow above was written
+    and measured before being reverted: a tenfold change moved log10 sd 0.837 -> 0.823.
+    Nothing above depends on it, so the surplus is not where the tail rain comes from.
+
+    What the tail is instead is the two intended mechanisms multiplying. The wettest cells
+    hold 5.3x the moisture of the rest AND sit where `rainout_factor` is ~1 rather than at
+    `subsidence_floor`; wet-and-ascending against dry-and-subsiding is a product, not a sum.
+    So the spread is the three-cell circulation being the only thing that shapes rainfall,
+    and every knob on it trades one Earth comparison for another. Measured on one world
+    (log10 sd, land median mm, share of rain in the wettest 5%):
+
+        shipped                  0.833   321   47.5%
+        background_rainout 2x    1.048   264   55.0%      drier median, fatter tail
+        background_rainout 0.5x  1.072   321   42.1%
+        eddy 0.07 -> 0.70        0.916   231   51.9%      narrower, but median falls
+        land_recycling 0.85      1.047   357   42.6%      mild, and fights the shadow
+        iterations 400 -> 1200   1.055   317   47.0%      converged; not a solver artifact
+
+    (The single-solve figures run wider than the shipped 0.833 because averaging the four
+    seasons compresses the distribution.) This is the same limit already recorded at the
+    top of this module: a surface-only model has no aloft. The anchor is chosen to make the
+    best of it -- see `target_median_precip_mm` -- and the shape is left alone.
     """
     n = moisture.shape[0]
     k = nbr.shape[1]
@@ -1017,11 +1068,28 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
         moisture, new_m = new_m, moisture
 
     # Scale to a realistic annual total. Absolute units are not derivable from this model;
-    # what it produces is a spatial pattern, and the pattern is what Stage 4 needs.
-    land_mean = precip[land_mask].mean() if land_mask.any() else precip.mean()
-    if land_mean > 0:
-        precip *= p.target_mean_precip_mm / land_mean
+    # what it produces is a spatial pattern, and the pattern is what Stage 4 needs. The
+    # anchor is the area-weighted land MEDIAN, not the mean, because the mean here is a
+    # statistic of the wet tail rather than of the world -- see `target_median_precip_mm`.
+    ref = _area_median(precip, grid.area, land_mask)
+    if ref > 0:
+        precip *= p.target_median_precip_mm / ref
     return precip.astype(np.float32), moisture.astype(np.float32)
+
+
+def _area_median(values, area, mask):
+    """Area-weighted median over `mask`. Cell areas vary, so a plain median is wrong."""
+    v = np.asarray(values, dtype=np.float64)
+    a = np.asarray(area, dtype=np.float64)
+    if mask is not None and np.any(mask):
+        v, a = v[mask], a[mask]
+    if v.size == 0:
+        return 0.0
+    order = np.argsort(v)
+    cum = np.cumsum(a[order])
+    if cum[-1] <= 0:
+        return 0.0
+    return float(np.interp(0.5 * cum[-1], cum, v[order]))
 
 
 @njit(cache=True, parallel=True)
@@ -1116,9 +1184,22 @@ def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None) 
                                mean_insol=mean_insol) for d in decls]
 
     t = np.mean([s.temperature_c for s in seasons], axis=0).astype(np.float32)
-    precip = np.mean([s.precipitation_mm for s in seasons], axis=0).astype(np.float32)
+    precip = np.mean([s.precipitation_mm for s in seasons], axis=0)
+    stack_p = np.stack([s.precipitation_mm for s in seasons]).astype(np.float64)
+
+    # Re-anchor on the ANNUAL field. Each solve normalises its own median, and the median
+    # is not linear, so averaging four seasons that each read 600 mm does not give a year
+    # that reads 600 -- measured 803 mm, a third high. Rescaling the year and carrying the
+    # same factor into the season stack fixes the anchor without touching the seasonal
+    # SHAPE, which is what Koppen reads.
+    ref = _area_median(precip, grid.area, land_mask)
+    if ref > 0:
+        scale = p.target_median_precip_mm / ref
+        precip = precip * scale
+        stack_p = stack_p * scale
+    precip = precip.astype(np.float32)
+    stack_p = stack_p.astype(np.float32)
     stack_t = np.stack([s.temperature_c for s in seasons])
-    stack_p = np.stack([s.precipitation_mm for s in seasons])
     # The seasonal swing is now measured rather than modelled from coast distance alone.
     seasonality = ((stack_t.max(axis=0) - stack_t.min(axis=0)) * 0.5).astype(np.float32)
 

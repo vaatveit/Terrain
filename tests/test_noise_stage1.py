@@ -291,3 +291,48 @@ def test_ocean_is_the_connected_sea_not_everything_below_the_datum(g):
     basins = c.land_mask & (c.elevation <= 0)
     assert basins.any(), "no inland basins found -- this seed used to produce 40"
     assert 0.001 < g.area[basins].sum() / g.area[c.land_mask].sum() < 0.2
+
+
+def test_reflood_lets_the_sea_into_a_carved_trough(g):
+    """The land mask is not a constant of the pipeline.
+
+    Stage 1 solves the coastline and Stages 2 and 5 then move the surface underneath it.
+    Glacial erosion is why it matters: ice is driven by its own surface slope and gouges
+    below its outlet, which is what carves a fjord, and the water then has to be let in.
+    Measured after a full n=128 run, 20.9% of land sat below the datum with 99.9% of that
+    connected to the sea -- median depth 106 m at median latitude 63 degrees.
+
+    Both halves are asserted, because the second is what stops this being a plain
+    threshold: a trough joined to the sea floods, and a hole that is not joined to the sea
+    stays land and becomes Stage 6's problem.
+    """
+    nbr = np.ascontiguousarray(g.neighbours)
+    labels = np.empty(g.cell_count, dtype=np.int32)
+    stack = np.empty(g.cell_count, dtype=np.int32)
+    crust = stage1.generate_crust(g, seed=2)
+    land = crust.land_mask
+    z = crust.elevation.copy()
+
+    # A trough cut from a coastal cell inland, and a closed hole in the interior.
+    coast = np.flatnonzero(land & (nbr >= 0).any(axis=1)
+                           & np.isin(nbr, np.flatnonzero(~land)).any(axis=1))
+    trough = [int(coast[0])]
+    for _ in range(4):
+        nxt = [int(j) for j in nbr[trough[-1]] if j >= 0 and land[j] and j not in trough]
+        if not nxt:
+            break
+        trough.append(nxt[0])
+    z[trough] = -300.0
+
+    # Genuinely interior: every neighbour is land and well above the datum. "Highest land
+    # cell" is not the same thing and picked a coastal peak with ocean on two sides, so the
+    # hole drained straight out to sea.
+    ringed = np.array([(nbr[i] >= 0).all() and bool((crust.elevation[nbr[i]] > 50).all())
+                       for i in range(g.cell_count)])
+    interior = int(np.flatnonzero(land & ringed)[0])
+    z[interior] = -300.0
+
+    new_land = stage1.reflood(z, nbr, g.area, labels, stack)
+    assert not new_land[trough[0]], "a trough joined to the sea must flood"
+    assert new_land[interior], "a closed hole must stay land for Stage 6 to fill"
+    assert new_land[land & (z > 0)].all(), "ground above the datum is still land"

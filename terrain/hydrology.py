@@ -95,13 +95,31 @@ def potential_evapotranspiration(temperature_c, p: HydrologyParams):
 
 
 def runoff_mm(precipitation_mm, temperature_c, p: HydrologyParams):
-    """Precipitation minus what the land gives back to the air.
+    """Precipitation minus what the land gives back to the air, on the Budyko curve.
 
-    Actual evapotranspiration cannot exceed either the water available or the atmospheric
-    demand, so AET = min(P, PET) and runoff is whatever survives that.
+        AET = P / sqrt(1 + (P/PET)^2)        (Turc-Pike)
+
+    The obvious form, AET = min(P, PET), is wrong in a way that matters here: it puts a
+    KINK at P = PET and hands back exactly zero runoff everywhere drier than that. Measured
+    on an n=128 world, that was 59% of all land -- 92% of the 15-30 degree belt, 84% of
+    30-45, and 65% of the tropics -- so the subtropics carried no rivers at all, not thin
+    ones. Real catchments do not work that way: rain arrives in events, and some of it runs
+    off before the atmosphere can take it back, however arid the annual means look.
+
+    Turc-Pike is the standard smooth alternative and has no free parameter. It approaches
+    both physical limits correctly -- AET -> PET when water is plentiful, AET -> P when it
+    is not -- but reaches them asymptotically, so runoff is small in a desert instead of
+    identically zero. Same world: zero-runoff land 59% -> 0%, mean runoff 530 -> 600 mm.
+
+    That the mean runoff RISES while the deserts get their trickle back is worth reading
+    correctly. It is not extra water; this pipeline already produces more land runoff than
+    Earth (600 mm against ~315). What it has is the wrong distribution -- see the note on
+    `convective_efficiency` in ClimateParams -- and this function is downstream of that.
     """
     pet = potential_evapotranspiration(temperature_c, p)
-    return np.maximum(np.asarray(precipitation_mm, dtype=np.float64) - pet, 0.0)
+    pr = np.maximum(np.asarray(precipitation_mm, dtype=np.float64), 0.0)
+    ratio = pr / np.maximum(pet, 1e-9)
+    return np.maximum(pr - pr / np.sqrt(1.0 + ratio * ratio), 0.0)
 
 
 @njit(cache=True)

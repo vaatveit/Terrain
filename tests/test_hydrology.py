@@ -29,14 +29,28 @@ def test_pet_rises_with_temperature():
     assert pet[3] < p.pet_max_mm
 
 
-def test_runoff_is_precipitation_minus_evapotranspiration():
+def test_runoff_follows_the_budyko_curve_and_never_reaches_zero():
+    """The kink is the thing being tested against.
+
+    AET = min(P, PET) hands back exactly zero runoff everywhere drier than P = PET, which
+    on a generated world was 59% of all land -- the whole subtropical belt carrying no
+    rivers at all rather than thin ones. Turc-Pike approaches the same two limits but
+    asymptotically, so arid ground yields a trickle instead of nothing.
+    """
     p = hydrology.HydrologyParams()
-    t = np.array([10.0, 10.0, 10.0])
-    r = hydrology.runoff_mm(np.array([2000.0, 600.0, 100.0]), t, p)
+    t = np.full(4, 10.0)
+    pr = np.array([4000.0, 2000.0, 600.0, 100.0])
+    r = hydrology.runoff_mm(pr, t, p)
     pet = hydrology.potential_evapotranspiration(t, p)[0]
-    assert r[0] == pytest.approx(2000.0 - pet)
-    assert r[2] == 0.0, "arid ground yields no runoff, never negative"
-    assert (r >= 0).all()
+
+    assert (r >= 0).all() and (r <= pr).all(), "runoff is bounded by 0 and P"
+    assert (np.diff(r) < 0).all(), "wetter ground yields more runoff"
+    # Arid: strictly positive, and far below what the wet end yields.
+    assert 0.0 < r[3] < 0.05 * pr[3], f"arid runoff {r[3]:.1f} mm is not a trickle"
+    # Wet: PET is satisfied and the rest runs off, so the kinked form is recovered.
+    assert r[0] == pytest.approx(pr[0] - pet, rel=0.05)
+    # Cold ground has no demand at all, so nearly everything runs off.
+    assert hydrology.runoff_mm(np.array([600.0]), np.array([-20.0]), p)[0] > 590.0
 
 
 # --------------------------------------------------------------------------------------

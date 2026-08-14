@@ -212,6 +212,7 @@ def test_diffusion_conserves_mass_and_smooths():
     rng = np.random.default_rng(0)
     z = rng.standard_normal(g.cell_count) * 100.0
     not_fixed = np.zeros(g.cell_count, dtype=np.bool_)
+    no_lake = np.zeros(g.cell_count, dtype=np.bool_)
     dz = np.empty(g.cell_count)
 
     # Diffusion is explicit and therefore CONDITIONALLY stable, unlike the implicit stream
@@ -222,7 +223,7 @@ def test_diffusion_conserves_mass_and_smooths():
     total_before = float((z * g.area).sum())
     for _ in range(20):
         stage2.hillslope_diffusion(z, g.neighbours, g.edge_len, g.arc_dist, g.area,
-                                   d_dt, 1.0, not_fixed, dz)
+                                   d_dt, 1.0, not_fixed, no_lake, dz)
         z = z + dz
 
     assert np.isfinite(z).all()
@@ -237,12 +238,13 @@ def test_diffusion_blows_up_past_the_stability_limit():
     rng = np.random.default_rng(0)
     z = rng.standard_normal(g.cell_count) * 100.0
     not_fixed = np.zeros(g.cell_count, dtype=np.bool_)
+    no_lake = np.zeros(g.cell_count, dtype=np.bool_)
     dz = np.empty(g.cell_count)
 
     d_dt = 20.0 * float(g.area.min()) * 1e6 / 6.0  # far past the limit
     for _ in range(20):
         stage2.hillslope_diffusion(z, g.neighbours, g.edge_len, g.arc_dist, g.area,
-                                   d_dt, 1.0, not_fixed, dz)
+                                   d_dt, 1.0, not_fixed, no_lake, dz)
         z = z + dz
     assert z.var() > 1e6 * 100.0**2, "expected divergence past the explicit stability limit"
 
@@ -280,6 +282,7 @@ def test_diffusion_does_real_work_at_100_m_cells_but_must_be_sub_cycled():
     z[is_ocean] = 0.0
     relief = float(z[land].max() - z[land].min())
     dz = np.empty(g.cell_count)
+    no_lake = np.zeros(g.cell_count, dtype=np.bool_)
 
     n_sub = stage2.diffusion_substeps(g.neighbours, g.edge_len, g.arc_dist, g.area,
                                       0.05, 0.5e6)
@@ -292,7 +295,7 @@ def test_diffusion_does_real_work_at_100_m_cells_but_must_be_sub_cycled():
     lo, hi = float(z.min()), float(z.max())
 
     stage2.hillslope_diffusion(z, g.neighbours, g.edge_len, g.arc_dist, g.area,
-                               0.02, 0.5e6, fixed, dz)
+                               0.02, 0.5e6, fixed, no_lake, dz)
     raw = z + dz
     assert raw.min() < lo - 1.0 or raw.max() > hi + 1.0, (
         "a fluvial dt in one explicit step should violate the maximum principle")
@@ -300,7 +303,7 @@ def test_diffusion_does_real_work_at_100_m_cells_but_must_be_sub_cycled():
     zs = z.copy()
     for _ in range(n_sub):
         stage2.hillslope_diffusion(zs, g.neighbours, g.edge_len, g.arc_dist, g.area,
-                                   0.02, 0.5e6 / n_sub, fixed, dz)
+                                   0.02, 0.5e6 / n_sub, fixed, no_lake, dz)
         zs += dz
     assert zs.min() >= lo - 1e-6 and zs.max() <= hi + 1e-6, (
         "sub-cycled diffusion must respect the maximum principle")
@@ -408,3 +411,113 @@ def test_same_seed_reproduces_bit_for_bit():
     a = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=60)
     b = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=60)
     assert np.array_equal(a.elevation, b.elevation)
+
+
+# --------------------------------------------------------------------------------------
+# Closed basins: what the erosion loop is allowed to do to them
+# --------------------------------------------------------------------------------------
+
+
+def _depression_area(g, z, is_ocean):
+    """Fraction of land the depression fill has to raise."""
+    from terrain import hydrology
+    zf = np.ascontiguousarray(z, dtype=np.float32)
+    fr = flow.route(zf, np.ascontiguousarray(g.neighbours),
+                    np.ascontiguousarray(g.arc_dist),
+                    np.ascontiguousarray(g.area.astype(np.float32)), is_ocean,
+                    metrics=False)
+    closed = fr.filled > zf + np.float32(1e-3)
+    a = g.area.astype(np.float64)
+    return float(a[closed].sum() / a[~is_ocean].sum())
+
+
+def test_closed_basins_survive_erosion():
+    """The reason lakes existed only as a unit-test fixture.
+
+    Two terms erase a closed depression, and each one alone is enough, so exempting either
+    on its own looks like it barely helps. The stream-power update snaps any cell below its
+    receiver straight up to it -- one step, not a slow infill -- and hillslope diffusion
+    pulls the rim down into the hole. Measured on the Stage 1 crust at n=128, closed
+    depressions are 19.6% of land before erosion and after 200 steps: 0.002% with both
+    terms, 0.854% exempting diffusion only, 0.002% exempting the clamp only, 3.240%
+    exempting both. Stage 6 was finding two lakes on a whole world.
+
+    The comparison run here disables the exemption by passing an all-false mask through the
+    same kernels, so nothing but the exemption differs.
+    """
+    g = build_goldberg(64)
+    crust = stage1.generate_crust_tectonic(g, seed=1)
+    is_ocean = ~crust.land_mask
+
+    kept = stage2.evolve(g, crust.elevation, crust.uplift, is_ocean, n_steps=120)
+    with_exemption = _depression_area(g, kept.elevation, is_ocean)
+
+    real_diffuse, real_solve = stage2.hillslope_diffusion, stage2.solve_stream_power
+    try:
+        stage2.hillslope_diffusion = (
+            lambda z, nb, e, a, ar, D, dt, fx, il, dz:
+            real_diffuse(z, nb, e, a, ar, D, dt, fx, np.zeros_like(il), dz))
+        stage2.solve_stream_power = (
+            lambda z, o, r, s, ac, u, dt, K, m, n, fx, il, ni, out:
+            real_solve(z, o, r, s, ac, u, dt, K, m, n, fx, np.zeros_like(il), ni, out))
+        erased = stage2.evolve(g, crust.elevation, crust.uplift, is_ocean, n_steps=120)
+    finally:
+        stage2.hillslope_diffusion, stage2.solve_stream_power = real_diffuse, real_solve
+    without = _depression_area(g, erased.elevation, is_ocean)
+
+    assert with_exemption > 10.0 * max(without, 1e-6), (
+        f"closed basins are {with_exemption:.4%} of land with the exemption and "
+        f"{without:.4%} without -- the exemption is not doing anything")
+    assert with_exemption > 0.002, (
+        f"only {with_exemption:.4%} of land holds a closed basin; Earth's lake cover is ~1%")
+
+
+def test_diffusion_conserves_mass_around_a_lake():
+    """The lake mask is a no-flux boundary, not a sink.
+
+    An edge is skipped whenever EITHER end is in a lake, and that test is symmetric, so the
+    cells outside still conserve mass exactly among themselves. Getting this wrong -- zeroing
+    dz inside the lake but letting the rim keep its flux -- leaks mass across the boundary
+    and would quietly drain or inflate the world.
+    """
+    g = build_goldberg(48)
+    rng = np.random.default_rng(4)
+    z = rng.standard_normal(g.cell_count) * 100.0
+    not_fixed = np.zeros(g.cell_count, dtype=np.bool_)
+    in_lake = np.zeros(g.cell_count, dtype=np.bool_)
+    in_lake[rng.choice(g.cell_count, g.cell_count // 10, replace=False)] = True
+    dz = np.empty(g.cell_count)
+
+    outside = ~in_lake
+    before = float((z[outside] * g.area[outside]).sum())
+    d_dt = 0.05 * float(g.area.min()) * 1e6 / 6.0
+    for _ in range(20):
+        stage2.hillslope_diffusion(z, g.neighbours, g.edge_len, g.arc_dist, g.area,
+                                   d_dt, 1.0, not_fixed, in_lake, dz)
+        z = z + dz
+    assert (dz[in_lake] == 0.0).all(), "lake cells must not diffuse"
+    assert float((z[outside] * g.area[outside]).sum()) == pytest.approx(before, rel=1e-6)
+
+
+def test_subsidence_is_bounded_by_a_total_not_run_as_a_rate():
+    """Erosion balances uplift; nothing balances subsidence once the clamp is gone.
+
+    Deposition is off, so a graben subsiding at a constant rate just keeps going: 16.9
+    m/Myr over a 300 Myr run is 5,063 m, and Stage 6 reported a lake 5,265 m deep on a
+    world whose highest peak was 361 m. Rift subsidence is finite in nature -- McKenzie
+    stretching gives a basin a total, not a perpetual rate -- so the bound is a total.
+    """
+    g = build_goldberg(48)
+    crust = stage1.generate_crust(g, seed=5)
+    is_ocean = ~crust.land_mask
+    # One patch of pure subsidence, nothing else, so the only thing moving z is the rift.
+    uplift = np.zeros(g.cell_count, dtype=np.float32)
+    sinking = crust.land_mask & (g.lat > 0)
+    uplift[sinking] = -50.0
+    p = stage2.LemParams(K=0.0, D=0.0, max_subsidence_m=200.0)
+
+    z = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=100).elevation
+    drop = (crust.elevation - z)[sinking]
+    # 50 m/Myr x 100 steps x 0.5 Myr = 2,500 m if unbounded.
+    assert drop.max() == pytest.approx(200.0, abs=1.0), (
+        f"deepest subsidence {drop.max():.0f} m against a 200 m budget")

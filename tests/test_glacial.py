@@ -136,8 +136,13 @@ def test_melting_out_stops_the_glacier():
 def test_erosion_is_confined_to_glaciated_ground(world):
     """The one signature that holds up: ice lowers cold terrain and nothing else.
 
-    Measured at n=128: 44.9 m of mean lowering under ice against 0.00 m off it, with only
-    six unglaciated cells moving more than a metre at all.
+    Measured at n=128: 36.9 m of mean lowering under ice against 0.03 m off it, a ratio of
+    0.00084, with 0.34% of unglaciated cells moving more than a metre at all.
+
+    The lowering figure used to read 44.9 m at a `K` seven times higher, which shows how
+    little this test constrains the calibration -- the confinement ratio barely moves with
+    `K`, because `K` sets how deep the ice cuts and not where it forms. What actually pinned
+    `K` was the share of the world's relief the ice removes; see `GlacialParams.K`.
 
     NOT asserted here: that glaciation flattens the channel long profile. It is the
     textbook expectation and it does not survive measurement -- concavity in glaciated

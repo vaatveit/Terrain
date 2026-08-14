@@ -246,6 +246,7 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | `K` | 1.2e-6 | **erodibility — sets relief, not shape.** Peak elevation scales as `U/K`. No longer resolution-dependent (cell size is fixed), but still different for coupled runs; see below |
 | `D` | 0.02 | hillslope diffusion, m²/yr. **Now a first-class term** — it produces a real hillslope regime, and must be sub-cycled (`diffusion_substeps`) because the explicit stability limit fell from 239 Myr to 25 kyr |
 | `G` | 0.0 | sediment deposition (Davy–Lague). 0 = pure detachment-limited |
+| `max_subsidence_m` | 500 | **total** subsidence one cell may accumulate over the run. Erosion balances uplift; nothing balances subsidence with `G = 0`, so a constant rate over 300 Myr drove a graben to 5,063 m. Rift subsidence is finite in nature, so the bound is a total rather than a smaller rate |
 | `dt_myr` | 0.5 | timestep. The implicit solver is unconditionally stable, so this can be large |
 | `fill_every` | 1 | priority-flood cadence. 1 is affordable |
 
@@ -286,7 +287,7 @@ for `n=1`.
 | `saturation_gain` | 0.06 | how fast warm air holds more water |
 | `evaporation` | 1.0 | ocean source strength |
 | `iterations` | 400 | fixed-point sweeps |
-| `target_mean_precip_mm` | 1000 | final scaling; the model gives a pattern, not absolute depths |
+| `target_median_precip_mm` | 600 | final scaling, on Earth's land **median**; the model gives a pattern, not absolute depths, and its wet tail makes the mean a statistic of the tail rather than of the world |
 | `ekman_deg` | 45 | deflection of the surface current from the wind; right in the north, left in the south |
 | `current_scale_km` | 10 | distance a current carries its heat anomaly (981 km on Earth) |
 | `maritime_scale_km` | 5 | how far inland maritime air keeps that anomaly (491 km on Earth) |
@@ -313,17 +314,33 @@ n=785, where they were tuned.
 |---|---|---|
 | `freeze_c` | −2.0 | ice accumulates below this mean annual temperature |
 | `balance_per_degc` | 0.35 | metres of ice per year per degree below freezing |
-| `K` / `m` / `n` | 0.02 / 0.30 / 1.0 | abrasion law on ice flux. `m` is below the fluvial value on purpose |
+| `K` / `m` / `n` | 0.003 / 0.30 / 1.0 | abrasion law on ice flux. `m` is below the fluvial value on purpose. `K` was 0.02 — inside the published 0.1–10 mm/yr band, and still removing 34% of the world's total relief in 300 kyr, because the band spans two orders of magnitude and this world's relief budget is 432 m, not several km |
 | `slope_baseline_km` | 1.22 | **driving slope is regional, not local.** With a local slope, overdeepenings are impossible rather than merely rare. Cell-scale (12 cells of flow path) |
 | `min_flux_km3_per_yr` | 0.01 | below this it is snow, not a glacier |
 | `steps` / `dt_yr` | 60 / 5000 | 300 kyr of glaciation |
 | `max_incision_per_step_m` | 25 | explicit-scheme guard |
 
+### Stages 5b/5c — reflood and re-solve · no parameters
+
+**The coastline is not a constant of the pipeline.** Stage 1 solves the land mask; Stages 2
+and 5 then move the surface underneath it by hundreds of metres. Ice is driven by its own
+surface slope and gouges below its outlet — that is what carves a fjord — and the water has
+to be let in afterwards or the map carries dry ground below sea level. `stage1.reflood`
+re-applies Stage 1's two rules to the eroded surface: below the datum is water, and ocean is
+the largest connected body of it. A trough joined to the sea floods; a hole that is not
+stays land and becomes a lake candidate for Stage 6. Land goes 29.6% → 25.4% at n=128.
+
+Stage 5c then re-solves the seasonal climate on that coastline, because everything
+downstream reads absolute millimetres and degrees against the new mask. It does not feed
+back into erosion — Stages 2 and 5 have already run — and Stage 5 deliberately keeps the
+*pre*-reflood temperature, since that is the coastline the ice grew on. Cost is one extra
+`compute_seasons` (four solves).
+
 ### Stage 6 — hydrology · `hydrology.HydrologyParams`
 
 | parameter | default | effect |
 |---|---|---|
-| `pet_base_mm` / `pet_linear` / `pet_cubic` | 300 / 25 / 0.05 | Thornthwaite-style potential evapotranspiration from temperature |
+| `pet_base_mm` / `pet_linear` / `pet_cubic` | 300 / 25 / 0.05 | Thornthwaite-style potential evapotranspiration from temperature. Runoff is `P − AET` on the **Turc–Pike** curve, `AET = P/sqrt(1 + (P/PET)²)`; the obvious `min(P, PET)` kinks at `P = PET` and gave 59% of land exactly zero runoff |
 | `endorheic_margin_m` | 2 | how far below spill a lake must settle to count as terminal |
 | `min_lake_area_km2` | 0.0415 | below this a depression is not a lake (~5 cells) |
 | `channel_threshold_km3_per_yr` | 5.2e-5 | discharge defining a river (~6 cells of drainage) |
@@ -479,8 +496,12 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
 
 - **No subtropical desert belt from circulation.** Needs a vertical dimension the
   surface-only climate model does not have.
-- **Precipitation is dry-tailed** — land p25 is ~15 mm against Earth's ~250 — which makes
-  arid biomes over-represented (~30% of land against ~18%).
+- **Precipitation is over-dispersed** — log₁₀ sd 0.83 against Earth's ~0.45, with the
+  wettest 5% of land taking 47.5% of all land rain against roughly 15%. It is *not*
+  convergence (the wettest cells have the same incoming advection weight as everywhere
+  else) and no knob moves it; it is the ascent factor and the moisture field multiplying,
+  which is the same missing vertical dimension as the item above. The anchor is set on
+  Earth's land **median** rather than its mean to make the best of it.
 - **Biomes remain visibly zonal.** Adding arid classes outside the tropics widened the
   desert belt's latitude wander from 4.4° to 9.9°, but breaking the bands properly needs
   ocean-current heat transport and a seasonal cycle (for monsoons).
@@ -492,7 +513,15 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
 - **Concavity is resolution- and threshold-sensitive.** θ is 0.467–0.556 on the production
   world when fitted above the channel head, but 0.36 at n=384 and 0.392 if fitted from
   6 cells. Always state the threshold alongside the number.
-- **No endorheic basins** in the production world (222 lakes, none terminal), and hillslope
-  diffusion now actively fills shallow depressions, making them rarer than before.
+- **Endorheic basins are rare** — two of twelve lakes at n=128 — and Turc–Pike runoff
+  makes them rarer than the kinked balance did, by giving every catchment some inflow. The
+  logic is unit-tested on constructed basins.
+- **Glacial erosion drowns 14% of land** when the reflood pass lets the sea into what it
+  carved, against 1% with the ice switched off. `K` has been recalibrated down (0.49 →
+  0.12 mm/yr, 34% → 8.6% of the world's relief), which is most of the way, but the residual
+  is hypsometry rather than the glacial rate: median land elevation is about 10 m, so ground
+  lowered at all tends to go under.
+- **Köppen D is 7% of land against Earth's 24%.** Continental climates need winters this
+  world does not produce — the same relief and continentality shortfall as above.
 - **An Earth-sized ice sheet is larger than this world.** Continental glaciation is no
   longer something the model can express; 21% of land glaciates as alpine/polar ice.

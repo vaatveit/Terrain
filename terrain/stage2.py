@@ -38,6 +38,10 @@ from terrain import flow, noise
 SEC_PER_KM2 = 1.0e6   # km^2 -> m^2
 M_PER_KM = 1.0e3      # km    -> m
 YR_PER_MYR = 1.0e6
+# How far the depression fill has to raise a cell before it counts as under water rather
+# than as float32 round-off in the router. Matches Stage 6's tolerance, so the two stages
+# agree on which cells are lake bed.
+LAKE_TOL_M = 1.0e-3
 
 
 @dataclasses.dataclass
@@ -103,6 +107,26 @@ class LemParams:
     D: float = 0.02        # m^2/yr
     # Deposition (Davy & Lague 2009 style). 0 = pure detachment-limited.
     G: float = 0.0
+    # Total subsidence one cell may accumulate over the whole run, metres.
+    #
+    # NOTHING ELSE BOUNDS IT. Uplift is balanced by erosion -- 100 m/Myr over a 300 Myr run
+    # is 30 km of uplift and the peaks come out at ~360 m -- but the process that balances
+    # subsidence is sediment infill, and deposition is off (G = 0 above). So a rift graben
+    # subsiding at 16.9 m/Myr simply keeps going: measured 5,063 m over 300 Myr, and Stage
+    # 6 duly reported a lake 5,265 m deep on a world whose highest peak is 361 m.
+    #
+    # This was latent until closed depressions were exempted from the stream-power clamp.
+    # The clamp used to snap every below-receiver cell back up to its receiver each step,
+    # which cancelled the subsidence as fast as it was applied -- so grabens stayed shallow
+    # for a reason that had nothing to do with tectonics, and the exemption that lets basins
+    # survive is also what let this run away.
+    #
+    # A total is the right shape for the bound rather than a smaller rate: rift subsidence
+    # IS finite. McKenzie stretching gives a basin a total subsidence set by how much the
+    # crust thinned, after which it stops. 500 m puts the deepest basin floors in the range
+    # real continental rifts occupy -- the Dead Sea at -430 m, Baikal's floor at -1,187 m --
+    # on top of whatever Stage 1 tectonics already dug.
+    max_subsidence_m: float = 500.0
     # Time stepping.
     dt_myr: float = 0.5
     fill_every: int = 1    # priority-flood cadence; 1 is affordable, see docs
@@ -111,7 +135,7 @@ class LemParams:
 
 @njit(cache=True)
 def solve_stream_power(z, order, rec, step_km, acc_km2, uplift_m, dt_yr,
-                       K, m, n, is_fixed, newton_iters, out):
+                       K, m, n, is_fixed, in_lake, newton_iters, out):
     """Implicit stream power, one pass in topological order.
 
     For n == 1 the discretisation is linear and solves exactly:
@@ -121,6 +145,15 @@ def solve_stream_power(z, order, rec, step_km, acc_km2, uplift_m, dt_yr,
     For n != 1 the same equation is nonlinear in z_i and needs a Newton iteration per node.
     That is the cost of choosing n != 1, and it is why n should be decided before the
     solver is written rather than after.
+
+    `in_lake` marks cells the depression fill had to raise -- lake bed rather than channel.
+    THEY MUST BE SKIPPED, and the reason is the clamp at the end of this function. A cell
+    inside a filled depression sits below its own receiver, and for such a cell the update
+    (zi + f*zr)/(1 + f) also lies below zr, so the clamp snaps it straight up to the
+    receiver in ONE step and the basin is gone. It is not a slow infill: measured on an
+    n=128 world, closed depressions are 19.6% of land on the Stage 1 crust and 0.006% after
+    ten steps. Skipping them costs nothing physically -- a lake bed has no channel to
+    incise, and basin infill is deposition, which is the G term.
     """
     n_cells = order.shape[0]
     for t in range(n_cells):
@@ -128,6 +161,9 @@ def solve_stream_power(z, order, rec, step_km, acc_km2, uplift_m, dt_yr,
         r = rec[i]
         if is_fixed[i] or r == i:
             out[i] = z[i]
+            continue
+        if in_lake[i]:
+            out[i] = z[i] + uplift_m[i] * dt_yr
             continue
 
         zi = z[i] + uplift_m[i] * dt_yr
@@ -158,7 +194,7 @@ def solve_stream_power(z, order, rec, step_km, acc_km2, uplift_m, dt_yr,
 
 @njit(cache=True, parallel=True)
 def hillslope_diffusion(z, nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr,
-                        is_fixed, dz):
+                        is_fixed, in_lake, dz):
     """Finite-volume Laplacian on the unstructured mesh.
 
         dz_i/dt = (D / A_i) * sum_j e_ij * (z_j - z_i) / L_ij
@@ -186,17 +222,30 @@ def hillslope_diffusion(z, nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr,
     hundred times the timestep. At 100 m cells it is 25,000 yr, twenty times SHORTER than
     the timestep. Call `diffusion_substeps` and sub-cycle; do not call this raw with a
     fluvial dt.
+
+    `in_lake` is a no-flux boundary, not a source term: cells inside a closed depression
+    neither diffuse nor are diffused into, because an edge is skipped whenever EITHER end
+    is in a lake. That test is symmetric, so mass is still conserved exactly over the cells
+    that remain. Creep does deliver sediment into a real basin, but that is deposition and
+    belongs to the G term; what this operator does instead is pull the rim down into the
+    hole and lift the floor, and it is quick enough to erase a 1.4 km-deep graben inside
+    ten steps. Diffusion is the SECOND of the two terms that do this -- see the `in_lake`
+    note in `solve_stream_power` for the first, and note that exempting either one alone
+    achieves little, because whichever is left fills the basin on its own (measured on the
+    Stage 1 crust at n=128, closed depressions after 200 steps: 0.002% of land shipped,
+    0.854% exempting diffusion only, 0.002% exempting the clamp only, 3.240% exempting
+    both).
     """
     n_cells = z.shape[0]
     k = nbr.shape[1]
     for i in prange(n_cells):
-        if is_fixed[i]:
+        if is_fixed[i] or in_lake[i]:
             dz[i] = 0.0
             continue
         total = 0.0
         for s in range(k):
             j = nbr[i, s]
-            if j < 0:
+            if j < 0 or in_lake[j]:
                 continue
             total += edge_len_km[i, s] * (z[j] - z[i]) / arc_dist_km[i, s]
         dz[i] = D * dt_yr * total / (area_km2[i] * SEC_PER_KM2)
@@ -337,6 +386,7 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
     uplift_m_per_yr = np.ascontiguousarray(np.maximum(u_all, 0.0), dtype=np.float64)
     subsidence_m_per_yr = np.ascontiguousarray(np.minimum(u_all, 0.0), dtype=np.float64)
     has_subsidence = bool((subsidence_m_per_yr < 0).any())
+    subsided_m = np.zeros(n_cells, dtype=np.float64)
 
     accum = area if discharge_weight is None else np.ascontiguousarray(
         discharge_weight, dtype=np.float32)
@@ -350,6 +400,7 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
     out = np.empty(n_cells, dtype=np.float64)
     dz = np.empty(n_cells, dtype=np.float64)
     qs = np.empty(n_cells, dtype=np.float64)
+    in_lake = np.zeros(n_cells, dtype=np.bool_)
     history = []
 
     t_start = time.perf_counter()
@@ -358,15 +409,24 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
         if fr is None or step % p.fill_every == 0:
             fr = flow.route(z.astype(np.float32), nbr, arc, accum, is_fixed,
                             metrics=False)
+            # Cells the fill had to raise are under water for this step. Both the fluvial
+            # solve and the hillslope term destroy closed basins if allowed to touch them.
+            in_lake = np.ascontiguousarray(
+                fr.filled.astype(np.float64) > z + LAKE_TOL_M)
 
         z_before = z.copy()
 
         solve_stream_power(z, fr.order, fr.rec, fr.step, fr.acc, uplift_m_per_yr,
-                           dt_yr, p.K, p.m, p.n, is_fixed, p.newton_iters, out)
+                           dt_yr, p.K, p.m, p.n, is_fixed, in_lake, p.newton_iters, out)
         z, out = out, z
 
         if has_subsidence:
-            z += np.where(is_fixed, 0.0, subsidence_m_per_yr * dt_yr)
+            # Bounded by a TOTAL, not run as an open-ended rate -- see `max_subsidence_m`.
+            drop = np.where(is_fixed, 0.0, subsidence_m_per_yr * dt_yr)
+            room = np.maximum(p.max_subsidence_m - subsided_m, 0.0)
+            drop = np.maximum(drop, -room)
+            subsided_m -= drop
+            z += drop
 
         if p.G > 0.0:
             erosion = np.maximum(z_before + uplift_m_per_yr * dt_yr - z, 0.0)
@@ -377,7 +437,8 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
 
         if p.D > 0.0:
             for _ in range(n_sub):
-                hillslope_diffusion(z, nbr, edge, arc, area, p.D, dt_sub, is_fixed, dz)
+                hillslope_diffusion(z, nbr, edge, arc, area, p.D, dt_sub, is_fixed,
+                                    in_lake, dz)
                 z += dz
 
         z[is_fixed] = z_before[is_fixed]

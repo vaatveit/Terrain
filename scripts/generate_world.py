@@ -79,6 +79,31 @@ def main():
               f"{moved[land & gres.glaciated].mean():.0f} m mean lowering under ice")
         z = gres.elevation
 
+    # The coastline is not a constant of the pipeline. Erosion -- glacial erosion above
+    # all, which cuts below its own outlet -- leaves ground below the datum that is joined
+    # to the sea, and it has to be let in or those are dry fjords.
+    print("[5b] reflood")
+    labels = np.empty(grid.cell_count, dtype=np.int32)
+    stack = np.empty(grid.cell_count, dtype=np.int32)
+    land = stage1.reflood(z, np.ascontiguousarray(grid.neighbours), grid.area,
+                          labels, stack)
+    is_ocean = ~land
+    print(f"    land {crust.land_fraction:.1%} -> "
+          f"{grid.area[land].sum() / grid.area.sum():.1%}")
+
+    # Re-solve the climate on the coastline that actually ships. Everything below reads
+    # absolute millimetres and degrees against the new mask, and the old fields were solved
+    # for a continent that is now part sea -- coast distance, the ocean moisture source and
+    # the sea-surface anomaly all move when a fifth of the land floods. This does NOT feed
+    # back into erosion: Stages 2 and 5 have run, so it is the reported climate that is
+    # being made consistent, not the landscape. Stage 5 therefore still sees the pre-reflood
+    # temperature, which is correct -- that is the coastline the ice grew on.
+    print("[5c] climate on the new coastline")
+    clim = climate.compute_seasons(grid, z, land)
+    print(f"    land mean {clim.temperature_c[land].mean():.1f} C, "
+          f"precip median "
+          f"{climate._area_median(clim.precipitation_mm, grid.area, land):,.0f} mm")
+
     print("[6] hydrology")
     hyd = hydrology.analyse(grid, z, is_ocean, clim.precipitation_mm, clim.temperature_c)
     endo = sum(1 for L in hyd.lakes if L["endorheic"])
