@@ -235,6 +235,29 @@ def test_currents_stay_in_the_sea_and_follow_the_shore(world):
             assert into[shore].max() < 1e-6, "current flows into the coast"
 
 
+def test_the_zonal_mean_is_continuous_in_latitude():
+    """The subtracted zonal mean must not be a staircase, or every band edge is a step.
+
+    This shipped broken and 201 tests missed it, because the step is tiny -- 0.11 C on
+    average -- and no assertion looked at continuity. It was plainly visible on the globe
+    instead: both classifications came out ruled with horizontal stripes, and a Fourier
+    transform of class fraction against latitude put them at 2.02 degrees, which is
+    `zonal_band_deg` exactly. A large desert interior sits near the arid threshold over its
+    whole area, so one step flips an entire band rather than scattered cells.
+    """
+    lat = np.linspace(-89.9, 89.9, 20001)
+    # A smooth profile plus per-cell noise, which is what a real field looks like.
+    values = 10.0 * np.sin(np.radians(lat)) + np.random.default_rng(0).standard_normal(lat.size)
+    _, per_cell = climate._band_mean(values, lat, np.ones_like(lat), 2.0)
+
+    jumps = np.abs(np.diff(per_cell))
+    span = per_cell.max() - per_cell.min()
+    # A staircase jumps by a full band-to-band difference in one step; an interpolation
+    # spreads that over a whole band. Anything above a percent of the range is a step.
+    assert jumps.max() < 0.01 * span, (
+        f"largest jump {jumps.max():.4f} against a range of {span:.2f} -- staircase")
+
+
 def test_the_anomaly_cannot_manufacture_heat(world):
     """The sweep gathers a weighted MEAN of its upwind neighbours, so the result is bounded
     by the extremes of the equilibrium profile it started from. `_advect_step` needed a
