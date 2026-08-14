@@ -416,6 +416,34 @@ The mechanism is the second-largest source of non-zonal temperature in the world
 
 Scaling elevation ×13 takes the lapse-rate term to 3.63 °C — more than every other non-zonal term combined — and zonality below 0.94. The bands are a symptom of a flat world, and fixing them is a Stage 1/2 vertical-scale question rather than a climate one.
 
+### Seasons, monsoons, and Köppen
+
+The second of the two named mechanisms. Stage 3 now solves **four points through the year** and reports their annual mean, so `coupled.run`, hydrology, biomes and the export all see the same fields they always did.
+
+**Four rather than two, for a reason that is not "more detail".** Four evenly spaced samples determine a two-harmonic Fourier series *exactly* — mean, annual and semiannual — so the twelve monthly values Köppen needs are an interpolation with no free parameters. Verified two ways: the reconstruction returns the samples to 1e-9, and the four-sample mean reproduces the tuned annual temperature profile to 0.21 °C on a 52 °C range.
+
+**In a memoryless model the sample dates matter more than the lag.** Declination is the only thing carrying the date into a steady-state solve, so two dates with the same sun give the same world — sampling the solstices and equinoxes yields *three* distinct seasons and a duplicate. The samples are offset from them for that reason. (An earlier version of this plan credited the thermal lag with separating the equinoxes; it does not. The lag is kept because it is true — seasons trail the sun by four to eight weeks — not because it rescues the fourth sample.)
+
+**Insolation uses the day-length term, not `cos(lat − declination)`.** The shortcut has no polar night: it gives the winter pole an ordinary winter and makes the summer pole merely warm, and Köppen's D and E classes turn on exactly that. The closed form gives the summer pole the highest daily insolation on the planet and the winter pole exactly zero.
+
+Two corrections were needed along the way, both found by measurement:
+
+- **The seasonal term is applied additively, not as a factor.** Scaling the annual profile by an insolation ratio leaves the poles with no seasons at all — `cos(lat)^1.5` is zero there, so no factor can move it — which deletes the one distinction the day-length term was added for. It is also left *unclipped*, so the seasons average back to the tuned profile exactly; clipping truncated the winter pole and pulled the polar annual mean about 5 °C above `t_pole_c`.
+- **Land and sea had to be given different heat capacities.** Rock follows the sun, water stores it, and that contrast *is* the monsoon. Without it the June land–sea contrast measured 0.58 °C with land running **colder** than the sea, the thermal low had nothing to form on, and the monsoon wind changed nothing at all — 32.5% of tropical coasts reversed with the term on or off.
+
+**A monsoon is a wind that turns round, and that is what is tested.** Band migration alone gives a wet season; the thermal low gives the reversal. It costs rain shadow, and the trade was measured rather than guessed:
+
+| `monsoon_c` | 0.00 | 0.10 | **0.20** | 0.30 | 0.60 |
+|---|---|---|---|---|---|
+| windward/leeward | 2.15× | 2.30× | **2.32×** | 1.91× | 1.41× |
+| tropical coast reversing | 32.5% | 34.3% | **38.7%** | 43.2% | 58.0% |
+
+0.20 ships: the best shadow of the five — better than switching the monsoon off, because a little seasonal steering makes each season's wind *more* consistent — while still moving the reversal.
+
+**One bug in this section is worth recording because it looked like a modelling failure and was not.** The rain shadow appeared to collapse to 1.08× under seasons. The cause was `compute_seasons` returning the *first season's* wind beside a *year's* rainfall, so anything asking which side of a ridge was upwind got a wind that blew for three months. Averaging every aggregate over the seasons took it to 1.48× — better than a single equinox solve. A latitude taper on the band migration was added while chasing this and did not fix it; it is kept on its own merits, since Earth's westerlies at 45° blow from the west in every month of the year.
+
+**Köppen lands alongside Whittaker, not instead of it.** Every biome share in this document is a Whittaker share and switching would silently invalidate the lot. The classes come out recognisably Earth-like with this pipeline's known biases showing plainly — arid classes at 45% of land against Earth's 31%, ice cap at 12% against 6%, and the continental classes short (Dfc 3.4% against 11.1%) because continentality is weak on a world whose median land cell is 1.2 km from the sea.
+
 **A resolution bug fell out of this.** Every transport constant here was a fraction lost *per advection step*, which is an e-folding length denominated in **cells, not kilometres**. The same `background_rainout = 0.012` reached 0.13 R at n=785 and **1.57 R at n=64** — moisture crossed a small test world entirely before decaying, so the fixtures were running different physics from production. They are now e-folding distances in world km, rescaled by radius like every other horizontal length, giving 0.1283 R at every resolution; the values chosen reproduce the old per-step numbers exactly at n=785, where they were tuned.
 
 **A subtropical desert belt appears in the biomes even though it is absent from the precipitation profile.** Stage 3 declines monotonically from the equator with no dip at 30°, yet the map has clear desert bands near ±20°. Whittaker's threshold is on temperature *and* rainfall jointly (T > 20 °C with P < 250 mm), so warm-and-moderately-dry ground classifies as desert without needing a rainfall minimum. Worth knowing before reading too much into it: the belt is real on the map but arrives for a different reason than it does on Earth.

@@ -66,7 +66,8 @@ class ExportResult:
 
 def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  drainage_km2=None, temperature_c=None, precipitation_mm=None,
-                 biome=None, flow_receiver=None, discharge=None, river_width_m=None,
+                 biome=None, koppen=None, flow_receiver=None, discharge=None,
+                 river_width_m=None,
                  lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
                  endorheic=None, lakes=None,
                  params=None, metrics_summary=None) -> ExportResult:
@@ -83,6 +84,10 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
     fields = {"elevation": elevation, "land_mask": land_mask.astype(np.uint8)}
     for name, arr in (("temperature_c", temperature_c),
                       ("precipitation_mm", precipitation_mm), ("biome", biome),
+                      # Alongside biome, not instead of it: Whittaker is what the renderer
+                      # colours by and what every tuned share in the docs is measured
+                      # against. Koppen is int8 because ocean is -1, not a code.
+                      ("koppen", koppen),
                       ("slope", slope), ("drainage_km2", drainage_km2),
                       # The flow tree, as cell ids rather than edge slots. A slot would need
                       # a sentinel for the terminating case; `rec[i] == i` gets it free, and

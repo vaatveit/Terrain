@@ -68,6 +68,141 @@ def test_seasonality_grows_inland(world):
 
 
 # --------------------------------------------------------------------------------------
+# Seasons
+# --------------------------------------------------------------------------------------
+
+
+def test_insolation_has_polar_night_and_midnight_sun():
+    """The day-length term, which is the whole reason this is not cos(lat - declination).
+
+    That shortcut gives the winter pole an ordinary winter and makes the summer pole merely
+    warm. Polar night is not a small correction to it -- it is zero insolation for months,
+    and Koppen's D and E classes turn on exactly that.
+    """
+    assert climate.daily_insolation(90.0, -23.44) == 0.0, "no polar night"
+    assert climate.daily_insolation(70.0, -23.44) == 0.0, "no polar night at the circle"
+    assert climate.daily_insolation(90.0, 0.0) == pytest.approx(0.0, abs=1e-9)
+
+    # Under the midnight sun the pole receives more in a day than anywhere else on Earth.
+    pole = climate.daily_insolation(90.0, 23.44)
+    assert pole > climate.daily_insolation(0.0, 23.44)
+    assert pole > climate.daily_insolation(45.0, 23.44)
+
+
+def test_the_equinox_reproduces_the_unseasonal_profile_exactly(world):
+    """Seasons are additive on top of the tuned annual profile, so a caller that does not
+    ask for them gets bit-identical output to before they existed."""
+    g, _, _, _ = world
+    p = climate.ClimateParams()
+    lat = np.radians(g.lat.astype(np.float64))
+    expected = p.t_pole_c + (p.t_equator_c - p.t_pole_c) * np.cos(lat) ** 1.5
+    assert np.array_equal(climate.equilibrium_temperature(g, p, 0.0), expected)
+
+
+def test_the_seasons_average_back_to_the_annual_profile(world):
+    """`t_equator_c` and `t_pole_c` are calibrated as ANNUAL MEANS, so the seasons have to
+    average back to them or every downstream threshold shifts.
+
+    This is why the seasonal term is not clipped to the profile's range. Clipping truncated
+    the winter pole and left the polar annual mean about 5 C above `t_pole_c`; unclipped,
+    the insolation anomaly averages to zero by construction and the mean is exact. The price
+    is a winter pole below `t_pole_c`, which is the correct shape.
+    """
+    g, _, _, _ = world
+    p = climate.ClimateParams()
+    base = climate.equilibrium_temperature(g, p, 0.0)
+    decls = [climate.declination_deg(f * p.days_per_year, p) for f in climate.SEASON_PHASE]
+    mean = np.mean([climate.equilibrium_temperature(g, p, d) for d in decls], axis=0)
+    # 0.21 C measured, on a 52 C profile. Not zero because four points cannot integrate the
+    # higher harmonics of the insolation curve exactly, only the first two.
+    assert np.abs(mean - base).max() < 0.3
+
+
+def test_four_samples_are_four_distinct_seasons(world):
+    """A steady-state model carries the date only through the declination, so two dates
+    with the same sun give the same world. Sampling the solstices and equinoxes would give
+    three seasons and a duplicate; SEASON_PHASE is offset from them for that reason."""
+    g, _, _, _ = world
+    p = climate.ClimateParams()
+    decls = [climate.declination_deg(f * p.days_per_year, p) for f in climate.SEASON_PHASE]
+    assert len(decls) == 4
+    for i in range(4):
+        for j in range(i + 1, 4):
+            assert abs(decls[i] - decls[j]) > 1.0, f"samples {i} and {j} share a sun"
+
+
+def test_land_takes_a_season_harder_than_sea(world):
+    """Differential heating: rock follows the sun, water stores it. The contrast is the
+    monsoon's engine, and without it the June land-sea contrast measured 0.58 C with land
+    running COLDER than the sea -- nothing for a thermal low to form on."""
+    g, z, land, cl = world
+    p = climate.ClimateParams()
+    warm, cold = [], []
+    for decl in (23.44, -23.44):
+        t, _ = climate.temperature(g, z, cl.coast_distance_km, p, decl_deg=decl,
+                                   land_mask=land)
+        (warm if decl > 0 else cold).append(t)
+    swing = np.abs(warm[0] - cold[0])
+    north = g.lat > 20
+    assert swing[land & north].mean() > 1.5 * swing[~land & north].mean()
+
+
+def test_seasons_keep_the_annual_fields_the_pipeline_runs_on(world):
+    """Erosion has to see a year's water, and every downstream stage reads these two names.
+    Seasonality is an output; it must not leak into the fields Stage 4 couples to."""
+    g, z, land, _ = world
+    cs = climate.compute_seasons(g, z, land)
+    assert cs.temperature_season.shape == (4, g.cell_count)
+    assert cs.precipitation_season.shape == (4, g.cell_count)
+    assert np.allclose(cs.temperature_c, cs.temperature_season.mean(axis=0), atol=1e-4)
+    assert np.allclose(cs.precipitation_mm, cs.precipitation_season.mean(axis=0), atol=1e-2)
+    # And the swing is measured from the solved seasons rather than modelled from distance.
+    assert cs.seasonality_c[land].mean() > 0.0
+
+
+def test_the_monsoon_wind_actually_reverses(world):
+    """Migrating the circulation bands gives a wet season; only the thermal low gives a
+    MONSOON, and the difference is a wind that turns round.
+
+    Measured on the term itself rather than on the fraction of coast that flips, because
+    that fraction depends on how much tropical coast a world happens to have -- 32.5% to
+    38.7% at n=256, but only 31.7% to 32.8% on this small fixture. What the term does is
+    world-independent: it must blow ONSHORE in the local summer and OFFSHORE in the local
+    winter, and reverse with the hemisphere.
+    """
+    g, z, land, cl = world
+    p = climate.ClimateParams()
+
+    def onshore(wind):
+        out = np.zeros(g.cell_count)
+        for s in range(g.neighbours.shape[1]):
+            j = g.neighbours[:, s]
+            jj = np.maximum(j, 0)
+            d = g.xyz[jj] - np.einsum('ij,ij->i', g.xyz[jj], g.xyz)[:, None] * g.xyz
+            dn = np.linalg.norm(d, axis=1)
+            out += np.where((j >= 0) & ~land[jj] & (dn > 0),
+                            -np.einsum('ij,ij->i', wind, d) / np.where(dn > 0, dn, 1.0), 0.0)
+        return out
+
+    added = {}
+    for decl in (23.44, -23.44):
+        t, _ = climate.temperature(g, z, cl.coast_distance_km, p, decl_deg=decl,
+                                   land_mask=land)
+        added[decl] = (onshore(climate.monsoon_wind(g, land, t, p, decl_deg=decl))
+                       - onshore(climate.wind_field(g, p, decl_deg=decl)))
+
+    north = land & (g.lat > 5) & (g.lat < 35) & (added[23.44] != 0)
+    south = land & (g.lat < -5) & (g.lat > -35) & (added[23.44] != 0)
+    assert north.sum() > 50 and south.sum() > 50
+
+    # Northern summer is the June solstice, southern summer the December one.
+    assert added[23.44][north].mean() > 0, "no onshore pull over a northern summer"
+    assert added[-23.44][north].mean() < 0, "northern winter must blow offshore"
+    assert added[-23.44][south].mean() > 0, "no onshore pull over a southern summer"
+    assert added[23.44][south].mean() < 0, "southern winter must blow offshore"
+
+
+# --------------------------------------------------------------------------------------
 # Ocean heat transport
 # --------------------------------------------------------------------------------------
 
@@ -235,11 +370,16 @@ def test_moisture_never_exceeds_saturation(world):
     the operator stops being a contraction, and moisture grows without bound: measured
     1.3e7 mm/yr before the cap was added.
     """
-    g, z, land, cl = world
+    g, z, land, _ = world
     p = climate.ClimateParams()
-    capacity = np.exp(p.saturation_gain * (cl.temperature_c.astype(np.float64) - 15.0))
+    # A SINGLE solve, because that is where the invariant lives. The seasonal aggregate
+    # averages four moisture fields against four different capacities, and the mean of
+    # capacities is not the capacity of the mean temperature -- the cap would look violated
+    # where it never was.
+    one = climate.compute_climate(g, z, land, p)
+    capacity = np.exp(p.saturation_gain * (one.temperature_c.astype(np.float64) - 15.0))
     capacity = np.clip(capacity, 0.05, 4.0)
-    assert np.all(cl.moisture <= capacity + 1e-6)
+    assert np.all(one.moisture <= capacity + 1e-6)
 
 
 def test_precipitation_falls_from_tropics_to_poles(world):
@@ -360,7 +500,9 @@ def test_the_shadow_is_actually_orographic(world):
 
 
 def test_climate_is_reproducible(world):
-    g, z, land, cl = world
-    again = climate.compute_climate(g, z, land)
-    assert np.array_equal(cl.precipitation_mm, again.precipitation_mm)
-    assert np.array_equal(cl.temperature_c, again.temperature_c)
+    """Both entry points, since the pipeline now runs the seasonal one."""
+    g, z, land, _ = world
+    for solve in (climate.compute_climate, climate.compute_seasons):
+        a, b = solve(g, z, land), solve(g, z, land)
+        assert np.array_equal(a.precipitation_mm, b.precipitation_mm)
+        assert np.array_equal(a.temperature_c, b.temperature_c)

@@ -179,8 +179,13 @@ def test_returned_climate_describes_the_returned_topography(setup):
     res = coupled.run(g, crust.elevation, crust.uplift, ~crust.land_mask,
                       passes=2, steps_per_pass=80)
     from terrain import climate as climate_mod
-    fresh = climate_mod.compute_climate(g, res.elevation, crust.land_mask)
+    # Seasonal, matching what `run` solves with. It used to close with a plain
+    # `compute_climate` while the loop ran on `compute_seasons`, so the world was eroded
+    # against a year and exported carrying an equinox -- two fields that differ by 22% at
+    # the median cell.
+    fresh = climate_mod.compute_seasons(g, res.elevation, crust.land_mask)
     assert np.array_equal(res.climate.precipitation_mm, fresh.precipitation_mm)
+    assert np.array_equal(res.climate.temperature_season, fresh.temperature_season)
 
 
 def test_arid_high_ground_keeps_more_relief_than_wet_high_ground(setup):

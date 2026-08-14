@@ -79,6 +79,25 @@ class ClimateParams:
     t_equator_c: float = 27.0
     t_pole_c: float = -25.0
     lapse_rate_c_per_km: float = 6.5      # standard environmental lapse rate
+    # Seasons. Tilt drives declination; the lag is real physics but it is NOT what keeps
+    # the four samples distinct -- the sample dates are.
+    #
+    # This model has no heat storage: each solve is a steady state, and declination is the
+    # only thing that carries the date into it. So two dates with the SAME declination give
+    # bit-identical climates, and sampling at the solstices and equinoxes yields three
+    # distinct seasons, not four, because both equinoxes sit at declination zero. Sampling
+    # four evenly spaced dates offset from them gives four. See SEASON_PHASE.
+    #
+    # The lag is kept because it is true -- seasons trail the sun by four to eight weeks
+    # because the ocean stores heat, so what a place feels today is the sun it had a month
+    # ago -- and it shifts which calendar dates those declinations fall on.
+    axial_tilt_deg: float = 23.44
+    seasonal_lag_days: float = 30.0
+    days_per_year: float = 365.24
+    # Degrees of profile shift per unit of insolation departure. 1.0 puts the seasonal
+    # swing at 1.4 C on the equator, 14.6 at 45 degrees and 20.7 at the pole. Setting it to
+    # 0 removes seasons entirely and every solve returns the annual mean.
+    seasonal_gain: float = 1.0
     continentality_c: float = 6.0         # seasonal amplitude gain far from the sea
     # Horizontal, so it scales with the radius: 1500 km / 98.125. The temperature and
     # rainfall constants around it are NOT rescaled -- degrees, mm/yr and the lapse rate
@@ -153,6 +172,44 @@ class ClimateParams:
     # obviously along the equator. Real cells meander by tens of degrees of longitude.
     meander_deg: float = 7.0
     meander_frequency: float = 1.8
+    # How far the circulation follows the subsolar point. 0.4 of a 23.44 degree declination
+    # gives the ITCZ a 9.4 degree excursion each way, matching Earth's zonal mean.
+    itcz_follow: float = 0.4
+    # Latitude at which the seasonal migration has died away entirely. Keeps the swing in
+    # the tropics where monsoons live and off the westerlies where rain shadows live.
+    itcz_taper_deg: float = 45.0
+    # Monsoon: how hard the wind is pulled toward summer-heated land, relative to
+    # `wind_speed`, for a land-sea temperature contrast of `monsoon_ref_c`. At 0 the bands
+    # still migrate with the sun but the wind never reverses, which is a wet season without
+    # a monsoon.
+    # IN DIRECT TENSION WITH THE RAIN SHADOW, the same way land_recycling is with
+    # orographic_coeff, and worth knowing before touching it. The orographic signal needs a
+    # consistent prevailing direction; a thermal wind strong enough to reverse the coast is
+    # also strong enough to blur which side of a ridge is upwind. Measured on one world,
+    # windward/leeward ratio against the fraction of tropical coast whose wind reverses
+    # between solstices (shadow at n=96, reversal at n=256):
+    #
+    #   monsoon_c    0.00    0.10    0.20    0.30    0.60
+    #   shadow      2.15x   2.30x   2.32x   1.91x   1.41x
+    #   reversal    32.5%   34.3%   38.7%   43.2%   58.0%
+    #
+    # 0.20 is the knee and is shipped: it is the best shadow of the five -- better than
+    # switching the monsoon off, because a little seasonal steering makes each season's wind
+    # more consistent, not less -- while still moving the reversal. 0.60 buys a much
+    # stronger monsoon for a third of the rain shadow, which is not a trade worth making.
+    monsoon_c: float = 0.2
+    # The contrast that counts as a strong thermal low, and the distance it acts over. The
+    # reference length must scale with the sphere: the first version used the CELL SPACING,
+    # which is 100 m at every radius, so the reference gradient came out 80 C/km and the
+    # monsoon term contributed 0.006 against a wind speed of 1 -- nothing at all.
+    monsoon_ref_c: float = 8.0
+    monsoon_ref_km: float = 5.0
+    # How much more than the sea a continent swings through the year. Land has almost no
+    # heat capacity and follows the sun; the ocean stores the season and barely moves.
+    # 1.8x deep inland against 0.35x at sea is what opens a thermal low over a summer
+    # continent, and without it there is no monsoon to deflect anything.
+    seasonal_continentality: float = 0.8
+    sea_seasonal_damping: float = 0.35
     # Fraction of rain over land that evapotranspires and rains again further inland.
     # Without it, every drop that falls on a continent must have arrived from the coast,
     # and interiors come out as absolute desert: measured 2043 mm within 200 km of the sea
@@ -188,6 +245,11 @@ class Climate:
     moisture: np.ndarray          # (N,) f32, steady-state airborne moisture
     coast_distance_km: np.ndarray  # (N,) f32
     sst_anomaly_c: np.ndarray = None  # (N,) f32, sea surface departure from its latitude
+    # Present only from `compute_seasons`. (4, N) stacks through the year, in the order of
+    # SEASON_PHASE; `temperature_c` and `precipitation_mm` remain their annual summaries.
+    temperature_season: np.ndarray = None
+    precipitation_season: np.ndarray = None
+    declination_deg: np.ndarray = None    # (4,) f32, the sun of each sample
 
 
 # --------------------------------------------------------------------------------------
@@ -224,14 +286,99 @@ def per_step_relax(grid, scale_km, spacing_km=None):
     return min(spacing_km / scale, 0.9)
 
 
-def equilibrium_temperature(grid, p: ClimateParams):
-    """Sea-level temperature from latitude alone: the profile everything departs from."""
+# Where in the year the four samples sit, as fractions of it. Evenly spaced, because the
+# harmonic fit that turns them into twelve months needs even spacing; offset off the
+# solstices, because a sample set containing both equinoxes contains the same climate twice.
+# The offset here puts the declinations near -22, -8, +22, +8 degrees.
+SEASON_PHASE = (0.0, 0.25, 0.5, 0.75)
+
+
+def declination_deg(day_of_year, p: ClimateParams):
+    """Subsolar latitude on a given day, with the seasonal lag already applied.
+
+    The lag is subtracted from the date rather than added to the answer: what a place feels
+    today is the sun it had some weeks ago, because the ocean has been storing the
+    difference.
+    """
+    phase = 2.0 * np.pi * ((day_of_year - p.seasonal_lag_days) / p.days_per_year - 0.22)
+    return p.axial_tilt_deg * np.sin(phase)
+
+
+def daily_insolation(lat_deg, decl_deg):
+    """Daily-mean insolation, normalised to 1 at the subsolar latitude of an equinox.
+
+    The day-length term is the reason this is not just cos(latitude - declination). That
+    shortcut has no polar night: it makes the summer pole the warmest place on the planet
+    and gives the winter pole an ordinary winter, when in fact one has twenty-four hours of
+    low sun and the other has none at all. Koppen's D and E classes turn on exactly that
+    difference, so the closed form is worth its ten lines.
+
+        Q ~ H0 sin(lat) sin(decl) + cos(lat) cos(decl) sin(H0)
+
+    with H0 the half-day length as an hour angle: pi under the midnight sun, 0 in polar
+    night, arccos(-tan(lat) tan(decl)) in between.
+    """
+    lat = np.radians(np.asarray(lat_deg, dtype=np.float64))
+    decl = np.radians(float(decl_deg))
+    cos_h0 = np.clip(-np.tan(lat) * np.tan(decl), -1.0, 1.0)
+    h0 = np.arccos(cos_h0)
+    q = h0 * np.sin(lat) * np.sin(decl) + np.cos(lat) * np.cos(decl) * np.sin(h0)
+    return np.maximum(q, 0.0) / np.pi
+
+
+def equilibrium_temperature(grid, p: ClimateParams, decl_deg=0.0, mean_insol=None):
+    """Sea-level temperature from latitude and the season: the profile all else departs from.
+
+    At `decl_deg = 0` this reproduces the original cos(lat)**1.5 profile exactly, so every
+    caller that does not care about seasons is unaffected. `t_equator_c` and `t_pole_c` go
+    on meaning the annual means they were calibrated as; see the note on clipping below for
+    why that survives.
+    """
     lat = np.radians(grid.lat.astype(np.float64))
-    return p.t_pole_c + (p.t_equator_c - p.t_pole_c) * np.cos(lat) ** 1.5
+    annual = np.cos(lat) ** 1.5
+    if decl_deg == 0.0 or p.seasonal_gain == 0.0:
+        return p.t_pole_c + (p.t_equator_c - p.t_pole_c) * annual
+
+    # ADDITIVE, not multiplicative. Scaling the annual profile by an insolation ratio was
+    # the obvious first try and it leaves the poles with no seasons at all: cos(lat)**1.5
+    # is zero there, so no factor can move it, and the pole sat at t_pole_c in every season
+    # -- deleting the one distinction the day-length term was added to capture.
+    #
+    # Departing from the ANNUAL MEAN insolation at each latitude works everywhere, because
+    # the mean is nonzero at the pole (it has a summer) and the departure from it is the
+    # largest on the planet. Measured swings at gain 1: 1.4 C at the equator, 14.6 C at 45
+    # degrees, 20.7 C at the pole, against Earth's roughly 2, 10-25 and 35.
+    # Deliberately NOT clipped to [0, 1]. The insolation anomaly averages to zero over the
+    # year by construction, so leaving it unclipped makes the annual mean of the seasons
+    # reproduce the tuned profile EXACTLY -- `t_equator_c` and `t_pole_c` go on meaning the
+    # annual means they were calibrated as. Clipping at zero cost that: it truncated the
+    # winter pole and pulled the polar annual mean about 5 C above `t_pole_c`.
+    #
+    # The price is that the winter pole runs colder than `t_pole_c` and the summer pole
+    # warmer, which is the correct shape -- Earth's north pole averages about -18 C between
+    # a -34 C winter and a 0 C summer.
+    # The datum does not depend on the season, so a caller solving several seasons on one
+    # grid should compute it once and hand it in -- it is 24 insolation evaluations over
+    # every cell, and recomputing it per season made four seasons cost 6.7x one rather
+    # than 4x.
+    if mean_insol is None:
+        mean_insol = _mean_annual_insolation(grid.lat, p)
+    anomaly = daily_insolation(grid.lat, decl_deg) - mean_insol
+    return (p.t_pole_c + (p.t_equator_c - p.t_pole_c)
+            * (annual + p.seasonal_gain * anomaly))
+
+
+def _mean_annual_insolation(lat_deg, p: ClimateParams, samples=24):
+    """Insolation averaged over the year, per latitude. The datum seasons depart from."""
+    days = np.arange(samples) * p.days_per_year / samples
+    total = np.zeros(np.shape(lat_deg), dtype=np.float64)
+    for d in days:
+        total += daily_insolation(lat_deg, declination_deg(d, p))
+    return total / samples
 
 
 def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams,
-                maritime_anom=None):
+                maritime_anom=None, decl_deg=0.0, mean_insol=None, land_mask=None):
     """Latitude insolation, elevation lapse rate, continentality, and ocean heat transport.
 
     Continentality affects the annual MEAN, not only the seasonal swing. The latitude
@@ -246,9 +393,26 @@ def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams,
     lat = np.radians(grid.lat.astype(np.float64))
     inland = 1.0 - np.exp(-np.asarray(coast_distance_km, dtype=np.float64)
                           / p.continentality_scale_km)
-    t = (equilibrium_temperature(grid, p)
+    t = (equilibrium_temperature(grid, p, decl_deg, mean_insol)
          - p.lapse_rate_c_per_km * np.maximum(elevation_m, 0.0) / 1000.0
          - p.continental_cooling_c * inland * np.abs(np.sin(lat)) ** 1.5)
+
+    # DIFFERENTIAL HEATING. Rock and water do not take a season the same way: land has
+    # little heat capacity and swings with the sun, the sea stores the heat and barely
+    # moves. That difference IS the monsoon -- a summer continent becomes hot relative to
+    # the ocean beside it, the pressure over it drops, and maritime air is pulled in.
+    #
+    # Without this term the model had no land-sea contrast to speak of. Measured at the June
+    # solstice: 0.58 C of standard deviation, with land averaging 0.42 C COLDER than the sea
+    # rather than warmer, because continental cooling was the only thing distinguishing
+    # them. The thermal low had nothing to form on and the monsoon wind did nothing at all.
+    if decl_deg != 0.0 and p.seasonal_gain != 0.0 and land_mask is not None:
+        departure = (equilibrium_temperature(grid, p, decl_deg, mean_insol)
+                     - equilibrium_temperature(grid, p, 0.0))
+        amplitude = np.where(np.asarray(land_mask),
+                             1.0 + p.seasonal_continentality * inland,
+                             p.sea_seasonal_damping)
+        t += (amplitude - 1.0) * departure
 
     if maritime_anom is not None and p.ocean_heat_c != 0.0:
         t += p.ocean_heat_c * np.asarray(maritime_anom, dtype=np.float64)
@@ -257,11 +421,41 @@ def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams,
     return t.astype(np.float32), seasonality.astype(np.float32)
 
 
-def _effective_lat(grid, p: ClimateParams, seed=0):
-    """Latitude with the circulation bands wobbled, so they are not perfect circles."""
+def band_shift_deg(lat_deg, decl_deg, p: ClimateParams):
+    """How far the circulation slides with the sun, per latitude.
+
+    Damped because the ITCZ does not track the subsolar point one for one: the ocean's heat
+    capacity holds it back, so Earth's migrates roughly 0 to 10 degrees over a year against
+    a subsolar point covering 47. Land does move further -- the monsoon trough reaches 25 N
+    over India -- but that is the thermal low in `monsoon_wind`, not the zonal mean.
+
+    TAPERED WITH LATITUDE. Shifting every band by the same 9.4 degrees moves the
+    mid-latitude westerlies too, and since the bands are only 30 degrees wide that reverses
+    the prevailing wind for any cell within 9 degrees of a boundary. Earth does not work
+    that way: the ITCZ swings, the storm track shifts a little, and the westerlies at 45
+    degrees blow from the west in every month of the year.
+
+    Kept on those grounds alone. It was added while chasing a collapse in the rain shadow
+    (1.56x to 1.08x) and did not fix it -- the cause was `compute_seasons` returning one
+    season's wind beside a year's rainfall, and correcting that took the ratio to 1.48x with
+    the taper contributing nothing measurable either way.
+    """
+    lat = np.abs(np.asarray(lat_deg, dtype=np.float64))
+    taper = np.maximum(0.0, 1.0 - (lat / p.itcz_taper_deg) ** 2)
+    return p.itcz_follow * float(decl_deg) * taper
+
+
+def _effective_lat(grid, p: ClimateParams, seed=0, decl_deg=0.0):
+    """Latitude measured from the circulation's centre, with the bands wobbled.
+
+    Two separate displacements of the same coordinate. The wobble is spatial and standing
+    in for Rossby waves; the shift is seasonal and is what carries the wet band over a
+    tropical continent in its summer and away again in its winter.
+    """
     lat = grid.lat.astype(np.float64)
+    lat = lat - band_shift_deg(lat, decl_deg, p)
     if p.meander_deg <= 0.0:
-        return lat
+        return np.clip(lat, -90.0, 90.0)
     from terrain import noise
     out = np.empty(grid.cell_count, dtype=np.float64)
     noise.fbm(np.ascontiguousarray(grid.xyz), noise.permutation(noise.sub_seed("wind", seed)),
@@ -269,7 +463,7 @@ def _effective_lat(grid, p: ClimateParams, seed=0):
     return np.clip(lat + p.meander_deg * out, -90.0, 90.0)
 
 
-def wind_field(grid, p: ClimateParams):
+def wind_field(grid, p: ClimateParams, decl_deg=0.0):
     """Surface wind from the three-cell circulation, as tangent vectors.
 
     Bands are easterly 0-30 (trades), westerly 30-60, easterly 60-90 (polar). Writing the
@@ -281,7 +475,7 @@ def wind_field(grid, p: ClimateParams):
     in the Hadley and Polar cells and poleward in the Ferrel cell, which is exactly where
     the zonal sign flips, so v is proportional to sign(lat) * u.
     """
-    lat = _effective_lat(grid, p)
+    lat = _effective_lat(grid, p, decl_deg=decl_deg)
     u = -p.wind_speed * np.cos(np.pi * (np.abs(lat) - 15.0) / 30.0)
     v = p.meridional_fraction * np.sign(lat) * u
 
@@ -294,6 +488,83 @@ def wind_field(grid, p: ClimateParams):
 
     wind = u[:, None] * east + v[:, None] * north
     return np.ascontiguousarray(wind, dtype=np.float64)
+
+
+@njit(cache=True, parallel=True)
+def _thermal_gradient(xyz, nbr, arc_dist, field, grad):
+    """Surface gradient of a scalar on the mesh, as a tangent vector per cell.
+
+    Same tangent construction the advection weights use, so "uphill in temperature" and
+    "downwind" are measured in one geometry rather than two.
+    """
+    n = xyz.shape[0]
+    k = nbr.shape[1]
+    for i in prange(n):
+        gx = gy = gz = 0.0
+        total = 0.0
+        for s in range(k):
+            j = nbr[i, s]
+            if j < 0:
+                continue
+            d = arc_dist[i, s]
+            if d <= 0.0:
+                continue
+            dot = xyz[j, 0] * xyz[i, 0] + xyz[j, 1] * xyz[i, 1] + xyz[j, 2] * xyz[i, 2]
+            tx = xyz[j, 0] - dot * xyz[i, 0]
+            ty = xyz[j, 1] - dot * xyz[i, 1]
+            tz = xyz[j, 2] - dot * xyz[i, 2]
+            tn = np.sqrt(tx * tx + ty * ty + tz * tz)
+            if tn <= 0.0:
+                continue
+            slope = (field[j] - field[i]) / d
+            gx += slope * tx / tn
+            gy += slope * ty / tn
+            gz += slope * tz / tn
+            total += 1.0
+        if total > 0.0:
+            grad[i, 0] = gx / total
+            grad[i, 1] = gy / total
+            grad[i, 2] = gz / total
+        else:
+            grad[i, 0] = grad[i, 1] = grad[i, 2] = 0.0
+    return grad
+
+
+def monsoon_wind(grid, land_mask, temperature_c, p: ClimateParams, decl_deg=0.0):
+    """The three-cell wind, plus a component blowing toward summer-heated land.
+
+    This is the term that makes a monsoon a monsoon. Migrating the circulation bands with
+    the sun (`itcz_lat`) moves the wet band over a tropical continent and gives it a wet
+    season, but the wind itself never turns round: at a fixed latitude it is the same
+    easterly in January as in July. A real monsoon REVERSES, because summer heating over a
+    continent drops the surface pressure and pulls maritime air in, and winter cooling does
+    the opposite.
+
+    Modelled as flow up the land-sea temperature contrast -- toward the warm anomaly, which
+    is inland in summer and offshore in winter. The contrast is measured against the zonal
+    mean so it is a land-sea difference rather than the equator-to-pole gradient, which is
+    far larger and would otherwise swamp it and simply blow everything equatorward.
+    """
+    wind = wind_field(grid, p, decl_deg=decl_deg)
+    if p.monsoon_c <= 0.0:
+        return wind
+
+    t = np.asarray(temperature_c, dtype=np.float64)
+    contrast = np.ascontiguousarray(t - _band_mean(t, grid.lat, np.ones_like(t),
+                                                   p.zonal_band_deg)[1])
+    grad = np.empty((grid.cell_count, 3), dtype=np.float64)
+    _thermal_gradient(np.ascontiguousarray(grid.xyz),
+                      np.ascontiguousarray(grid.neighbours),
+                      np.ascontiguousarray(grid.arc_dist, dtype=np.float64),
+                      contrast, grad)
+
+    # Scale so the term is comparable to `wind_speed` for a contrast of monsoon_ref_c
+    # degrees across one cell; without a reference the units are metres and the result is
+    # either nothing or everything.
+    # No land mask on the result. The contrast is near zero over open water anyway -- that
+    # is what makes it a land-sea signal -- so masking would only be belt and braces.
+    ref = p.monsoon_ref_c / (p.monsoon_ref_km * float(grid.radius_km) / R_WORLD_KM)
+    return np.ascontiguousarray(wind + (p.monsoon_c / ref) * grad)
 
 
 # --------------------------------------------------------------------------------------
@@ -630,7 +901,7 @@ def _reverse_slots(nbr, rev):
     return rev
 
 
-def rainout_factor(grid, p: ClimateParams):
+def rainout_factor(grid, p: ClimateParams, decl_deg=0.0):
     """Where the three-cell circulation has air rising (wet) versus subsiding (dry).
 
     cos(pi*|lat|/30) is +1 at 0 and 60 degrees -- the ITCZ and the polar front, where air
@@ -639,7 +910,8 @@ def rainout_factor(grid, p: ClimateParams):
     where they belong, while leaving orographic rainfall intact, so a range inside the
     desert belt still catches rain the way the Atlas does on the edge of the Sahara.
     """
-    ascent = 0.5 + 0.5 * np.cos(np.pi * np.abs(_effective_lat(grid, p)) / 30.0)
+    ascent = 0.5 + 0.5 * np.cos(
+        np.pi * np.abs(_effective_lat(grid, p, decl_deg=decl_deg)) / 30.0)
     return p.subsidence_floor + (1.0 - p.subsidence_floor) * ascent
 
 
@@ -690,7 +962,7 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
 
 
 def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateParams,
-                  spacing_km=None):
+                  spacing_km=None, decl_deg=0.0):
     """Steady-state moisture transport with orographic and background rainout."""
     n = grid.cell_count
     nbr = np.ascontiguousarray(grid.neighbours)
@@ -712,7 +984,8 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
     ascent = _weighted_ascent(xyz, nbr, rev, out_w, elevation_m.astype(np.float64))
     lift_loss = np.exp(-p.orographic_coeff * np.maximum(ascent, 0.0))
     rainout = per_step_relax(grid, p.background_rainout_km, spacing_km)
-    retain = np.ascontiguousarray(1.0 - rainout * rainout_factor(grid, p))
+    retain = np.ascontiguousarray(
+        1.0 - rainout * rainout_factor(grid, p, decl_deg=decl_deg))
 
     recycle = np.ascontiguousarray(np.where(land_mask, p.land_recycling, 0.0))
 
@@ -760,7 +1033,8 @@ def _weighted_ascent(xyz, nbr, rev, out_w, z):
 # --------------------------------------------------------------------------------------
 
 
-def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None) -> Climate:
+def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None,
+                    decl_deg=0.0, mean_insol=None) -> Climate:
     from terrain import plates
 
     p = params or ClimateParams()
@@ -781,16 +1055,65 @@ def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None) 
     plates.boundary_distance(~land_mask, grid.xyz, grid.radius_km, dist, src, cap)
     dist[dist > 1e29] = cap
 
-    # Wind comes first now: temperature depends on it, because the sea surface anomaly has
-    # to be blown ashore before it can be added. It used to be the other way round, when
-    # temperature was a function of latitude, elevation and coast distance only.
-    wind = wind_field(grid, p)
+    # Order matters and has changed twice. Wind before temperature, because the sea surface
+    # anomaly has to be blown ashore before it can be added. Then temperature before the
+    # MONSOON wind, because that one blows toward warm land -- so the plain three-cell wind
+    # carries the ocean heat, and the thermally corrected wind carries the rain.
     spacing = mean_spacing_km(grid)
-    anom = sst_anomaly(grid, land_mask, equilibrium_temperature(grid, p), p, spacing)
+    wind = wind_field(grid, p, decl_deg=decl_deg)
+    if mean_insol is None and decl_deg != 0.0:
+        mean_insol = _mean_annual_insolation(grid.lat, p)
+    eq = equilibrium_temperature(grid, p, decl_deg, mean_insol)
+    anom = sst_anomaly(grid, land_mask, eq, p, spacing)
     maritime = maritime_anomaly(grid, land_mask, anom, wind, p, spacing)
-    t, seasonality = temperature(grid, elevation_m, dist, p, maritime_anom=maritime)
-    precip, moisture = precipitation(grid, elevation_m, land_mask, t, wind, p, spacing)
+    t, seasonality = temperature(grid, elevation_m, dist, p, maritime_anom=maritime,
+                                 decl_deg=decl_deg, mean_insol=mean_insol,
+                                 land_mask=land_mask)
+    wind = monsoon_wind(grid, land_mask, t, p, decl_deg=decl_deg)
+    precip, moisture = precipitation(grid, elevation_m, land_mask, t, wind, p, spacing,
+                                     decl_deg=decl_deg)
 
     return Climate(temperature_c=t, seasonality_c=seasonality,
                    wind=wind.astype(np.float32), precipitation_mm=precip,
                    moisture=moisture, coast_distance_km=dist, sst_anomaly_c=anom)
+
+
+def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None) -> Climate:
+    """Four solves through the year, returned as one Climate with seasonal stacks.
+
+    `temperature_c` and `precipitation_mm` stay the ANNUAL mean and total, so `coupled.run`,
+    `discharge_weight`, `biomes.classify`, hydrology and the export all see exactly what
+    they saw before. Erosion has to be driven by a year's water; seasonality is an output.
+
+    Four samples rather than two because four evenly spaced points determine a two-harmonic
+    year exactly -- mean, annual and semiannual -- which is what makes the twelve monthly
+    values Koppen needs an interpolation rather than an assumption. Measured: the mean of
+    the four reproduces the tuned annual temperature profile to 0.03 C.
+    """
+    p = params or ClimateParams()
+    decls = [declination_deg(f * p.days_per_year, p) for f in SEASON_PHASE]
+    mean_insol = _mean_annual_insolation(grid.lat, p)
+    seasons = [compute_climate(grid, elevation_m, land_mask, p, decl_deg=d,
+                               mean_insol=mean_insol) for d in decls]
+
+    t = np.mean([s.temperature_c for s in seasons], axis=0).astype(np.float32)
+    precip = np.mean([s.precipitation_mm for s in seasons], axis=0).astype(np.float32)
+    stack_t = np.stack([s.temperature_c for s in seasons])
+    stack_p = np.stack([s.precipitation_mm for s in seasons])
+    # The seasonal swing is now measured rather than modelled from coast distance alone.
+    seasonality = ((stack_t.max(axis=0) - stack_t.min(axis=0)) * 0.5).astype(np.float32)
+
+    # EVERY aggregate field is a mean over the seasons, wind and moisture included. Taking
+    # them from the first season instead was wrong in a way that is easy to miss and hard to
+    # see: the returned object then carried one season's wind beside a year's rainfall, and
+    # anything asking which side of a ridge is upwind -- the rain shadow metric, for one --
+    # was answering with a wind that only blew for a quarter of the year.
+    wind = np.mean([s.wind for s in seasons], axis=0).astype(np.float32)
+    moisture = np.mean([s.moisture for s in seasons], axis=0).astype(np.float32)
+    anom = np.mean([s.sst_anomaly_c for s in seasons], axis=0).astype(np.float32)
+
+    return dataclasses.replace(
+        seasons[0], temperature_c=t, precipitation_mm=precip, seasonality_c=seasonality,
+        wind=wind, moisture=moisture, sst_anomaly_c=anom,
+        temperature_season=stack_t, precipitation_season=stack_p,
+        declination_deg=np.array(decls, dtype=np.float32))

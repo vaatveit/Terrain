@@ -135,11 +135,20 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=DISCHARGE_FLOOR,
 
 def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
         clim: climate_mod.ClimateParams = None, passes=3, steps_per_pass=200,
-        discharge_floor=DISCHARGE_FLOOR, verbose=False) -> CoupledResult:
-    """Alternate erosion and climate until the pair stops moving."""
+        discharge_floor=DISCHARGE_FLOOR, verbose=False, seasonal=True) -> CoupledResult:
+    """Alternate erosion and climate until the pair stops moving.
+
+    `seasonal` solves four points through the year and couples erosion to their annual mean,
+    at about 4.5x the climate cost. It is on by default because the two annual fields are
+    not interchangeable: measured against a single equinox solve, the seasonal annual total
+    differs by 22% at the median cell and correlates only 0.82 in the log. The gap is the
+    migrating rain band, which an equinox-only solve never moves -- so a monsoon belt comes
+    out permanently dry, and erosion would then be coupled to a year that never happens.
+    """
     lem = lem or stage2.LemParams()
     land_mask = ~np.asarray(is_ocean)
     z = np.ascontiguousarray(z0, dtype=np.float32).copy()
+    solve = (climate_mod.compute_seasons if seasonal else climate_mod.compute_climate)
 
     t0 = time.perf_counter()
     convergence = []
@@ -149,7 +158,7 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
     for p_i in range(passes):
         # Climate on the CURRENT topography -- this is the half of the loop that makes it
         # a loop rather than a one-off post-process.
-        cl = climate_mod.compute_climate(grid, z, land_mask, clim)
+        cl = solve(grid, z, land_mask, clim)
         weight = discharge_weight(grid.area, cl.precipitation_mm, land_mask,
                                   floor=discharge_floor, exponent=lem.m / lem.n)
 
@@ -165,8 +174,11 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
             print(f"    pass {p_i}: mean |dz| between passes {moved:8.1f} m   "
                   f"max z {z[land_mask].max():7.0f} m", flush=True)
 
-    # One last climate pass so the returned fields describe the returned topography.
-    cl = climate_mod.compute_climate(grid, z, land_mask, clim)
+    # One last climate pass so the returned fields describe the returned topography. Through
+    # `solve`, not `compute_climate` -- calling the plain one here left the loop eroding on
+    # a seasonal year while the world was exported carrying an equinox one, and the two
+    # differ by 22% at the median cell.
+    cl = solve(grid, z, land_mask, clim)
     return CoupledResult(elevation=z, climate=cl, discharge_weight=weight,
                          passes=passes, seconds=time.perf_counter() - t0,
                          convergence=convergence)

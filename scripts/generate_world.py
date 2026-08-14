@@ -18,7 +18,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from terrain import (  # noqa: E402
-    biomes, climate, coupled, export, flow, glacial, hydrology, metrics, plates,
+    biomes, climate, coupled, export, flow, glacial, hydrology, koppen, metrics, plates,
     stage1, stage2,
 )
 from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
@@ -92,6 +92,13 @@ def main():
     shares = biomes.summary(biome, grid.area, land)
     print("    " + ", ".join(f"{n} {s:.0%}" for n, s in shares[:4]))
 
+    kop = None
+    if clim.temperature_season is not None:
+        kop = koppen.classify(clim.temperature_season, clim.precipitation_season, land,
+                              grid.lat, annual_precip_mm=clim.precipitation_mm)
+        print("    koppen: " + ", ".join(
+            f"{n.split()[0]} {s:.0%}" for n, s in koppen.summary(kop, grid.area, land)[:5]))
+
     print("[9] metrics on the mesh")
     fr = flow.route(z, grid.neighbours, grid.arc_dist, grid.area, is_ocean)
     # 40 cells of drainage, not 6. The threshold has to sit ABOVE the channel head or the
@@ -121,7 +128,7 @@ def main():
     res = export.export_world(
         out_dir, grid, z, land, args.seed, slope=fr.slope, drainage_km2=fr.acc,
         temperature_c=clim.temperature_c, precipitation_mm=clim.precipitation_mm,
-        biome=biome, flow_receiver=fr.rec, discharge=hyd.discharge,
+        biome=biome, koppen=kop, flow_receiver=fr.rec, discharge=hyd.discharge,
         river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,

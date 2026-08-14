@@ -102,7 +102,8 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_land_mask` | uint8 | — | 1 = land, 0 = ocean. Ocean is the largest **connected** body of water, so an inland basin is land even where its floor is below sea level |
 | `field_temperature_c` | float32 | °C | mean annual surface temperature |
 | `field_precipitation_mm` | float32 | mm/yr | mean annual precipitation |
-| `field_biome` | uint8 | code | see the biome table below |
+| `field_biome` | uint8 | code | Whittaker; see the biome table below |
+| `field_koppen` | int8 | code | Köppen–Geiger; −1 at sea. Alongside `field_biome`, not instead of it |
 | `field_slope` | float32 | m/m | gradient toward the flow receiver |
 | `field_drainage_km2` | float32 | km² | upstream drainage area |
 | `field_flow_receiver` | int32 | — | **cell id** the water flows into, always a neighbour. `rec[i] == i` terminates the tree (ocean or outlet). Chain it to walk downstream |
@@ -164,8 +165,18 @@ Biome codes: `0` ocean, `1` ice, `2` tundra, `3` boreal forest, `4` temperate gr
 `8` subtropical desert, `9` savanna, `10` tropical seasonal forest, `11` tropical rainforest,
 `12` temperate desert, `13` cold desert, `14` lake.
 
-`0` and `14` are surface types rather than Whittaker classes, and they are how fresh water is
-told from salt. Elevation cannot do it: an inland basin floor sits below sea level exactly as
+Köppen codes: `0` Af, `1` Am, `2` Aw, `3` BWh, `4` BWk, `5` BSh, `6` BSk, `7` Csa, `8` Cfa,
+`9` Cfb, `10` Dfa, `11` Dfb, `12` Dfc, `13` ET, `14` EF, and `−1` at sea.
+
+**Both classifications ship, and they answer different questions.** Whittaker reads the
+annual mean temperature and rainfall, so a summer-dry Mediterranean climate and a summer-wet
+monsoon one with the same annual totals are the same biome to it. Köppen reads *when* the
+rain falls and how cold the winter gets, which is why it needed Stage 3 to grow a seasonal
+cycle first. Whittaker stays the renderer's colour source and the classification every tuned
+share in `terrain-algorithms.md` is measured against.
+
+`0` and `14` in the biome table are surface types rather than Whittaker classes, and they are
+how fresh water is told from salt. Elevation cannot do it: an inland basin floor sits below sea level exactly as
 the abyssal plain does. A lake is land by `field_land_mask` — it is a body of water enclosed
 by land — so code `14` is the only thing that marks it.
 
@@ -281,6 +292,12 @@ for `n=1`.
 | `maritime_scale_km` | 5 | how far inland maritime air keeps that anomaly (491 km on Earth) |
 | `ocean_heat_c` | 1.0 | gain on the anomaly where it comes ashore. **0 disables ocean heat transport**; zeroing `wind_speed` does not |
 | `strip_zonal_mean` | true | keep only the departure from the latitude mean, so poleward transport is not counted twice against `t_pole_c` |
+| `axial_tilt_deg` | 23.44 | drives the declination, and so the seasons |
+| `seasonal_lag_days` | 30 | seasons trail the sun, because the ocean stores the difference |
+| `seasonal_gain` | 1.0 | swing per unit of insolation departure: 1.4 °C at the equator, 14.6 at 45°, 20.7 at the pole. **0 removes seasons** |
+| `seasonal_continentality` / `sea_seasonal_damping` | 0.8 / 0.35 | land swings up to 1.8× the baseline, sea only 0.35×. **This differential heating is the monsoon's engine** — without it the June land–sea contrast is 0.58 °C with land *colder* than sea |
+| `itcz_follow` / `itcz_taper_deg` | 0.4 / 45 | how far the circulation follows the sun, and where that dies away. Tapered so the mid-latitude westerlies do not reverse |
+| `monsoon_c` | 0.2 | pull toward summer-heated land. **In direct tension with `orographic_coeff`** — see the table in `climate.py`; 0.6 buys a stronger monsoon for a third of the rain shadow |
 
 **Every `_km` above is world km at the reference radius (64.927 km) and is rescaled by the
 actual radius**, so it denotes a fixed fraction of the sphere. `background_rainout_km`,
