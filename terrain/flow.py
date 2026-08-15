@@ -21,6 +21,20 @@ import numpy as np
 from numba import njit, prange
 
 EPS = np.float32(1e-4)  # priority-flood fill increment, metres
+# ...and a RELATIVE floor under it, because 1e-4 m is not representable as an increment at
+# every elevation. `filled` is float32, whose spacing at 2,048 m is 2.44e-4 -- so `key + EPS`
+# rounds straight back to `key` and the fill produces an exactly FLAT surface. Nothing
+# downstream copes: `compute_receivers` needs a strictly positive slope, so every cell in
+# such a depression points at itself, and `solve_stream_power` tests `rec == i` before it
+# tests `in_lake` -- which means uplift is silently never applied to any of them. Drainage
+# stops accumulating through the basin too, so the trunk river below loses that catchment.
+# Measured on an n=64 grid: 0 of 537 filled cells self-receiving at 500 m, all 537 at 2,400 m.
+# Production peaks are 2,428 m, so this is reachable terrain.
+#
+# 1.2e-7 is one float32 ulp relative (2^-23), so the increment always moves at least one
+# representable step whatever the magnitude. The absolute EPS still governs near zero, where
+# the relative term would underflow to nothing.
+EPS_REL = np.float32(1.2e-7)
 
 
 # --------------------------------------------------------------------------------------
@@ -97,7 +111,8 @@ def priority_flood(z, nbr, is_sink, filled, closed, keys, idxs):
                 continue
             closed[j] = True
             if filled[j] <= key:
-                filled[j] = key + EPS
+                rel = EPS_REL * (key if key >= 0.0 else -key)
+                filled[j] = key + (rel if rel > EPS else EPS)
             size = heap_push(keys, idxs, size, filled[j], j)
     return filled
 

@@ -351,4 +351,14 @@ def test_amplification_must_not_be_fed_back_onto_the_mesh(world):
     assert abs(amped["concavity_theta"] - base["concavity_theta"]) > 0.01, (
         "if this stops being true the warning in terrain/amplify.py can be relaxed")
     moved = abs(amped["channel_cells"] - base["channel_cells"])
-    assert moved > 0.002 * base["channel_cells"], "the network should be visibly rewired"
+    # 0.001, having been 0.002. The world underneath moved: rescaling the transform-boundary
+    # decay length (plates.transform_decay_km, previously a hardcoded Earth-scale 100 km)
+    # takes 17.6% of land off a broad uplift slab and down to the cratonic floor, and this
+    # count fell 89 -> 38 with it. That is the count being incidental, not the terrain
+    # getting worse: measured at n=256, where the regression is actually resolvable, theta
+    # moved 0.500 -> 0.438 at r2 0.92 and Hack h 0.489 -> 0.515, both still in band.
+    #
+    # The threshold has now been loosened twice for two unrelated reasons, which is the
+    # signal that this assertion is not the one doing the work. THETA above is; this is
+    # corroboration, and if it needs loosening a third time it should be deleted instead.
+    assert moved > 0.001 * base["channel_cells"], "the network should be visibly rewired"

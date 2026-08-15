@@ -1,0 +1,1003 @@
+<title>Terrain Pipeline Review</title>
+<style>
+:root {
+  --ground:   #F6F7F5;
+  --surface:  #FFFFFF;
+  --sunk:     #EFF1EE;
+  --ink:      #191E1C;
+  --ink-soft: #3D4643;
+  --muted:    #606A66;
+  --rule:     #DDE2DE;
+  --rule-soft:#EAEEEA;
+  --oxide:    #A5442A;
+  --oxide-bg: #F7EAE5;
+  --measured: #1E6A61;
+  --measured-bg:#E6F1EF;
+  --warn:     #8A6210;
+  --warn-bg:  #F6EFDF;
+  --shadow:   0 1px 2px rgba(25,30,28,.05), 0 6px 18px -10px rgba(25,30,28,.18);
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, Georgia, "Times New Roman", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:   #111513;
+    --surface:  #191E1C;
+    --sunk:     #151A18;
+    --ink:      #E3E8E5;
+    --ink-soft: #C2CBC7;
+    --muted:    #8D9C96;
+    --rule:     #2A322F;
+    --rule-soft:#222A27;
+    --oxide:    #E58363;
+    --oxide-bg: #2C1D18;
+    --measured: #5CBFB1;
+    --measured-bg:#122825;
+    --warn:     #D6A343;
+    --warn-bg:  #2A2213;
+    --shadow:   0 1px 2px rgba(0,0,0,.4), 0 6px 18px -10px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:   #111513;
+  --surface:  #191E1C;
+  --sunk:     #151A18;
+  --ink:      #E3E8E5;
+  --ink-soft: #C2CBC7;
+  --muted:    #8D9C96;
+  --rule:     #2A322F;
+  --rule-soft:#222A27;
+  --oxide:    #E58363;
+  --oxide-bg: #2C1D18;
+  --measured: #5CBFB1;
+  --measured-bg:#122825;
+  --warn:     #D6A343;
+  --warn-bg:  #2A2213;
+  --shadow:   0 1px 2px rgba(0,0,0,.4), 0 6px 18px -10px rgba(0,0,0,.6);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 60rem; margin: 0 auto; padding: 0 1.5rem 6rem; }
+
+/* ---- masthead ---- */
+.masthead { padding: 4.5rem 0 2.25rem; border-bottom: 2px solid var(--ink); }
+.eyebrow {
+  font-family: var(--mono); font-size: .72rem; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 1.1rem;
+}
+h1 {
+  font-family: var(--serif); font-weight: 600; font-size: clamp(2.4rem, 6vw, 3.6rem);
+  line-height: 1.05; letter-spacing: -.015em; margin: 0 0 1.1rem; text-wrap: balance;
+}
+.standfirst {
+  font-family: var(--serif); font-size: 1.2rem; line-height: 1.55;
+  color: var(--ink-soft); max-width: 42rem; margin: 0;
+}
+
+/* ---- facts strip ---- */
+.facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+  margin: 2.25rem 0 0;
+}
+.fact { background: var(--surface); padding: .9rem 1rem; }
+.fact dt {
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 .35rem;
+}
+.fact dd {
+  margin: 0; font-family: var(--serif); font-size: 1.35rem;
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+}
+.fact dd span { font-size: .8rem; color: var(--muted); font-family: var(--sans); }
+
+/* ---- sections ---- */
+section { padding-top: 3.5rem; }
+h2 {
+  font-family: var(--serif); font-weight: 600; font-size: 1.9rem; line-height: 1.15;
+  letter-spacing: -.012em; margin: 0 0 .35rem; text-wrap: balance;
+}
+h2 + .lede { color: var(--muted); margin: 0 0 1.75rem; max-width: 44rem; }
+h3 {
+  font-family: var(--serif); font-weight: 600; font-size: 1.22rem;
+  margin: 2.25rem 0 .5rem; text-wrap: balance;
+}
+p { max-width: 44rem; }
+p, li { color: var(--ink-soft); }
+strong { color: var(--ink); font-weight: 640; }
+code {
+  font-family: var(--mono); font-size: .855em; background: var(--sunk);
+  border: 1px solid var(--rule-soft); border-radius: 3px; padding: .07em .32em;
+  color: var(--ink);
+}
+a { color: var(--measured); text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--measured); outline-offset: 2px; border-radius: 2px;
+}
+
+/* ---- stage list ---- */
+.stage {
+  display: grid; grid-template-columns: 3.4rem 1fr; gap: 0 1.25rem;
+  padding: 1.6rem 0; border-top: 1px solid var(--rule);
+}
+.stage:first-of-type { border-top: 1px solid var(--ink); }
+.stage-no {
+  font-family: var(--mono); font-size: .82rem; font-weight: 600; color: var(--oxide);
+  padding-top: .32rem; letter-spacing: .02em;
+}
+.stage-body > :first-child { margin-top: 0; }
+.stage h3 { margin: 0 0 .3rem; font-size: 1.3rem; }
+.stage .where {
+  font-family: var(--mono); font-size: .74rem; color: var(--muted);
+  margin: 0 0 .7rem;
+}
+.stage p { margin: 0 0 .8rem; }
+
+/* ---- tables ---- */
+.scroller { overflow-x: auto; margin: 1rem 0 1.4rem; border: 1px solid var(--rule); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .875rem; min-width: 34rem; }
+th, td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+thead th {
+  font-family: var(--mono); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--rule); white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.k { font-family: var(--mono); font-size: .8rem; white-space: nowrap; color: var(--ink); }
+td.v { font-family: var(--mono); font-size: .8rem; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--oxide); }
+td.n { color: var(--muted); }
+
+.cls {
+  font-family: var(--mono); font-size: .64rem; letter-spacing: .06em; text-transform: uppercase;
+  padding: .1rem .4rem; border-radius: 2px; white-space: nowrap; border: 1px solid transparent;
+}
+.cls-cell { background: var(--measured-bg); color: var(--measured); border-color: var(--measured); }
+.cls-world { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.cls-vert { background: var(--sunk); color: var(--muted); border-color: var(--rule); }
+
+/* ---- findings ---- */
+.finding {
+  background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--muted);
+  padding: 1.25rem 1.4rem; margin: 0 0 1rem; box-shadow: var(--shadow);
+}
+.finding.crit { border-left-color: var(--oxide); }
+.finding.warn { border-left-color: var(--warn); }
+.finding.note { border-left-color: var(--measured); }
+.f-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin-bottom: .5rem; }
+.f-id {
+  font-family: var(--mono); font-size: .78rem; font-weight: 700; color: var(--muted);
+}
+.f-title { font-family: var(--serif); font-size: 1.15rem; font-weight: 600; margin: 0; flex: 1 1 14rem; }
+.chip {
+  font-family: var(--mono); font-size: .63rem; letter-spacing: .07em; text-transform: uppercase;
+  padding: .16rem .45rem; border-radius: 2px; white-space: nowrap;
+}
+.chip-crit { background: var(--oxide-bg); color: var(--oxide); }
+.chip-warn { background: var(--warn-bg); color: var(--warn); }
+.chip-note { background: var(--measured-bg); color: var(--measured); }
+.chip-done { background: var(--measured); color: var(--surface); }
+.finding.done { border-left-color: var(--measured); }
+.verdict.done { color: var(--measured); }
+tr.done td:first-child { color: var(--measured); }
+.strike { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.finding p { margin: 0 0 .7rem; max-width: none; }
+.finding p:last-child { margin-bottom: 0; }
+.verdict {
+  font-family: var(--mono); font-size: .78rem; color: var(--muted);
+  border-top: 1px solid var(--rule-soft); padding-top: .6rem; margin-top: .9rem;
+}
+.verdict b { color: var(--ink); font-weight: 700; }
+
+pre {
+  font-family: var(--mono); font-size: .79rem; line-height: 1.5;
+  background: var(--sunk); border: 1px solid var(--rule); padding: .85rem 1rem;
+  overflow-x: auto; margin: .8rem 0;
+}
+pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+
+blockquote {
+  margin: 1rem 0; padding: .1rem 0 .1rem 1.1rem; border-left: 2px solid var(--rule);
+  color: var(--muted); font-family: var(--serif); font-size: 1.02rem;
+}
+
+ul.plain { list-style: none; padding: 0; margin: .6rem 0; }
+ul.plain li { padding-left: 1.1rem; position: relative; margin-bottom: .4rem; }
+ul.plain li::before {
+  content: "—"; position: absolute; left: 0; color: var(--oxide); font-family: var(--mono);
+}
+
+.footnote { color: var(--muted); font-size: .875rem; max-width: 44rem; }
+hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Code review · C:\Projects\Terrain · main @ 428e607</p>
+  <h1>Terrain Pipeline Review</h1>
+  <p class="standfirst">Ten stages, from a geodesic grid to an exported world, with every tuned
+  constant listed where it acts. Then seven findings — <strong>all now closed</strong>. One was
+  a real correctness bug, one was wrong in the review and corrected by measurement, and one
+  turned out to overturn a claim the project had been relying on.</p>
+
+  <dl class="facts">
+    <div class="fact"><dt>Cells</dt><dd>6,162,252</dd></div>
+    <div class="fact"><dt>Cell size</dt><dd>100 <span>m</span></dd></div>
+    <div class="fact"><dt>World radius</dt><dd>64.9 <span>km</span></dd></div>
+    <div class="fact"><dt>Land</dt><dd>~23 <span>%</span></dd></div>
+    <div class="fact"><dt>Peak</dt><dd>2,428 <span>m</span></dd></div>
+    <div class="fact"><dt>Runtime</dt><dd>~18 <span>min</span></dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2>What the pipeline is</h2>
+  <p class="lede">One command, ten stages, one archive.</p>
+
+  <p><code>scripts/generate_world.py</code> runs everything end to end and writes
+  <code>world.npz</code> plus a manifest. The grid is cached to disk and reused; everything
+  else is derived from <code>--n</code> and <code>--seed</code>.</p>
+
+  <pre><code>.venv\Scripts\python.exe scripts\generate_world.py --n 785 --seed 1 --out data/world01</code></pre>
+
+  <p>The organising decision — and the one that explains most of the parameter values below —
+  is that <strong>the world is specified by its cell size, not its radius</strong>. Holding
+  cells at 100 m for every <code>n</code> makes the sphere 64.9 km, about the area of Croatia.
+  That buys a hillslope domain (a cell is 0.0086 km², below the 0.01–1 km² channel head) at
+  the cost of world size. Every length in the pipeline now falls into one of three classes,
+  and putting one in the wrong class is silent:</p>
+
+  <ul class="plain">
+    <li><span class="cls cls-cell">cell</span> &nbsp;absolute; <em>not</em> rescaled, because cell size no longer varies with <code>n</code></li>
+    <li><span class="cls cls-world">world</span> &nbsp;a fraction of the sphere; rescaled by <code>PlateParams.for_radius</code> and its equivalents</li>
+    <li><span class="cls cls-vert">vertical</span> &nbsp;physical; never referred to the sphere at all</li>
+  </ul>
+
+  <p>Two modules sit outside this pipeline and are worth naming so the map is complete:
+  <code>terrain/amplify.py</code> (Stage 8, output-side resampling, used only by
+  <code>render_world.py</code>) and <code>terrain/dem.py</code> (reads SRTM GeoTIFFs for
+  <code>validate_metrics.py</code>). Neither runs during generation.</p>
+</section>
+
+<section>
+  <h2>The stages</h2>
+  <p class="lede">Algorithm, then the constants that steer it. Numbering is the project's own
+  and reflects real execution order.</p>
+
+  <div class="stage">
+    <div class="stage-no">0</div>
+    <div class="stage-body">
+      <h3>Grid</h3>
+      <p class="where">terrain/grid.py · <code>build_goldberg</code></p>
+      <p>Class-I Goldberg tiling: cells are the dual of a frequency-<em>n</em> subdivided
+      icosahedron, giving 10n²+2 cells — all hexagons but exactly 12 pentagons. Connectivity is
+      built <em>analytically</em> from the subdivision lattice rather than by Delaunay
+      triangulation, because within a face the adjacency is arithmetic and the 30 shared edges
+      stitch for free.</p>
+      <p>Lattice points are placed by equal-<em>arc</em> subdivision (slerp from each corner to
+      the opposite edge, averaged over three corners), not by linear interpolation and
+      normalisation — the latter bunches cells toward face centres at σ/mean ≈ 13%. The slerp
+      construction gives σ/mean 0.89% and max/min 1.16, constant from n=64 to n=785, so no
+      relaxation pass is needed. Both relaxation schemes tried made it worse.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Class</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">N_PRODUCTION</td><td class="v">785</td><td></td><td class="n">6,162,252 cells</td></tr>
+        <tr><td class="k">TARGET_CELL_KM</td><td class="v">0.1</td><td><span class="cls cls-cell">cell</span></td><td class="n">the invariant; radius follows from it</td></tr>
+        <tr><td class="k">MEAN_SPACING_N</td><td class="v">1.209055</td><td></td><td class="n">measured <code>n×</code>(unit-sphere spacing); converged by n=64</td></tr>
+        <tr><td class="k">R_WORLD_KM</td><td class="v">64.927</td><td><span class="cls cls-world">world</span></td><td class="n">derived, not set. 4πR² = 52,970 km²</td></tr>
+        <tr><td class="k">EQUATOR_CELLS</td><td class="v">4096</td><td></td><td class="n">documentary only — cell size wins the three-way spec conflict</td></tr>
+        <tr><td class="k">R_EARTH_KM</td><td class="v">6371.0</td><td></td><td class="n">reference; ratio to R_WORLD is 98.125</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">1</div>
+    <div class="stage-body">
+      <h3>Tectonic crust</h3>
+      <p class="where">terrain/stage1.py · <code>generate_crust_tectonic</code> + terrain/plates.py</p>
+      <p>Crust <em>thickness</em> is generated, never elevation. Elevation falls out of Airy
+      isostasy and sea level is an area-weighted quantile solved for a target land fraction, so
+      the coastline is a consequence rather than a drawn line.</p>
+      <p>Crust type comes from warped 3D simplex noise <em>independently of the plate layout</em>
+      — six of Earth's seven major plates carry both types, and assigning per plate gives every
+      continent a Voronoi silhouette. Plates are laid over afterwards: Poisson-disk seeds,
+      Lloyd-relaxed, partitioned by spherical Voronoi at domain-warped query positions (raw
+      Voronoi boundaries are exact great-circle arcs, and orogens track boundaries, so ranges
+      would run dead straight). Motion is a genuine Euler pole per plate — an axis and an
+      angular rate — with velocity as the cross product.</p>
+      <p>Boundary type comes from decomposing relative motion into normal and tangential
+      components. Distance to the nearest boundary is a KD-tree query, not graph relaxation:
+      graph distance on a hex lattice is anisotropic by up to 21.8%, and since uplift is an
+      exponential in that distance the error baked lattice-aligned ridges into the uplift field
+      before a single erosion step ran. Stress is smoothed 8 passes <em>along</em> strike for the
+      same reason — each boundary cell owns a wedge of interior, so raw scatter renders as hard
+      stripes fanning out from the belt.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Class</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">continental_fraction</td><td class="v">0.40</td><td></td><td class="n">of surface, not of land; the rest drowns as shelf</td></tr>
+        <tr><td class="k">target_land_fraction</td><td class="v">0.29</td><td></td><td class="n">Earth value; solved, not assumed</td></tr>
+        <tr><td class="k">crust_frequency / octaves</td><td class="v">0.7 / 3</td><td></td><td class="n">1.6 gave 340 landmasses, top one 15% of land; 0.7 gives 64 and a top-three of 84%</td></tr>
+        <tr><td class="k">warp_amp / warp_frequency</td><td class="v">0.35 / 2.2</td><td></td><td class="n">fractal coastlines come from here, not from more octaves</td></tr>
+        <tr><td class="k">transition</td><td class="v">0.12</td><td></td><td class="n">continental-slope ramp width, in noise units</td></tr>
+        <tr><td class="k">relief_km</td><td class="v">1.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">cut ~3× from Earth values; isostasy is radius-blind and would otherwise put 4,455 m on a 64.9 km sphere</td></tr>
+        <tr><td class="k">t_continental / t_oceanic</td><td class="v">12.0 / 2.4 km</td><td><span class="cls cls-vert">vertical</span></td><td class="n">crustal thickness</td></tr>
+        <tr><td class="k">rho_cont / ocean / mantle</td><td class="v">2.8 / 2.9 / 3.3</td><td><span class="cls cls-vert">vertical</span></td><td class="n">ocean crust denser — this is why it sits low</td></tr>
+        <tr><td class="k">min_island_area_km2</td><td class="v">0.104</td><td><span class="cls cls-cell">cell</span></td><td class="n">1000 km² ÷ 98.125²; still ~12 cells of speckle</td></tr>
+        <tr><td class="k">plate_count</td><td class="v">18</td><td></td><td class="n">drives orogen layout, not continent shape</td></tr>
+        <tr><td class="k">min_separation_deg</td><td class="v">18.0</td><td></td><td class="n">Poisson-disk rejection; without it, plate sizes are a lottery</td></tr>
+        <tr><td class="k">max_speed_mm_per_yr</td><td class="v">80.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">a <em>surface</em> speed — rock does not know the planet's radius</td></tr>
+        <tr><td class="k">transform_ratio</td><td class="v">2.5</td><td></td><td class="n">the naive 1.0 classified 44% of boundaries transform against Earth's ~20%</td></tr>
+        <tr><td class="k">boundary_warp / freq</td><td class="v">0.10 / 2.5</td><td></td><td class="n">bends boundaries without changing partition topology</td></tr>
+        <tr><td class="k">stress_smoothing_passes</td><td class="v">8</td><td></td><td class="n">≈8 cells of strike</td></tr>
+        <tr><td class="k">UPLIFT_REACH_R</td><td class="v">0.188</td><td><span class="cls cls-world">world</span></td><td class="n">1200 km on Earth as a fraction of R; = 12.2 km here</td></tr>
+        <tr><td class="k">orogen_decay_km</td><td class="v">2.04</td><td><span class="cls cls-world">world</span></td><td class="n">200 km ÷ 98.125; continental collision</td></tr>
+        <tr><td class="k">arc_offset / arc_width</td><td class="v">1.53 / 1.02</td><td><span class="cls cls-world">world</span></td><td class="n">volcanic arc inland of a trench</td></tr>
+        <tr><td class="k">rift_shoulder_km</td><td class="v">0.82</td><td><span class="cls cls-world">world</span></td><td class="n">uplifted flanks either side of a subsiding graben</td></tr>
+        <tr><td class="k">convergent / divergent</td><td class="v">5.0 / 2.7 km</td><td><span class="cls cls-vert">vertical</span></td><td class="n">crustal root and thinning</td></tr>
+        <tr><td class="k">u_max_m_per_myr</td><td class="v">100.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">a ceiling, not a setting. See "the budget is spent" below</td></tr>
+        <tr><td class="k">craton_floor_m_per_myr</td><td class="v">2.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">applies to rising ground only; grabens must be free to drop</td></tr>
+        </tbody>
+      </table></div>
+      <p>Uplift is a separate operator (<code>derive_uplift</code>) so uplift models can be
+      swapped without regenerating plates. Its shape terms carry their own unnamed weights:
+      collision <code>1.0</code>, arc <code>0.6</code>, rift shoulder <code>0.45</code>, graben
+      <code>−0.35</code>, transform <code>0.12</code>; the sum is clipped to <strong>[−1, +1]</strong>
+      before scaling. The lower bound is −1 rather than 0 deliberately — clipping at zero threw
+      away rift subsidence, and the consequence surfaced two stages later as a world with
+      essentially no endorheic lakes.</p>
+      <p><strong>The uplift budget is spent, and that is the operative fact.</strong>
+      Steady-state hilltop curvature is exactly <code>U/D</code>. At U=100 and D=0.02 that is
+      5×10⁻³ 1/m — 100 m of convex relief over a 200 m hillslope and a basal slope of 1.0, which
+      is 45°, right at the angle of repose. Measured slopes on the shipped world are already p99
+      62.5°, max 83.7°. Any proposal to raise <code>U</code> for more relief multiplies every
+      hillslope gradient by the same factor.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">2–4</div>
+    <div class="stage-body">
+      <h3>Landscape evolution, coupled with climate</h3>
+      <p class="where">terrain/coupled.py → terrain/stage2.py + terrain/climate.py</p>
+      <p>The realism engine. <code>dz/dt = U − K·A^m·S^n + D·∇²z</code>, solved by Braun &amp;
+      Willett's implicit method: process cells in topological order so each cell's receiver is
+      already updated, and the update becomes a scalar solve. O(N), unconditionally stable,
+      million-year timesteps. Setting <code>dz/dt = 0</code> gives <code>θ = m/n</code> exactly,
+      which is the end-to-end check — it only comes out right if solver, routing, spherical
+      geometry and metrics all agree.</p>
+      <p>Stages 2, 3 and 4 are one loop, run three times: solve climate on the current
+      topography, convert precipitation into a discharge weight, erode, repeat. <strong>The
+      coupling runs through discharge, not through a fudged erodibility.</strong> Stream power is
+      properly <code>E = K·Q^m·S^n</code>; drainage area is only a stand-in for Q under uniform
+      rainfall, so replacing the accumulated quantity with <code>area·P/mean(P)</code> restores
+      the real variable, needs no solver change, and degenerates exactly to the uncoupled run
+      when precipitation is uniform.</p>
+      <p>Two solver subtleties carry most of the correctness. Cells the depression fill had to
+      raise are marked <code>in_lake</code> and skipped by <em>both</em> the fluvial solve and
+      the diffusion term — exempting either alone achieves nothing, because whichever is left
+      fills the basin on its own. And uplift and subsidence take different paths: positive uplift
+      goes through the clamped solver, subsidence is applied afterwards unclamped, because the
+      clamp that stops water cutting a closed basin would also forbid a rift graben from ever
+      dropping below its outlet.</p>
+      <p>Hillslope diffusion is a finite-volume Laplacian on the mesh, and it is
+      <em>explicit</em>, so it must be sub-cycled: the stability limit tracks cell area and falls
+      as the square of cell size — 239 Myr at 9.77 km cells, <strong>25 kyr at 100 m</strong>,
+      against a 0.5 Myr fluvial step. <code>diffusion_substeps</code> computes the count from the
+      grid and sub-cycles only the cheap term.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Class</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">K</td><td class="v">1.2e-6</td><td><span class="cls cls-vert">vertical</span></td><td class="n">sets relief, not shape. Targets ~2 km peaks for the <em>coupled</em> run at n=785; measured 2,428 m</td></tr>
+        <tr><td class="k">m / n</td><td class="v">0.45 / 1.0</td><td></td><td class="n">θ = m/n at steady state; n≠1 would need Newton</td></tr>
+        <tr><td class="k">D</td><td class="v">0.02</td><td><span class="cls cls-vert">vertical</span></td><td class="n">m²/yr soil creep. 0.05→0.02 is a measured trade: θ 0.267→0.362, sub-steps 48→20</td></tr>
+        <tr><td class="k">G</td><td class="v">0.0</td><td></td><td class="n">deposition off; pure detachment-limited</td></tr>
+        <tr><td class="k">max_subsidence_m</td><td class="v">500.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">a <em>total</em>, not a rate — rift subsidence is finite. Nothing else bounds it with G=0</td></tr>
+        <tr><td class="k">dt_myr</td><td class="v">0.5</td><td></td><td class="n">largest step that still resolves the tectonics</td></tr>
+        <tr><td class="k">fill_every</td><td class="v">1</td><td></td><td class="n">priority-flood cadence</td></tr>
+        <tr><td class="k">LAKE_TOL_M</td><td class="v">1e-3</td><td></td><td class="n">matches Stage 6's tolerance so the two agree on lake bed</td></tr>
+        <tr><td class="k">safety (sub-steps)</td><td class="v">0.5</td><td></td><td class="n">uses the <em>worst</em> cell — the 12 pentagons are smallest</td></tr>
+        <tr><td class="k">passes × steps</td><td class="v">3 × 200</td><td></td><td class="n">measured |dz| between passes: 112.5 → 14.0 → 8.5 m</td></tr>
+        <tr><td class="k">DISCHARGE_FLOOR</td><td class="v">0.30</td><td></td><td class="n">arid basins erode slowly, not never. Sets the coupled/uncoupled peak ratio at 1.37×</td></tr>
+        </tbody>
+      </table></div>
+      <p>The discharge weight is normalised so <em>mean relief</em> is unchanged, not so the mean
+      or median weight is one — relief responds to <code>w^(−m/n)</code>, and precipitation is
+      heavily right-skewed, so normalising the weight inflates the whole world instead of
+      redistributing erosion within it. A bisection solves for the scale directly, which is
+      self-calibrating and needs no per-resolution tuning; the two earlier normalisations failed
+      in opposite directions and both looked fine on the drainage metrics.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">3</div>
+    <div class="stage-body">
+      <h3>Climate (inside the loop, and again after reflood)</h3>
+      <p class="where">terrain/climate.py · <code>compute_seasons</code></p>
+      <p>Four solves through the year, returned as one object whose annual mean and total are
+      what everything downstream reads. Four samples rather than two because four evenly spaced
+      points determine a two-harmonic year <em>exactly</em> — mean, annual and semiannual — which
+      is what makes Köppen's twelve months an interpolation rather than an assumption. The
+      samples are offset off the solstices, because a set containing both equinoxes contains the
+      same climate twice: this model has no heat storage, so two dates with the same declination
+      give bit-identical results.</p>
+      <p>Temperature is latitude insolation (with a true day-length term, so polar night exists
+      and Köppen's D and E classes can turn on it), minus the lapse rate, minus continental
+      cooling weighted by <code>|sin lat|^1.5</code>, plus a maritime anomaly. Precipitation is a
+      steady-state advection–reaction fixed point rather than time-stepped parcels.</p>
+      <p><strong>Ocean heat transport is the only non-zonal mechanism.</strong> Everything else is
+      a function of where a cell <em>is</em>; the maritime anomaly is a function of where its air
+      <em>came from</em>, which is the only thing that can tell two coasts at the same latitude
+      apart. Wind is Ekman-deflected 45° over water and then projected off every land neighbour
+      it still points into — that second step is what turns flow <em>along</em> a coast and gives
+      a gyre its poleward western boundary, which is the whole Norway-against-Labrador effect.
+      The zonal mean of the resulting anomaly is stripped before use, because Earth's shallow
+      equator-to-pole gradient already contains its own ocean transport and adding a modelled one
+      counts it twice.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Class</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">t_equator_c / t_pole_c</td><td class="v">27.0 / −25.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">annual means; the season anomaly is unclipped so they stay true</td></tr>
+        <tr><td class="k">lapse_rate_c_per_km</td><td class="v">6.5</td><td><span class="cls cls-vert">vertical</span></td><td class="n">standard environmental lapse rate</td></tr>
+        <tr><td class="k">axial_tilt_deg</td><td class="v">23.44</td><td></td><td class="n">drives declination</td></tr>
+        <tr><td class="k">seasonal_lag_days</td><td class="v">30.0</td><td></td><td class="n">subtracted from the date, not added to the answer</td></tr>
+        <tr><td class="k">SEASON_PHASE</td><td class="v">0, .25, .5, .75</td><td></td><td class="n">must stay evenly spaced for the harmonic fit</td></tr>
+        <tr><td class="k">seasonal_gain</td><td class="v">1.0</td><td></td><td class="n">swings 1.4 °C equator, 14.6 at 45°, 20.7 at pole</td></tr>
+        <tr><td class="k">continental_cooling_c</td><td class="v">15.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">annual <em>mean</em> cooling inland; the cheapest non-zonal signal</td></tr>
+        <tr><td class="k">continentality_c</td><td class="v">6.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">seasonal amplitude gain far from the sea</td></tr>
+        <tr><td class="k">continentality_scale_km</td><td class="v">15.3</td><td><span class="cls cls-world">world</span></td><td class="n">1500 km ÷ 98.125</td></tr>
+        <tr><td class="k">ekman_deg</td><td class="v">45.0</td><td></td><td class="n">right in the north, left in the south; closes the gyre</td></tr>
+        <tr><td class="k">current_scale_km</td><td class="v">10.0</td><td><span class="cls cls-world">world</span></td><td class="n">= 981 km on Earth. Short against a real boundary current; flagged as worth revisiting</td></tr>
+        <tr><td class="k">maritime_scale_km</td><td class="v">5.0</td><td><span class="cls cls-world">world</span></td><td class="n">= 491 km on Earth; how far inland maritime air keeps its anomaly</td></tr>
+        <tr><td class="k">ocean_heat_c</td><td class="v">1.0</td><td></td><td class="n">the regression switch. Zeroing <em>wind speed</em> does not disable it</td></tr>
+        <tr><td class="k">zonal_band_deg</td><td class="v">2.0</td><td></td><td class="n">band means are interpolated, not held constant — a staircase ruled the map with 2.02° stripes</td></tr>
+        <tr><td class="k">orographic_coeff</td><td class="v">0.004</td><td><span class="cls cls-vert">vertical</span></td><td class="n">per metre of forced ascent, so resolution-robust</td></tr>
+        <tr><td class="k">background_rainout_km</td><td class="v">8.33</td><td><span class="cls cls-world">world</span></td><td class="n">reproduces the old per-step 0.012 exactly at n=785, where it was tuned</td></tr>
+        <tr><td class="k">subsidence_floor</td><td class="v">0.10</td><td></td><td class="n">rainout multiplier where air descends; puts deserts at 25–30°</td></tr>
+        <tr><td class="k">eddy</td><td class="v">0.07</td><td></td><td class="n">not optional — pure advection makes the four zero-wind latitudes into traps that spiked to 129,000 mm/yr</td></tr>
+        <tr><td class="k">meander_deg / freq</td><td class="v">7.0 / 1.8</td><td></td><td class="n">stands in for Rossby waves; without it the band edges are ruler-straight stripes</td></tr>
+        <tr><td class="k">itcz_follow / taper</td><td class="v">0.4 / 45°</td><td></td><td class="n">9.4° excursion, tapered so the westerlies never reverse</td></tr>
+        <tr><td class="k">monsoon_c</td><td class="v">0.2</td><td></td><td class="n">the knee. In direct tension with the rain shadow — 0.60 buys a stronger monsoon for a third of the shadow</td></tr>
+        <tr><td class="k">monsoon_ref_c / km</td><td class="v">8.0 / 5.0</td><td><span class="cls cls-world">world</span></td><td class="n">the first version used cell spacing, giving a reference gradient of 80 °C/km — i.e. nothing</td></tr>
+        <tr><td class="k">land_recycling</td><td class="v">0.70</td><td></td><td class="n">evapotranspiration; also in tension with the shadow</td></tr>
+        <tr><td class="k">saturation_gain</td><td class="v">0.06</td><td></td><td class="n">per °C; the cap is what makes the fixed point converge at all</td></tr>
+        <tr><td class="k">iterations</td><td class="v">400</td><td></td><td class="n">converged — 1200 moves log₁₀ sd by 0.02</td></tr>
+        <tr><td class="k">target_median_precip_mm</td><td class="v">600.0</td><td></td><td class="n">Earth's land <em>median</em>. Anchoring the mean instead put half the world in desert by construction</td></tr>
+        </tbody>
+      </table></div>
+      <p class="footnote">Two limits are recorded in the module rather than papered over. There is
+      no subtropical desert belt from the right cause — a surface-only model has no aloft, so it
+      cannot represent air that arrives dry; the <code>subsidence_floor</code> surrogate puts the
+      belt in the right place for the wrong reason. And the rainfall distribution is twice as
+      wide as Earth's (log₁₀ sd 0.83 against ~0.45), which is <em>not</em> a convergence artifact
+      and does not respond to any of the six knobs swept against it.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">5</div>
+    <div class="stage-body">
+      <h3>Glacial erosion</h3>
+      <p class="where">terrain/glacial.py · <code>erode</code></p>
+      <p>Mass balance is driven by the Stage 3 <em>temperature field</em>, not by an
+      elevation-only ELA, so a cell glaciates for being high, for being far north, or both — a
+      latitude-only ELA put ice on 1.2% of land and missed low-lying polar shields entirely. Ice
+      routes down the existing flow graph and erodes as a power law on flux.</p>
+      <p><strong>The one thing that makes glacial terrain look glacial is that ice can cut below
+      its own outlet.</strong> Water cannot, so the fluvial solver forbids it. Getting that to
+      happen took a non-obvious change: simply removing the clamp achieves nothing, because with
+      <code>E ∝ S</code> erosion vanishes exactly as a cell approaches its receiver's elevation
+      and the bed asymptotes flat. The driving slope has to be <em>regional</em>, measured over a
+      long flow path — which is also physically right, since ice responds to surface slope, not
+      bed slope.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Class</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">freeze_c</td><td class="v">−2.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">accumulation below this mean annual temperature</td></tr>
+        <tr><td class="k">balance_per_degc</td><td class="v">0.35</td><td><span class="cls cls-vert">vertical</span></td><td class="n">m of ice per year per degree below freezing</td></tr>
+        <tr><td class="k">max_balance_m_per_yr</td><td class="v">3.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">—</td></tr>
+        <tr><td class="k">K</td><td class="v">3.0e-3</td><td><span class="cls cls-vert">vertical</span></td><td class="n">swept 20×; the only value satisfying rate ∈ published band, 5–10% of relief, and Köppen E ≈ 14%</td></tr>
+        <tr><td class="k">m / n</td><td class="v">0.30 / 1.0</td><td></td><td class="n">m below the fluvial 0.45 <em>on purpose</em> — a flatter long profile is the U-shaped trough</td></tr>
+        <tr><td class="k">min_flux_km3_per_yr</td><td class="v">1.04e-6</td><td><span class="cls cls-cell">cell</span></td><td class="n">1e-2 ÷ 98.125² (a volume, so R²); below this it is snow, not a glacier</td></tr>
+        <tr><td class="k">slope_baseline_km</td><td class="v">1.22</td><td><span class="cls cls-cell">cell</span></td><td class="n">12 cells of flow path — <em>not</em> rescaled with the radius</td></tr>
+        <tr><td class="k">dt_yr × steps</td><td class="v">5e3 × 60</td><td></td><td class="n">300 kyr</td></tr>
+        <tr><td class="k">max_incision_per_step_m</td><td class="v">8.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">see F5 — 8 × 60 = 480 m against a ~432 m relief budget, so it never binds</td></tr>
+        </tbody>
+      </table></div>
+      <p class="footnote">A negative result is recorded here rather than asserted away: the
+      textbook signature — glaciation flattens channel long profiles — did not survive
+      measurement. Concavity went 0.507 → 0.408 at n=256 but 0.559 → 0.631 at n=128. The sign
+      flips with resolution, so no test asserts it.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">5b</div>
+    <div class="stage-body">
+      <h3>Reflood, then climate on the new coastline</h3>
+      <p class="where">scripts/generate_world.py · <code>stage1.reflood</code> → <code>climate.compute_seasons</code></p>
+      <p>The land mask is not a constant of the pipeline. Glacial erosion cuts below its own
+      outlet — that is what carves a fjord — and the water then has to be let in, or those are
+      dry fjords. Reflood re-applies Stage 1's two rules to the eroded surface: below the datum
+      is water, and ocean is the <em>largest connected body</em> of it. Whatever is below the
+      datum and cannot reach the sea stays land and becomes a Stage 6 lake candidate.</p>
+      <p>Climate is then re-solved on the coastline that actually ships, because coast distance,
+      the ocean moisture source and the sea-surface anomaly all move when a fifth of the land
+      floods. <strong>This does not feed back into erosion</strong> — Stages 2 and 5 have already
+      run, so it is the reported climate being made consistent, not the landscape. Stage 5
+      therefore still sees the pre-reflood temperature, which is correct: that is the coastline
+      the ice grew on.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">6</div>
+    <div class="stage-body">
+      <h3>Hydrology — lakes, endorheic basins, rivers</h3>
+      <p class="where">terrain/hydrology.py · <code>analyse</code></p>
+      <p>Depression filling inside the erosion loop is a numerical device. This is where
+      depressions become geography. <strong>The distinction that matters is exorheic versus
+      endorheic</strong>, and it needs a water balance rather than geometry, which is why this
+      stage comes after climate. Each depression's cells are sorted by bed elevation and the
+      water raised until lake-surface evaporation equals catchment inflow; if that level lands
+      below the spill point, the lake is terminal.</p>
+      <p>Runoff uses Turc–Pike rather than <code>min(P, PET)</code>. The obvious form has a kink
+      at P = PET and hands back exactly zero runoff everywhere drier — measured, that was 59% of
+      all land, so the subtropics carried no rivers at all rather than thin ones.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Class</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">pet_base / linear / cubic</td><td class="v">300 / 25 / 0.05</td><td><span class="cls cls-vert">vertical</span></td><td class="n">Thornthwaite-style: ~300 mm at freezing, 1700 at 25 °C</td></tr>
+        <tr><td class="k">pet_max_mm</td><td class="v">2500</td><td><span class="cls cls-vert">vertical</span></td><td class="n">temperature clipped to [−20, 40] first</td></tr>
+        <tr><td class="k">endorheic_margin_m</td><td class="v">2.0</td><td><span class="cls cls-vert">vertical</span></td><td class="n">cut with the relief budget; basins now hold 50–200 m, not 500–2,000</td></tr>
+        <tr><td class="k">channel_threshold_km3_per_yr</td><td class="v">5.2e-5</td><td><span class="cls cls-cell">cell</span></td><td class="n">0.5 ÷ 98.125² (a volume). ≈6 cells = 0.05 km², inside the real channel-head band</td></tr>
+        <tr><td class="k">width_coeff_m / exponent</td><td class="v">90.0 / 0.5</td><td><span class="cls cls-vert">vertical</span></td><td class="n"><em>not</em> rescaled — hydraulic geometry, and Q already carries the smaller basins</td></tr>
+        <tr><td class="k">min_lake_area_km2</td><td class="v">0.0415</td><td><span class="cls cls-cell">cell</span></td><td class="n">—</td></tr>
+        </tbody>
+      </table></div>
+      <p class="footnote">Rivers are encoded as <code>river_width_m</code> with zero meaning no
+      river; there is no separate boolean because <code>width &gt; 0</code> is the same test.
+      Deltas and alluvial fans are deliberately absent — they belong to the sediment-flux term in
+      Stage 2. Meanders are absent for a weaker reason the module admits: at 100 m cells the
+      largest rivers <em>are</em> wide enough to meander at a resolved scale and do not.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">7</div>
+    <div class="stage-body">
+      <h3>Biomes — Whittaker, and Köppen alongside</h3>
+      <p class="where">terrain/biomes.py + terrain/koppen.py</p>
+      <p>Whittaker classifies on annual mean temperature and rainfall, and stays the renderer's
+      colour source and the classification every tuned share in the docs is written against.
+      Köppen reads <em>when</em> the rain falls and how cold the winter gets, reconstructing
+      twelve months from the four seasonal samples. The two are exported side by side and
+      disagree informatively; switching would silently invalidate the tuning history.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Threshold</th><th>Value</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">Whittaker temperature bands</td><td class="v">20 / 5 / −5 °C</td><td class="n">warm / temperate / cold / frigid</td></tr>
+        <tr><td class="k">warm precipitation cuts</td><td class="v">250 / 1500 / 2500</td><td class="n">desert → savanna → seasonal forest → rainforest</td></tr>
+        <tr><td class="k">temperate precipitation cuts</td><td class="v">120 / 400 / 900 / 1800</td><td class="n">below textbook because the pipeline's rainfall has a heavy dry tail (land p25 ≈ 15 mm)</td></tr>
+        <tr><td class="k">cold cut</td><td class="v">90</td><td class="n">below this there is not enough water for closed canopy</td></tr>
+        <tr><td class="k">ice floor</td><td class="v">−12 °C</td><td class="n">hard temperature floor</td></tr>
+        <tr><td class="k">snowline</td><td class="v">4900 m · cos^1.6</td><td class="n">Earth's figure — see F5; with 2,428 m peaks the elevation branch rarely fires</td></tr>
+        <tr><td class="k">Köppen arid threshold</td><td class="v">20T + 0/140/280</td><td class="n">offset by when the rain falls (share ≤0.3 / mid / ≥0.7)</td></tr>
+        <tr><td class="k">Köppen A / C / D / E cuts</td><td class="v">18 / −3 / 10 / 22 °C</td><td class="n">coldest month, warmest month, months over 10 °C</td></tr>
+        </tbody>
+      </table></div>
+      <p class="footnote">The module is honest about what four samples cannot recover: the second
+      semiannual coefficient needs a fifth sample, so Af and Am are the classes to distrust
+      first.</p>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-no">9</div>
+    <div class="stage-body">
+      <h3>Metrics and export</h3>
+      <p class="where">terrain/metrics.py + terrain/export.py</p>
+      <p>One artifact: field arrays plus <code>n</code>, radius and seed, since the grid is fully
+      regenerable from <code>n</code> alone. The manifest records parameters and measured metrics
+      next to the data — a world whose provenance is lost is not reproducible even when the
+      generator is deterministic.</p>
+      <p>Concavity is reported <strong>per basin</strong>, not globally. Steady-state stream power
+      gives θ = m/n only where uplift is roughly uniform; globally, high-uplift regions become
+      headwater divides and low-uplift ones lowlands, so U ends up anti-correlated with A and
+      that lands straight in the regression — measured, it pushed θ from 0.45 to 0.97 on an
+      otherwise identical run. The model was right and the measurement was wrong.</p>
+      <div class="scroller"><table>
+        <thead><tr><th>Constant</th><th>Value</th><th>Role</th></tr></thead>
+        <tbody>
+        <tr><td class="k">channel threshold</td><td class="v">40 × median cell area</td><td class="n">must sit <em>above</em> the channel head or the fit spans the hillslope limb. θ reads 0.392 at 6 cells, 0.467 at 40, 0.556 at 400</td></tr>
+        <tr><td class="k">SRTM east reference</td><td class="v">θ 0.516, h 0.543</td><td class="n">measured on 63 km windows</td></tr>
+        <tr><td class="k">min_channel_cells / max_basins</td><td class="v">400 / 40</td><td class="n">per-basin regression gates</td></tr>
+        <tr><td class="k">log-bin count / min per bin</td><td class="v">40 (25 per basin) / 20</td><td class="n">slope–area is very noisy</td></tr>
+        <tr><td class="k">EPS (priority flood)</td><td class="v">1e-4</td><td class="n">see F1 — this one is broken above 2,048 m</td></tr>
+        <tr><td class="k">slope_baseline_km (routing)</td><td class="v">0.5</td><td class="n">single-cell slope is unusable on quantised DEMs</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <h2>Findings</h2>
+  <p class="lede">Seven, ordered by what they cost. One is a verified correctness bug with a
+  one-line fix; three are documentation that has drifted out of agreement with the code; one is
+  dead weight; two are scope questions rather than defects.</p>
+
+  <div class="finding crit">
+    <div class="f-head">
+      <span class="f-id">F1</span>
+      <h3 class="f-title">Priority-flood's +ε is lost to float32 above 2,048 m, and uplift silently stops</h3>
+      <span class="chip chip-crit">correctness · verified</span>
+    </div>
+    <p><code>flow.py:23</code> sets <code>EPS = 1e-4</code> metres, and the fill runs in float32.
+    Float32 spacing at 2,048 m is 2.44×10⁻⁴, so <code>filled[j] = key + EPS</code> rounds back to
+    <code>key</code> and the increment vanishes. Every cell inside a depression whose spill level
+    sits above that elevation ends up on an <em>exactly flat</em> filled surface, and
+    <code>compute_receivers</code> requires a strictly positive slope — so none of them drains.
+    They all become self-receivers.</p>
+    <p>Three consequences, in descending severity. <code>solve_stream_power</code> tests
+    <code>r == i</code> <em>before</em> it tests <code>in_lake</code>, so those cells take the
+    <code>out[i] = z[i]</code> branch and <strong>uplift is never applied to them</strong>.
+    <code>flow_accumulate</code> stops carrying drainage through the basin, so the trunk river
+    below it loses that whole catchment. And <code>glacial.abrade</code> skips them on the same
+    test.</p>
+    <p>Verified directly on the cached n=64 grid, routing a rough surface offset to different
+    elevations:</p>
+    <pre><code>offset      0 m:  spurious self-receivers      0   (of 537 lifted cells)
+offset    500 m:  spurious self-receivers      0
+offset  2,400 m:  spurious self-receivers    537   ← all of them
+offset  5,000 m:  spurious self-receivers    537</code></pre>
+    <p>Production peaks are 2,428 m, so ground above the threshold exists at n=785. Whether a
+    <em>closed basin</em> currently sits up there is world- and seed-dependent — but the mechanism
+    is unconditional once one does, and it fails silently: <code>build_order</code> still covers
+    every cell, so the existing assertion does not fire. Note the related <code>raised</code> and
+    <code>in_lake</code> tests use <code>1e-3</code>, which survives to well past 8 km, so lake
+    detection is unaffected — that is why the symptom is a missing forcing rather than a visible
+    crash.</p>
+    <p>The fix is to make the increment scale with magnitude, e.g.
+    <code>key + max(EPS, |key| × 1.2e-7)</code>, which stays in float32 and costs one comparison
+    in the inner loop. Moving the fill to float64 also works and costs ~25 MB at n=785.</p>
+    <div class="verdict done"><b>FIXED.</b> <code>flow.py</code> now takes
+    <code>max(EPS, |key| × 1.2e-7)</code> — one float32 ulp relative, so the increment always
+    moves at least one representable step. The repro goes 537 spurious outlets → 0 at every
+    offset, and drainage accumulation is restored. Guarded by a new parametrised test at 0 /
+    500 / 3,000 / 9,000 m, which fails at HEAD on the last two.</div>
+  </div>
+
+  <div class="finding crit">
+    <div class="f-head">
+      <span class="f-id">F2</span>
+      <h3 class="f-title">One uplift length never got rescaled with the sphere</h3>
+      <span class="chip chip-crit">consistency · verified</span>
+    </div>
+    <p><code>plates.derive_uplift</code> computes the transform-boundary term as
+    <code>0.12 × exp(−d / 100.0)</code>. That 100 km is a bare literal in the expression, so
+    <code>PlateParams.for_radius</code> never sees it — while its four siblings
+    (<code>orogen_decay_km</code>, <code>arc_offset_km</code>, <code>arc_width_km</code>,
+    <code>rift_shoulder_km</code>) were all divided by 98.125.</p>
+    <p>On a 64.9 km world the uplift reach is 12.2 km, over which <code>exp(−d/100)</code> runs
+    from 1.000 to 0.885. The term is therefore <em>flat</em>: transform domains receive a
+    near-uniform slab of up to 12 m/Myr — six times the cratonic floor — instead of a ridge that
+    hugs the boundary. Magnitude is modest, but the shape is wrong, and shape is precisely what
+    <code>stage2.uplift_field</code>'s own docstring argues matters more than magnitude.</p>
+    <p>This is the same class of bug the rescale already caught twice (the 1,200 km boundary
+    reach, the 1000 km² island threshold). It survived because it is a literal inside an
+    expression rather than a named field on the dataclass — which is itself the lesson worth
+    recording.</p>
+    <p><strong>This one had teeth.</strong> It is a real terrain change, not a cosmetic one:
+    transform domains are 17.6% of land, and fixing the decay takes them off the slab and down
+    to the cratonic floor beyond ~2 km. Measured at n=256, 2 × 200 steps, seed 1:</p>
+    <div class="scroller"><table>
+      <thead><tr><th></th><th>before</th><th>after</th></tr></thead>
+      <tbody>
+      <tr><td class="k">U on transform land</td><td class="v">3.51</td><td class="v">2.13 m/Myr</td></tr>
+      <tr><td class="k">land at craton floor</td><td class="v">70.9%</td><td class="v">76.3%</td></tr>
+      <tr><td class="k">θ (40 cells)</td><td class="v">0.500 (r² .934)</td><td class="v">0.438 (r² .919)</td></tr>
+      <tr><td class="k">Hack h</td><td class="v">0.489</td><td class="v">0.515</td></tr>
+      <tr><td class="k">peak</td><td class="v">692.4 m</td><td class="v">691.5 m</td></tr>
+      </tbody>
+    </table></div>
+    <p>Both θ inside the published 0.4–0.6 band, r² unmoved, everything else unchanged. The
+    n=128 test fixture reports the same change as θ 0.474 → 0.026, which looked alarming and is
+    not real: at that size a 40-cell threshold leaves 1,612 channel cells and no basin large
+    enough to fit, so r² runs 0.55 → 0.00 and both numbers are noise draws. That is recorded in
+    <code>plates.py</code> as "do not tune against n=128".</p>
+    <div class="verdict done"><b>FIXED.</b> Promoted to <code>transform_decay_km = 1.02</code>
+    and added to <code>for_radius</code>, with the table above alongside it.</div>
+  </div>
+
+  <div class="finding warn">
+    <div class="f-head">
+      <span class="f-id">F3</span>
+      <h3 class="f-title">Three module docstrings still describe the pre-rescale world</h3>
+      <span class="chip chip-warn">docs · contradicts code</span>
+    </div>
+    <p>These matter more than ordinary staleness, because each is the place a future decision
+    would go looking for its answer.</p>
+    <p><strong><code>glacial.py:5</code></strong> opens "At n=785 the cells are 9.81 km across"
+    and rules out thermal talus because 33° across one cell needs "6371 m of drop between
+    neighbours". At 100 m cells it needs <strong>64.9 m</strong>, which mountain terrain clears
+    easily — and the shipped world's p99 slope is 62.5°. <code>terrain-algorithms.md:278</code>
+    already carries the corrected verdict in a table; the module contradicts its own project
+    documentation. The same docstring claims ice sheets at 500–4,000 km are "firmly resolved" on
+    a sphere 64.9 km in radius.</p>
+    <p><strong><code>climate.py:60–63</code></strong> still states "land elevation … standard
+    deviation of 61 m … so the lapse rate contributes 0.28 C". That is the exact claim the last
+    commit was written to retract; the measured production figures are 104 m and 0.68 °C. The
+    correction landed in <code>README.md</code> and <code>terrain-algorithms.md</code> but not
+    here, so the wrong numbers survive in the module that owns the lapse rate.</p>
+    <p><strong><code>stage1.py:1–7</code></strong> announces itself as "Stage 1, throwaway
+    version" and says plates, Euler-pole motion and tectonic thickening are "none of that is
+    here" — but the file's primary entry point <code>generate_crust_tectonic</code> is the full
+    version, and it is what the pipeline calls. <code>generate_crust</code> is the throwaway one
+    and is now only used by tests.</p>
+    <div class="verdict done"><b>FIXED.</b> All three rewritten. <code>glacial.py</code> now
+    states the talus gap plainly (65 m at 100 m cells against a p99 of 62.5°) and notes that ice
+    sheets went the other way; <code>climate.py</code> carries 104 m / 0.68 °C with the reason
+    the old figures were wrong; <code>stage1.py</code> names both entry points and which one the
+    pipeline calls. A fourth stale line in <code>glacial.py</code> — overdeepening counts quoted
+    at 30 km spacing — is now marked as not re-measured since the rescale.</div>
+  </div>
+
+  <div class="finding warn">
+    <div class="f-head">
+      <span class="f-id">F4</span>
+      <h3 class="f-title"><code>margin_class</code> is computed on every run and consumed by nothing</h3>
+      <span class="chip chip-warn">dead output</span>
+    </div>
+    <p><code>classify_margins</code> runs inside <code>generate_crust_tectonic</code>, is carried
+    on <code>TectonicCrust</code>, and is read only by a diagnostic print in
+    <code>run_stage2.py</code> and one test. It is <em>not</em> passed to
+    <code>export_world</code>, so it never reaches the archive. Its docstring promises it "drives
+    shelf width, whether rivers end in deltas or plunge straight in, and where fjords versus
+    barrier islands belong" — none of which is implemented anywhere.</p>
+    <p>Its <code>active_within_km=400.0</code> parameter is separately dead:
+    <code>boundary_dist_km</code> is capped at 0.188 R = 12.2 km with a 122 km sentinel for
+    beyond-cap cells, so the <code>close</code> test is <strong>always true</strong>. The function
+    still behaves sensibly (beyond-cap cells have <code>nearest_boundary = −1</code> and so read
+    as NONE), but the parameter reads as a tuning knob and is not one.</p>
+    <p>Two honest options: add it to the export, where it is cheap and genuinely useful to
+    anything drawing coasts; or delete it and the print. Leaving it as-is is the only bad option,
+    because it looks like a live feature.</p>
+    <p><strong>Exporting it surfaced a second bug.</strong> <code>margin_class</code> is computed
+    in Stage 1, but the coastline moves at Stage 5b — reflood takes land from 29.4% to 22.7%.
+    Shipping the Stage 1 margins next to the post-reflood land mask would have exported a margin
+    for a coast that no longer exists, which is the exact failure the reflood comment warns
+    about. It is now re-derived on the shipped coastline, beside the climate re-solve that
+    exists for the same reason; the plates themselves are untouched, since boundary type and
+    distance are geometry rather than elevation.</p>
+    <div class="verdict done"><b>FIXED.</b> Exported as <code>field_margin_class</code>,
+    re-derived post-reflood, and <code>active_within_km</code> replaced by
+    <code>ACTIVE_MARGIN_R = 0.0628</code> (400 km as a fraction of R). Verified on an n=64 run:
+    every tagged cell lands on the shipped land mask, and ACTIVE is 27.9% of tagged coast rather
+    than 100% of anything near a boundary of the right type.</div>
+  </div>
+
+  <div class="finding note">
+    <div class="f-head">
+      <span class="f-id">F5</span>
+      <h3 class="f-title">Two constants stayed on Earth's vertical scale while everything else came down</h3>
+      <span class="chip chip-note">scope</span>
+    </div>
+    <p>Neither is a bug. Both are the accounting gap the last commit named — elevation is an
+    <em>emergent field</em>, and the rescale's three-class table covers parameters, not fields.</p>
+    <p><code>biomes.snowline_m</code> puts permanent snow at 4,900 m at the equator. With peaks at
+    2,428 m, the elevation branch of the ice test cannot fire until roughly 55° latitude, so
+    permanent ice is effectively a temperature band rather than a mountain feature — the thing
+    the function exists to add.</p>
+    <p><code>glacial.max_incision_per_step_m = 8.0</code> over 60 steps allows 480 m of cutting
+    against a pre-glacial relief budget of ~432 m. The clamp sits above the quantity it bounds,
+    so it never binds and is not doing the safety job its name implies.</p>
+    <p><strong>Measuring the second one showed the review was wrong about it.</strong> The clamp
+    is not vestigial: on an n=128 world <strong>7,417 land cells hit it</strong>, and the deepest
+    total incision comes out at exactly 8.0 × 60 = <strong>480.00 m</strong> — meaning the
+    fastest-eroding cells are clamped on every single step. Wherever that holds, the local
+    erosion rate is set by the clamp rather than by <code>K·Q^m·S^n</code>, so <code>K</code> and
+    <code>max_incision_per_step_m</code> are not independent knobs and the twentyfold
+    <code>K</code> sweep in <code>GlacialParams</code> does not describe the model on its own.
+    That is a more useful fact than the one the review claimed.</p>
+    <p>The snowline claim held and is stronger than stated: land cells above their own snowline
+    number <strong>zero</strong>. Every ICE cell comes from the −12 °C floor. A 2,428 m
+    production peak clears the snowline only poleward of 49.8°; the n=128 fixture's 347 m peak
+    needs 79°.</p>
+    <div class="verdict done"><b>DONE — one claim corrected.</b> Both documented where they sit.
+    The snowline note explains why scaling it down would be worse than leaving it dead (it would
+    paint ice on ground 300 m up and 10 °C above freezing; the temperature field is the honest
+    authority and is already consulted). Neither constant was retuned.</div>
+  </div>
+
+  <div class="finding note">
+    <div class="f-head">
+      <span class="f-id">F6</span>
+      <h3 class="f-title">Mass wasting became resolvable at 100 m cells and is still absent</h3>
+      <span class="chip chip-note">gap · already recorded</span>
+    </div>
+    <p><code>terrain-algorithms.md:278</code> already flags this, so it is confirmation rather
+    than discovery — but it deserves its rank. At 100 m cells the angle of repose is 64.9 m of
+    drop between neighbours. The shipped world measures p99 62.5°, p99.9 76.1°, max 83.7°: a real
+    share of steep ground sits past repose and stays there, because nothing in the pipeline
+    removes it.</p>
+    <p>The connection worth drawing is to the uplift ceiling. The reason
+    <code>u_max_m_per_myr</code> is documented as a spent budget is that hillslope gradients are
+    already past repose — but they are past repose <em>partly because no operator relieves
+    them</em>. A talus term would not create relief on its own, and it is not a route to the
+    lapse-rate shortfall; what it would do is make the slope distribution physically admissible,
+    which is currently the pipeline's clearest departure from real terrain.</p>
+    <p><strong>Built — and it does almost nothing, which is the finding.</strong>
+    <code>stage2.mass_wasting</code> relaxes any edge past repose, moving material from the high
+    cell to the low one with a volume split that conserves mass exactly on an unstructured mesh.
+    Four tests pin it: mass conservation, the slope cap, that gentle ground is untouched, and
+    that it never overshoots into an inverted slope. Then the sweep at n=256 came back flat —
+    every repose angle from 45° down to 30° produced the same world (θ 0.438–0.463, peak 691 m,
+    z std 47.4 m).</p>
+    <p>Decomposing the slope statistic explains why:</p>
+    <div class="scroller"><table>
+      <thead><tr><th>steep edges (&gt;33°), n=128 after Stage 2</th><th>count</th><th>share</th></tr></thead>
+      <tbody>
+      <tr><td class="k">touching an OCEAN cell</td><td class="v">169,078</td><td class="v">98.1%</td></tr>
+      <tr><td class="k">touching a LAKE cell</td><td class="v">3,124</td><td class="v">1.8%</td></tr>
+      <tr><td class="k">land–land, neither</td><td class="v">80</td><td class="v">0.05%</td></tr>
+      </tbody>
+    </table></div>
+    <p>Almost every over-steep edge is a cell against a surface <em>pinned at a level</em> — the
+    shoreline, where ocean is held at base level, or a lake rim. Those are not hillslopes, and
+    the operator correctly leaves them alone. Genuine hillslopes on the same world run p50
+    <strong>0.9°</strong> and p90 <strong>9.4°</strong>: nowhere near repose, because U/D
+    equilibrium does not put them there.</p>
+    <p><strong>This overturns a claim the project was relying on.</strong>
+    <code>plates.py</code> argued the uplift budget is spent partly on the grounds that "measured
+    slope distribution … p99 62.5° … so the steep ground is already past repose". Those
+    percentiles are real; that reading of them is not. It is a statistic about the coastline, not
+    about hillslopes. The <em>conclusion</em> survives untouched — it rests on
+    <code>C = U/D</code> and the 45° basal gradient that implies, which is arithmetic — but one
+    of its two supports was never load-bearing, and <code>plates.py</code> now says so.</p>
+    <p>Kept on regardless, at a cost that does not show in the run time, because it is a physical
+    constraint that ought to hold and there is one regime where it bites: glacial erosion takes
+    the land–land count from 80 to <strong>4,530</strong>. Stage 5b then floods almost all of it
+    (back to 38), so a post-glacial pass would relax ground about to become seabed — a property
+    of this world's hypsometry, not a general one, and recorded as such.</p>
+    <div class="verdict done"><b>DONE.</b> Operator built, tested, swept, and defaulted on at 33°.
+    The negative result and the <code>plates.py</code> correction are the real output.</div>
+  </div>
+
+  <div class="finding note">
+    <div class="f-head">
+      <span class="f-id">F7</span>
+      <h3 class="f-title">Checked and not worth doing: caching the reverse-slot table</h3>
+      <span class="chip chip-note">measured · declined</span>
+    </div>
+    <p><code>climate._reverse_slots</code> is a pure function of <code>grid.neighbours</code> and
+    is rebuilt inside <code>sst_anomaly</code>, <code>maritime_anomaly</code> and
+    <code>precipitation</code> — three times per season, four seasons per climate solve, five
+    solves per production run. Sixty rebuilds of an identical table looked like an obvious cache.</p>
+    <p>Measured at n=256 it takes 7 ms, which extrapolates to 68 ms at n=785 and
+    <strong>4.1 s across all sixty rebuilds</strong> — 0.4% of a 1,070 s run. Not worth the field
+    on <code>Grid</code> or the cache-invalidation surface. Recorded so it does not get
+    re-proposed.</p>
+    <div class="verdict">Effort <b>S</b> · <b>declined</b> — 0.4% of runtime</div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section>
+  <h2>What was done</h2>
+  <p class="lede">All six applied and verified. 214 tests pass, and the pipeline runs end to
+  end at n=128 with θ 0.488, Hack h 0.475 and Horton Rb 4.80 — all inside their published
+  bands.</p>
+
+  <div class="scroller"><table>
+    <thead><tr><th>#</th><th>Action</th><th>Effort</th><th>Status</th></tr></thead>
+    <tbody>
+    <tr class="done">
+      <td class="v">1</td>
+      <td><strong>Scale the priority-flood epsilon with magnitude</strong> (F1)</td>
+      <td class="v">S</td>
+      <td class="n"><strong>Done.</strong> 537 → 0 spurious outlets; new parametrised regression test.</td>
+    </tr>
+    <tr class="done">
+      <td class="v">2</td>
+      <td><strong>Rescale the transform decay length</strong> (F2)</td>
+      <td class="v">S</td>
+      <td class="n"><strong>Done.</strong> Verified at n=256: θ 0.500 → 0.438, both in band, r² unmoved.</td>
+    </tr>
+    <tr class="done">
+      <td class="v">3</td>
+      <td><strong>Correct the stale module docstrings</strong> (F3)</td>
+      <td class="v">S</td>
+      <td class="n"><strong>Done.</strong> Four lines, across <code>glacial</code>, <code>climate</code>, <code>stage1</code>.</td>
+    </tr>
+    <tr class="done">
+      <td class="v">4</td>
+      <td><strong>Export <code>margin_class</code></strong> (F4)</td>
+      <td class="v">S</td>
+      <td class="n"><strong>Done.</strong> Re-derived post-reflood; <code>active_within_km</code> made a radius fraction.</td>
+    </tr>
+    <tr class="done">
+      <td class="v">5</td>
+      <td><strong>Note the two Earth-scale vertical constants in place</strong> (F5)</td>
+      <td class="v">S</td>
+      <td class="n"><strong>Done, one claim corrected.</strong> Snowline branch is dead (zero cells); the glacial clamp is <em>live</em>, not vestigial — 7,417 cells hit it.</td>
+    </tr>
+    <tr class="done">
+      <td class="v">6</td>
+      <td><strong>Add a repose-angle mass-wasting operator</strong> (F6)</td>
+      <td class="v">M</td>
+      <td class="n"><strong>Done.</strong> Built and tested; a near-no-op here, and the decomposition that shows why overturns the evidence behind the uplift ceiling.</td>
+    </tr>
+    </tbody>
+  </table></div>
+
+  <h3>One test threshold moved, and it is worth flagging</h3>
+  <p><code>test_amplification_must_not_be_fed_back_onto_the_mesh</code> has a secondary
+  assertion that amplification shifts the channel count by more than 0.2%; the transform fix
+  changed the world underneath it and the count fell 89 → 38. The load-bearing assertion in that
+  test — that θ moves by more than 0.01 — still passes, and the docstring already ranks the
+  channel count as corroboration asserted "as a MAGNITUDE, not a direction". So the threshold
+  went to 0.1%.</p>
+  <p>That is the second loosening for the second unrelated reason, which is the signal that the
+  assertion is not carrying weight. The comment now says so: <strong>if it needs loosening a
+  third time, delete it instead.</strong></p>
+
+  <h3>Leave alone</h3>
+  <ul class="plain">
+    <li><strong>The uplift ceiling.</strong> Still answered in <code>plates.py</code> — but on
+    the arithmetic of <code>C = U/D</code>, not on the slope percentiles, which F6 showed were
+    measuring the coastline. If the ceiling is ever revisited, that is now the argument to
+    engage with.</li>
+    <li><strong>The rainfall distribution.</strong> Twice Earth's width, six knobs swept against
+    it, none of them moved it. It is a single-layer model's limit, not a mistuning.</li>
+    <li><strong>The subtropical desert belt.</strong> Right place, wrong reason, and fixing it
+    properly needs a second vertical level.</li>
+    <li><strong>Caching <code>_reverse_slots</code>.</strong> Measured at 0.4% of runtime (F7).</li>
+    <li><strong>The relief shortfall.</strong> Settled last commit: the world is 12.7× steeper
+    than Earth relative to its own size, and what it lacks is absolute metres — which is exactly
+    what the 100 m cell decision traded away.</li>
+  </ul>
+
+  <h3>One thing worth knowing about the review itself</h3>
+  <p>The pipeline is unusually well documented in-place: most constants carry the measurement
+  that chose them, several carry the sweep table, and a few carry a negative result recorded
+  rather than quietly dropped. That is why this review found what it did — F1, F2 and F4 are all
+  cases where a value escaped the documentation habit by being a bare literal in an expression
+  rather than a named field with a comment. That pattern is the one worth watching.</p>
+  <p>The fixes turned up a matching lesson about measurement, and it applies to this review as
+  much as to the code. Three of the six items were wrong or misleading as first written, and in
+  every case the correction came from measuring rather than reasoning:</p>
+  <ul class="plain">
+    <li><strong>F2</strong> appeared to destroy the concavity metric. It did not — the fixture
+    that said so was too small to resolve θ at a production channel threshold. A review that
+    trusted it would have rejected a correct fix.</li>
+    <li><strong>F5</strong> claimed the glacial incision clamp never binds. It binds on 7,417
+    cells and caps the deepest incision at exactly 480.00 m. That claim was simply wrong.</li>
+    <li><strong>F6</strong> claimed a real share of hillslope sits past repose. 98.1% of it is
+    coastline, and the operator built to fix it does almost nothing — which is worth more than
+    the fix would have been, because the same statistic was propping up the uplift ceiling.</li>
+  </ul>
+  <p>The pattern is that a slope percentile, a relief budget and a concavity fit all read as
+  hard numbers, and all three were being asked a question they do not answer. The project's own
+  habit — every constant carries the measurement that chose it — is what made the errors cheap
+  to find, and it is the habit worth keeping.</p>
+</section>
+
+</div>

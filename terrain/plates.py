@@ -31,6 +31,13 @@ INLAND, PASSIVE, ACTIVE = 0, 1, 2
 # R = 64.9 km. See `build_plates`.
 UPLIFT_REACH_R = 0.188
 
+# How close to a convergent or transform boundary a coast has to be to count as an active
+# margin, again as a fraction of the radius: 400 km on Earth. Same reason as above -- held in
+# km it was 400 on a world 64.9 km in radius, more than thirty times the uplift reach, so the
+# test could never fail and every coast near a boundary of the right TYPE read as active
+# regardless of distance. See `classify_margins`.
+ACTIVE_MARGIN_R = 0.0628
+
 
 @dataclasses.dataclass
 class PlateParams:
@@ -62,6 +69,30 @@ class PlateParams:
     arc_offset_km: float = 1.53      # volcanic arc, inland of an oceanic-continental trench
     arc_width_km: float = 1.02
     rift_shoulder_km: float = 0.82   # uplifted flanks either side of a continental graben
+    # Transform boundaries, the restraining-bend term. This one was a bare 100.0 inside the
+    # expression in `derive_uplift` rather than a field here, so `for_radius` never saw it and
+    # it stayed at its Earth value through the rescale. Over the 12.2 km uplift reach on this
+    # sphere, exp(-d/100) runs 1.000 to 0.885 -- i.e. flat, painting every transform domain
+    # with a uniform slab instead of a ridge that hugs the boundary. Same failure as the
+    # hardcoded 1200 km reach above, and it survived for the same reason the pruning bug did:
+    # a literal in an expression carries no comment and answers to no rescale.
+    #
+    # It is a real terrain change, not a cosmetic one: transform domains are 17.6% of land,
+    # and they go from a broad slab averaging 3.5 m/Myr to the cratonic floor except within
+    # ~2 km of the boundary. Measured at n=256, 2 passes x 200 steps, seed 1:
+    #
+    #                          before    after
+    #     U on transform land   3.51     2.13   m/Myr
+    #     land at craton floor  70.9%    76.3%
+    #     theta (40 cells)      0.500    0.438   (r2 0.934 -> 0.919)
+    #     Hack h                0.489    0.515   (SRTM east 0.543)
+    #     peak                  692.4    691.5  m
+    #
+    # Both thetas sit inside the published 0.4-0.6 band and everything else is unmoved. The
+    # n=128 fixture reports this as theta 0.474 -> 0.026, which is NOT a real degradation:
+    # at that size the 40-cell threshold leaves 1,612 channel cells and no basin large enough
+    # to fit, so r2 runs 0.55 -> 0.00 and both numbers are noise. Do not tune against n=128.
+    transform_decay_km: float = 1.02
     # Crustal thickness response. VERTICAL, so it does not follow the radius -- it follows
     # the relief budget instead, cut by 3x with the rest of the isostasy. See CrustParams.
     convergent_thickening_km: float = 5.0
@@ -83,10 +114,22 @@ class PlateParams:
     # the uplift is what gives.
     #
     # THIS BUDGET IS SPENT, and that is the operative fact about `u_max_m_per_myr`: it is a
-    # ceiling, not a setting with room above it. Measured slope distribution on the shipped
-    # n=256 world -- p99 62.5 deg, p99.9 76.1 deg, max 83.7 deg -- so the steep ground is
-    # already past repose. Any proposal to raise U for more relief multiplies every hillslope
-    # gradient by the same factor and is answered here rather than by trying it.
+    # ceiling, not a setting with room above it. Any proposal to raise U for more relief
+    # multiplies every hillslope gradient by the same factor and is answered here rather than
+    # by trying it.
+    #
+    # The ANALYTIC argument above is what carries that, and it is worth separating from the
+    # measurement that used to be quoted beside it. This comment read "measured slope
+    # distribution on the shipped n=256 world -- p99 62.5 deg, p99.9 76.1, max 83.7 -- so the
+    # steep ground is already past repose". Those percentiles are real and that reading of
+    # them is wrong: decomposed while building `stage2.mass_wasting`, 98.1% of the edges past
+    # repose have an OCEAN cell at one end and 1.8% have a lake cell, leaving 0.05% that are
+    # genuinely hillslope. It is a statistic about the shoreline -- a land cell 100 m from
+    # water held at base level -- not about hillslopes, which run p50 0.9 deg and p90 9.4.
+    #
+    # So the budget is spent by C = U/D and the basal gradient it implies, which is
+    # arithmetic, and NOT by a measured slope distribution sitting at failure. The conclusion
+    # is unchanged; one of its two supports was never load-bearing.
     #
     # These figures read 2e-3 / 40 m / 0.4 and a craton C of 4e-5 until they were recomputed:
     # they were derived against D=0.05 and never updated when stage2.py took D to 0.02 as a
@@ -98,7 +141,7 @@ class PlateParams:
     def for_radius(self, radius_km):
         """Copy with the WORLD-SCALE lengths rescaled from the production sphere.
 
-        The four uplift-geometry distances are fractions of the world wearing kilometres:
+        The five uplift-geometry distances are fractions of the world wearing kilometres:
         2.04 km of orogen decay means 3.1% of the radius, which is what 200 km meant on
         Earth. Authoring them in km keeps them readable against the boundary-case table
         in terrain-algorithms.md; rescaling here keeps them meaningful on a fixture at a
@@ -119,6 +162,7 @@ class PlateParams:
             arc_offset_km=self.arc_offset_km * f,
             arc_width_km=self.arc_width_km * f,
             rift_shoulder_km=self.rift_shoulder_km * f,
+            transform_decay_km=self.transform_decay_km * f,
         )
 
 
@@ -449,7 +493,7 @@ def derive_uplift(plates: Plates, is_continental, land_mask, params: PlateParams
 
     # Transform: little vertical motion, a little at restraining bends.
     trans = near_type == TRANSFORM
-    u[trans] += 0.12 * np.exp(-d[trans] / 100.0) * strength[trans]
+    u[trans] += 0.12 * np.exp(-d[trans] / p.transform_decay_km) * strength[trans]
 
     # Clamp the SHAPE before scaling. The collision and arc terms overlap, so letting them
     # sum unbounded pushed peak uplift to 4943 m/Myr against a 3000 cap.
@@ -475,13 +519,18 @@ def derive_uplift(plates: Plates, is_continental, land_mask, params: PlateParams
     return u.astype(np.float32)
 
 
-def classify_margins(grid, land_mask, plates: Plates, active_within_km=400.0):
+def classify_margins(grid, land_mask, plates: Plates, active_within_km=None):
     """Coastal cells tagged passive or active by the nearest boundary type.
 
-    Worth more for downstream realism than refining the coastline shape itself: it drives
-    shelf width, whether rivers end in deltas or plunge straight in, and where fjords versus
-    barrier islands belong. Passive margins get a wide shelf and low coastal relief; active
-    margins get mountains within tens of km of the water.
+    Exported alongside the fields so anything drawing coasts can use it: an active margin
+    puts mountains within tens of km of the water, a passive one gets a wide shelf and low
+    coastal relief. Nothing in this pipeline consumes it yet -- shelf width, deltas versus
+    plunging river mouths, and fjords versus barrier islands are all downstream of a renderer
+    that does not exist. It ships because it is nearly free to compute here and impossible to
+    recover later.
+
+    `active_within_km` defaults to a fraction of the sphere, not the old fixed 400 km, which
+    on this world was larger than the whole uplift reach and so never excluded anything.
     """
     nbr = grid.neighbours
     coastal = np.zeros(land_mask.shape[0], dtype=bool)
@@ -495,6 +544,8 @@ def classify_margins(grid, land_mask, plates: Plates, active_within_km=400.0):
     near_type = np.zeros(land_mask.shape[0], dtype=np.uint8)
     near_type[src >= 0] = plates.boundary_type[src[src >= 0]]
     near_active = (near_type == CONVERGENT) | (near_type == TRANSFORM)
+    if active_within_km is None:
+        active_within_km = ACTIVE_MARGIN_R * (plates.radius_km or grid.radius_km)
     close = plates.boundary_dist_km <= active_within_km
 
     out[coastal] = PASSIVE

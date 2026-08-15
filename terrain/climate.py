@@ -57,10 +57,21 @@ actually shows the mechanism working is directional: onshore-wind coasts carry 1
 maritime anomaly of offshore-wind coasts, which is Norway against Labrador, and which an
 isotropic distance decay scores at 0.64x -- backwards.
 
-The limit is vertical, not horizontal. Land elevation on these worlds has a standard
-deviation of 61 m against Earth's several hundred, so the lapse rate contributes 0.28 C
-where on Earth it would contribute around 5. Relief, not distance, is what the temperature
-field is short of.
+The limit is vertical, not horizontal. Measured at production resolution, land elevation
+above the datum has a standard deviation of 104 m against Earth's ~800, so the lapse rate
+contributes 0.68 C where on Earth it would contribute around 5 -- against a latitude term
+whose standard deviation is 13.7 C. Relief, not distance, is what the temperature field is
+short of.
+
+There is no knob for it, and that is settled rather than open. Raising uplift is blocked by a
+hillslope budget already past the angle of repose; reaching Earth's relief by growing the
+world would take 2.35e9 cells, 382x the production budget. Relative to its own size this
+world is already 12.7x steeper than Earth -- what it lacks is absolute metres, which is
+exactly what the 100 m cell decision traded away. The lapse rate is the only physics here
+denominated in absolute metres, which is why it alone reads the shrink as a defect. (These
+figures read 61 m and 0.28 C until they were measured at n=785: the originals came off a
+prototype 3x smaller in radius AND were taken over land including cells below the datum,
+which inverted the sign of the scaling law. See terrain-algorithms.md.)
 """
 
 from __future__ import annotations

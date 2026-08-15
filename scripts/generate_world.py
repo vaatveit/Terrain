@@ -90,6 +90,10 @@ def main():
     is_ocean = ~land
     print(f"    land {crust.land_fraction:.1%} -> "
           f"{grid.area[land].sum() / grid.area.sum():.1%}")
+    # Margins follow the coastline, so they have to be re-derived on the one that ships for
+    # the same reason the climate below does. The plates themselves are untouched -- boundary
+    # type and distance are geometry, not elevation -- so this is just the coastal test again.
+    margin = plates.classify_margins(grid, land, crust.plates)
 
     # Re-solve the climate on the coastline that actually ships. Everything below reads
     # absolute millimetres and degrees against the new mask, and the old fields were solved
@@ -154,7 +158,8 @@ def main():
         out_dir, grid, z, land, args.seed, slope=fr.slope, drainage_km2=fr.acc,
         temperature_c=clim.temperature_c, precipitation_mm=clim.precipitation_mm,
         biome=biome, koppen=kop, flow_receiver=fr.rec, discharge=hyd.discharge,
-        river_width_m=hyd.river_width_m, lake_mask=hyd.lake_mask,
+        river_width_m=hyd.river_width_m, margin_class=margin,
+        lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
         params=params, metrics_summary=summary)

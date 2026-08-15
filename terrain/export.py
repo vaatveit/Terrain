@@ -67,7 +67,7 @@ class ExportResult:
 def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  drainage_km2=None, temperature_c=None, precipitation_mm=None,
                  biome=None, koppen=None, flow_receiver=None, discharge=None,
-                 river_width_m=None,
+                 river_width_m=None, margin_class=None,
                  lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
                  endorheic=None, lakes=None,
                  params=None, metrics_summary=None) -> ExportResult:
@@ -97,6 +97,11 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                       ("discharge_km3_per_yr", discharge),
                       # No river_mask: it would be `river_width_m > 0` verbatim.
                       ("river_width_m", river_width_m),
+                      # Passive versus active coast. Computed in Stage 1 and, until now,
+                      # dropped on the floor -- it never reached the archive, so the one
+                      # thing that knows where mountains meet the sea was recomputable only
+                      # by regenerating the plates.
+                      ("margin_class", margin_class),
                       ("lake_mask", as_flag(lake_mask)),
                       ("lake_level_m", lake_level_m),
                       ("lake_depth_m", lake_depth_m),

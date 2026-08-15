@@ -1,20 +1,24 @@
 """Stage 5: glacial erosion.
 
-Of the four processes the survey lists under secondary erosion, three cannot do anything at
-continental resolution and it is worth being explicit about why rather than shipping three
-no-ops. At n=785 the cells are 9.81 km across:
+Glacial erosion is the only one of the survey's four secondary processes that is implemented,
+and the reason is no longer the one this docstring used to give. At the old 9.81 km cells the
+other three were flatly sub-grid; at 100 m cells they are not, and the honest statement is
+that they are unbuilt rather than impossible:
 
-  * Thermal talus needs the slope between two cells to exceed the angle of repose. At 33
-    degrees that is 6371 m of drop between neighbours, against 8 km of total relief in the
-    whole world. No cell pair ever qualifies.
-  * Dunes have wavelengths of 50 m to 2 km, and wave-cut notches are metre-scale. Both are
-    two to four orders of magnitude below the grid.
-  * Cirques run 0.5-3 km. Also sub-grid.
+  * Thermal talus needs the slope between two cells to exceed the angle of repose. At 9.81 km
+    cells, 33 degrees was 6,371 m of drop between neighbours and no cell pair could ever
+    qualify. At 100 m cells it is 65 m, which mountain terrain clears easily -- the shipped
+    world measures p99 62.5 degrees and max 83.7. So a large share of the steep ground sits
+    PAST repose and stays there, because nothing removes it. This is the biggest gap here.
+  * Dunes (0.05-2 km) and cirques (0.5-3 km) were two to four orders of magnitude below the
+    old grid and are now resolved. Wave-cut notches are metre-scale and remain marginal.
 
-Glacial erosion is the exception, because its signature spans scales that survive: U-shaped
-troughs are marginal at 1-10 km, but fjords (20-200 km) and ice sheets (500-4000 km) are
-firmly resolved. It is also the process the survey calls "unmistakably wrong if absent from
-high-latitude or high-altitude maps".
+Glacial erosion is still the one worth building first, because its signature spans the scales
+this world can hold -- U-shaped troughs at 1-10 km and fjords at 20-200 km -- and because the
+survey calls it "unmistakably wrong if absent from high-latitude or high-altitude maps". Note
+the trade ran the other way at the top of the range: ice sheets are 500-4,000 km features and
+this sphere is 64.9 km in radius, so continental glaciation is no longer something this world
+can express. See terrain-algorithms.md, "Stage 5: secondary erosion", for the full table.
 
 THE ONE THING THAT MAKES GLACIAL TERRAIN LOOK GLACIAL, at this resolution, is that ice can
 carve below its own outlet. Rivers cannot: water needs a downhill path, so the fluvial
@@ -37,9 +41,10 @@ shifted mid-run. It does NOT reliably flatten channel long profiles. That is the
 textbook glacial signature and it did not survive measurement -- concavity in glaciated
 channels went 0.507 -> 0.408 at n=256 (flattening, as predicted) but 0.559 -> 0.631 at
 n=128 (steepening). The sign flips with resolution, so concavity is not a usable glacial
-diagnostic at continental cell sizes and no test asserts it. Overdeepenings do form once
-the driving slope is regional, but only a handful of cells at 30 km spacing -- they are
-1-50 km features and sit right at the edge of what the grid can hold.
+diagnostic at continental cell sizes and no test asserts it. Overdeepenings do form once the
+driving slope is regional; the count of "only a handful of cells" was measured at 30 km
+spacing, where a 1-50 km feature was at the edge of what the grid could hold, and has not
+been re-measured since the rescale put 10 to 500 cells across the same feature.
 """
 
 from __future__ import annotations
@@ -113,7 +118,14 @@ class GlacialParams:
     slope_baseline_km: float = 1.22
     dt_yr: float = 5.0e3
     steps: int = 60
-    max_incision_per_step_m: float = 8.0   # vertical, cut with the relief budget
+    # Per-step incision ceiling. Vertical, cut with the relief budget -- and it is a LIVE
+    # control, not a safety rail that never trips, which is worth knowing before reading the
+    # K table above as though K alone set the rate. Measured on an n=128 world: 7,417 land
+    # cells hit this clamp, and the deepest total incision comes out at exactly 8.0 x 60 =
+    # 480.00 m, meaning the fastest-eroding cells are clamped on every single step. Wherever
+    # that is true the local erosion rate is set here rather than by K * Q^m * S^n, so the two
+    # knobs are not independent and a K sweep alone does not describe the model.
+    max_incision_per_step_m: float = 8.0
 
 
 def mass_balance(temperature_c, p: GlacialParams):

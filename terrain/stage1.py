@@ -1,12 +1,16 @@
-"""Stage 1, throwaway version: crust thickness -> isostasy -> sea level.
+"""Stage 1: crust thickness -> isostasy -> sea level, with tectonics.
 
-Deliberately minimal. The full Stage 1 spec adds plates, Euler-pole motion, boundary
-classification, tectonic thickening and margin classes; none of that is here. The point is
-to give Stage 2 something plausible to erode as fast as possible, because most of Stage 1's
-careful output gets overwritten by erosion anyway -- so the real version is worth building
-only once you know which of its outputs Stage 2 actually consumes.
+TWO ENTRY POINTS, and the pipeline calls the second one. `generate_crust` is the original
+throwaway: noise, isostasy and a solved sea level, with no plates at all. It exists because
+most of Stage 1's careful output gets overwritten by erosion anyway, so the real version was
+worth building only once Stage 2 had shown which of its outputs it actually consumes. It is
+now used only by tests, as the control that tectonics is measured against.
 
-What it does keep from the spec, because these are the load-bearing ideas:
+`generate_crust_tectonic` is the full version and the one `scripts/generate_world.py` runs:
+it adds plates, Euler-pole motion, boundary classification, tectonic thickening, margin
+classes and the derived uplift field. See `terrain/plates.py` for that half.
+
+What both share, because these are the load-bearing ideas:
 
   * Generate crustal THICKNESS, not elevation. Elevation falls out of isostasy and sea
     level is a threshold applied afterward, which makes the coastline a consequence rather

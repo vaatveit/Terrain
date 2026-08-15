@@ -232,6 +232,107 @@ def test_diffusion_conserves_mass_and_smooths():
         "the finite-volume Laplacian must conserve mass on a closed sphere"
 
 
+# --------------------------------------------------------------------------------------
+# Mass wasting
+# --------------------------------------------------------------------------------------
+
+
+def test_mass_wasting_conserves_mass_and_caps_the_slope():
+    """The two properties that make it a physical operator rather than a smoother."""
+    g = build_goldberg(48)
+    rng = np.random.default_rng(0)
+    # Spacing is 100 m, so a repose of 33 degrees allows 65 m between neighbours. Start far
+    # above that so the operator has real work to do.
+    z = rng.standard_normal(g.cell_count) * 500.0
+    not_fixed = np.zeros(g.cell_count, dtype=np.bool_)
+    no_lake = np.zeros(g.cell_count, dtype=np.bool_)
+    dz = np.empty(g.cell_count)
+    sc = float(np.tan(np.radians(33.0)))
+
+    def worst_slope(zz):
+        ok = g.neighbours >= 0
+        drop = np.abs(zz[:, None] - zz[np.where(ok, g.neighbours, 0)])
+        return float((drop[ok] / (g.arc_dist[ok] * 1e3)).max())
+
+    total_before = float((z * g.area).sum())
+    start = worst_slope(z)
+    assert start > sc, "fixture is not steep enough to test anything"
+
+    for _ in range(400):
+        stage2.mass_wasting(z, g.neighbours, g.arc_dist, g.area, sc, 0.25,
+                            not_fixed, no_lake, dz)
+        z = z + dz
+
+    assert np.isfinite(z).all()
+    assert float((z * g.area).sum()) == pytest.approx(total_before, rel=1e-6), (
+        "mass wasting moves material, it does not create or destroy it")
+    # Relaxation approaches the threshold rather than enforcing it, so allow a little slack.
+    assert worst_slope(z) < 1.05 * sc, (
+        f"slopes still past repose: {worst_slope(z):.3f} against {sc:.3f}")
+
+
+def test_mass_wasting_leaves_gentle_ground_alone():
+    """It must be a threshold operator, not a second diffusion term."""
+    g = build_goldberg(48)
+    rng = np.random.default_rng(1)
+    # 1 m of scatter over 100 m cells is a slope of ~0.01, far below tan(33) = 0.649.
+    z = rng.standard_normal(g.cell_count) * 1.0
+    dz = np.empty(g.cell_count)
+    stage2.mass_wasting(z, g.neighbours, g.arc_dist, g.area,
+                        float(np.tan(np.radians(33.0))), 0.25,
+                        np.zeros(g.cell_count, dtype=np.bool_),
+                        np.zeros(g.cell_count, dtype=np.bool_), dz)
+    assert np.all(dz == 0.0), "gentle ground must be untouched"
+
+
+def test_mass_wasting_treats_lakes_as_no_flux():
+    """Same boundary as diffusion, and for the same reason: G=0 means basins never refill."""
+    g = build_goldberg(48)
+    rng = np.random.default_rng(2)
+    z = rng.standard_normal(g.cell_count) * 500.0
+    in_lake = np.zeros(g.cell_count, dtype=np.bool_)
+    in_lake[: g.cell_count // 4] = True
+    not_fixed = np.zeros(g.cell_count, dtype=np.bool_)
+    dz = np.empty(g.cell_count)
+
+    total_before = float((z[~in_lake] * g.area[~in_lake]).sum())
+    for _ in range(50):
+        stage2.mass_wasting(z, g.neighbours, g.arc_dist, g.area,
+                            float(np.tan(np.radians(33.0))), 0.25, not_fixed, in_lake, dz)
+        assert np.all(dz[in_lake] == 0.0), "a lake cell was moved"
+        z = z + dz
+    # The exclusion is symmetric -- an edge is skipped if EITHER end is a lake -- so mass is
+    # still conserved exactly over the cells that remain.
+    assert float((z[~in_lake] * g.area[~in_lake]).sum()) == pytest.approx(
+        total_before, rel=1e-6)
+
+
+def test_mass_wasting_never_inverts_the_slope_it_relaxes():
+    """A pass that overshoots would turn a cliff into a pit and oscillate forever.
+
+    This is what bounds `wasting_relax`: a cell can shed across all six edges at once, so a
+    relaxation near 1 removes far more than the excess.
+    """
+    g = build_goldberg(48)
+    rng = np.random.default_rng(3)
+    z0 = rng.standard_normal(g.cell_count) * 500.0
+    not_fixed = np.zeros(g.cell_count, dtype=np.bool_)
+    no_lake = np.zeros(g.cell_count, dtype=np.bool_)
+    dz = np.empty(g.cell_count)
+
+    z = z0.copy()
+    order_before = None
+    for _ in range(200):
+        stage2.mass_wasting(z, g.neighbours, g.arc_dist, g.area,
+                            float(np.tan(np.radians(33.0))),
+                            stage2.LemParams().wasting_relax, not_fixed, no_lake, dz)
+        z = z + dz
+        spread = z.max() - z.min()
+        if order_before is not None:
+            assert spread <= order_before + 1e-6, "relaxation increased the relief"
+        order_before = spread
+
+
 def test_diffusion_blows_up_past_the_stability_limit():
     """Guard the limit explicitly, so the constraint is documented by a failing case."""
     g = build_goldberg(48)
@@ -514,7 +615,12 @@ def test_subsidence_is_bounded_by_a_total_not_run_as_a_rate():
     uplift = np.zeros(g.cell_count, dtype=np.float32)
     sinking = crust.land_mask & (g.lat > 0)
     uplift[sinking] = -50.0
-    p = stage2.LemParams(K=0.0, D=0.0, max_subsidence_m=200.0)
+    # repose_deg=0 alongside K and D: this isolates the subsidence bound, and mass wasting is
+    # a third thing that moves z. It is not idle here either -- a 200 m fault scarp across
+    # 100 m cells is 63 degrees, which is past failure, so leaving it on correctly relaxes the
+    # rim and carries the deepest cell to 239 m. That is the operator working, not the bound
+    # leaking, but it is not what this test is about.
+    p = stage2.LemParams(K=0.0, D=0.0, repose_deg=0.0, max_subsidence_m=200.0)
 
     z = stage2.evolve(g, crust.elevation, uplift, is_ocean, p, n_steps=100).elevation
     drop = (crust.elevation - z)[sinking]

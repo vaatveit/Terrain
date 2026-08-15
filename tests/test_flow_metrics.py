@@ -79,6 +79,36 @@ def test_priority_flood_fills_a_pit_and_never_lowers():
     assert not fr.raised[0]
 
 
+@pytest.mark.parametrize("base_m", [0.0, 500.0, 3000.0, 9000.0])
+def test_filled_depressions_still_drain_at_high_elevation(base_m):
+    """The fill increment must survive float32 at any elevation the world reaches.
+
+    A fixed 1e-4 m increment is smaller than float32's spacing above 2,048 m, so `key + EPS`
+    rounded back to `key` and the filled surface came out exactly FLAT. `compute_receivers`
+    needs a strictly positive slope, so every cell in the depression pointed at itself --
+    and `solve_stream_power` checks `rec == i` before `in_lake`, so uplift was silently
+    dropped for all of them and drainage stopped accumulating through the basin.
+
+    Parametrised across the threshold on purpose: this passed at 0 m and 500 m throughout.
+    """
+    h = w = 21
+    nbr, arc, area = lattice(h, w)
+    rng = np.random.default_rng(11)
+    z = (base_m + rng.normal(0.0, 30.0, (h, w))).astype(np.float32)  # rough -> many pits
+    is_sink = np.zeros(h * w, bool)
+    is_sink[0] = True
+
+    fr = flow.route(z.ravel(), nbr, arc, area, is_sink)
+    raised = fr.raised
+    assert raised.any(), "fixture produced no depressions to test"
+
+    self_rec = fr.rec == np.arange(h * w)
+    assert not np.any(self_rec & raised), (
+        f"{int((self_rec & raised).sum())} of {int(raised.sum())} filled cells do not drain")
+    # Everything must still reach the one outlet, so all the area arrives there.
+    assert fr.acc[0] == pytest.approx(area.sum(), rel=1e-4)
+
+
 def test_topological_order_puts_receivers_first():
     h = w = 30
     nbr, arc, area = lattice(h, w)

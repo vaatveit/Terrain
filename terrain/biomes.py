@@ -85,6 +85,21 @@ def snowline_m(lat_deg, equatorial_m=4900.0, polar_m=0.0):
     latitude -- the maximum actually sits near 25 degrees over the subtropical deserts,
     because snowline tracks dryness as much as temperature, but cos(lat) is close enough
     for a first pass and monotonic, which keeps the ice caps where they belong.
+
+    THESE ARE EARTH'S METRES ON A WORLD THAT TRADED ABSOLUTE METRES AWAY, so the elevation
+    branch of the ice test is currently dead. Production peaks are 2,428 m, which only clears
+    this snowline poleward of 49.8 degrees; on an n=128 fixture peaking at 347 m it takes 79
+    degrees, and the measured count of land cells above their own snowline is exactly ZERO.
+    Every ICE cell the classifier assigns comes from the -12 C floor in `classify` instead,
+    which is 11.3% of land on that fixture. High-altitude ice -- the thing this function
+    exists to add, and what makes mountains read as mountains -- does not occur.
+
+    Left as Earth's figures deliberately. Scaling the snowline down to this world's relief
+    would paint ice on ground that is 300 m above the sea and 10 C above freezing, which is
+    worse than having none: the temperature field is the honest authority on where ice
+    belongs, and it is already consulted. This is the same accounting gap recorded for the
+    lapse rate in climate.py -- elevation is an EMERGENT field, and the rescale's three-class
+    parameter table has no row for those.
     """
     # Clip before the fractional power: cos comes back very slightly negative at the poles
     # from rounding, and a negative base to a fractional exponent is NaN, which would then

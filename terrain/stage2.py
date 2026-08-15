@@ -107,6 +107,54 @@ class LemParams:
     D: float = 0.02        # m^2/yr
     # Deposition (Davy & Lague 2009 style). 0 = pure detachment-limited.
     G: float = 0.0
+    # Mass wasting. Slopes steeper than the angle of repose are not stable ground: rock and
+    # soil fail and the debris runs to the base. At 9.81 km cells this could not be modelled
+    # -- 33 degrees across one cell was 6,371 m of drop against ~8 km of relief in the whole
+    # world -- and at 100 m cells it is 65 m, which mountain terrain clears easily. So the
+    # operator became buildable with the rescale and is built here.
+    #
+    # IT IS CURRENTLY A NEAR-NO-OP, AND THAT IS THE USEFUL RESULT. It was written because the
+    # measured slope distribution showed p99 62.5 degrees, well past failure. Decomposing that
+    # statistic on an n=128 world after Stage 2 shows where the steep ground actually is:
+    #
+    #     steep edges (>33 deg)          172,282
+    #       touching an OCEAN cell       169,078   98.1%
+    #       touching a LAKE cell           3,124    1.8%
+    #       land-land, neither                80    0.05%   <- all this operator can act on
+    #
+    # Almost every "over-steep" edge is a cell sitting against a surface pinned at a level:
+    # the shoreline, where ocean is held at base level, or a lake rim. Those are not hillslopes
+    # and this operator correctly leaves them alone. Genuine hillslopes on the same world run
+    # p50 0.9 degrees and p90 9.4 -- nowhere near repose, because U/D equilibrium does not put
+    # them there. Measured at n=256, 2 passes x 200 steps, seed 1:
+    #
+    #     repose   theta   r2      Hack h   drainage   peak     z std
+    #     off      0.438   0.919   0.515    0.1542     691 m    47.4 m
+    #     45 deg   0.443   0.903   0.515    0.1527     691 m    47.3 m
+    #     40 deg   0.460   0.878   0.517    0.1534     691 m    47.2 m
+    #     33 deg   0.463   0.875   0.511    0.1545     690 m    47.4 m
+    #     30 deg   0.455   0.886   0.514    0.1534     689 m    47.4 m
+    #
+    # Every row is the same world. Kept ON anyway, at a cost that does not show up in the run
+    # time, because it is a physical constraint that ought to hold and there is one regime
+    # where it bites: GLACIAL erosion creates real over-steep land, taking the land-land count
+    # from 80 to 4,530. Stage 5b then floods almost all of it (back to 38), so a post-glacial
+    # wasting pass would be relaxing ground that is about to become seabed and is not worth
+    # adding -- but that is a property of this world's hypsometry, not a general one.
+    #
+    # It is a SEPARATE operator from `D`, not a nonlinear diffusivity. Roering's critical-slope
+    # form (q = D*grad / (1 - (|grad|/Sc)^2)) is the standard geomorphic model and is the more
+    # elegant answer, but its flux diverges as the slope approaches Sc, which would make the
+    # explicit sub-stepping this file already pays for very much worse. A relaxation toward the
+    # threshold costs one extra gather and cannot go unstable.
+    repose_deg: float = 33.0
+    # Fraction of the excess removed per pass. A cell has up to 6 edges that can all shed at
+    # once, so this has to stay below ~1/3 or a pass can overshoot and invert the slope it was
+    # relaxing. Three passes per timestep take 58% of the excess, which tracks the threshold
+    # closely over a 400-step run without ever enforcing it exactly -- and hovering just at
+    # the threshold is what real threshold hillslopes do under active uplift.
+    wasting_relax: float = 0.25
+    wasting_passes: int = 3
     # Total subsidence one cell may accumulate over the whole run, metres.
     #
     # NOTHING ELSE BOUNDS IT. Uplift is balanced by erosion -- 100 m/Myr over a 300 Myr run
@@ -252,6 +300,57 @@ def hillslope_diffusion(z, nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr,
     return dz
 
 
+@njit(cache=True, parallel=True)
+def mass_wasting(z, nbr, arc_dist_km, area_km2, critical_slope, relax,
+                 is_fixed, in_lake, dz):
+    """Relax every slope steeper than the angle of repose, conserving mass exactly.
+
+    For an edge whose drop exceeds `critical_slope * L`, move material from the high cell to
+    the low one so the height difference falls by `relax` times the excess:
+
+        dz_high = -relax * excess * A_low  / (A_high + A_low)
+        dz_low  = +relax * excess * A_high / (A_high + A_low)
+
+    Those two are constructed so that A_high*dz_high + A_low*dz_low is exactly zero and the
+    difference changes by exactly -relax*excess. The volume split is what makes it correct on
+    an unstructured mesh: an equal split of the HEIGHT would quietly create or destroy
+    material wherever two cells differ in area, which on this grid they always do.
+
+    Written as a gather, like `hillslope_diffusion` and for the same reason -- each cell
+    computes its own dz by looking at both ends of each of its edges, so nothing scatters and
+    prange is safe. Both ends of an edge evaluate the same excess and take opposite signs.
+
+    `is_fixed` and `in_lake` are no-flux boundaries, and the test is symmetric (an edge is
+    skipped if EITHER end is excluded), so mass is still conserved exactly over the cells that
+    remain. Excluding lakes follows `hillslope_diffusion` rather than physics: scree really
+    does run into a real basin, but with G = 0 there is no deposition to balance it, and an
+    operator that fills closed depressions deletes the endorheic lakes Stage 6 exists to find.
+    """
+    n_cells = z.shape[0]
+    k = nbr.shape[1]
+    for i in prange(n_cells):
+        dz[i] = 0.0
+        if is_fixed[i] or in_lake[i]:
+            continue
+        total = 0.0
+        for s in range(k):
+            j = nbr[i, s]
+            if j < 0 or is_fixed[j] or in_lake[j]:
+                continue
+            length_m = arc_dist_km[i, s] * M_PER_KM
+            if length_m <= 0.0:
+                continue
+            limit = critical_slope * length_m
+            drop = z[i] - z[j]
+            share = relax * area_km2[j] / (area_km2[i] + area_km2[j])
+            if drop > limit:
+                total -= share * (drop - limit)      # i is above repose: it sheds
+            elif -drop > limit:
+                total += share * (-drop - limit)     # j is above repose: i receives
+        dz[i] = total
+    return dz
+
+
 def diffusion_substeps(nbr, edge_len_km, arc_dist_km, area_km2, D, dt_yr, safety=0.5):
     """Explicit sub-steps needed to diffuse stably over `dt_yr`.
 
@@ -391,6 +490,11 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
     accum = area if discharge_weight is None else np.ascontiguousarray(
         discharge_weight, dtype=np.float32)
 
+    # tan() once, not per step. 0 or >= 90 degrees switches mass wasting off, which is what
+    # the uncoupled comparisons in the docstring above were measured against.
+    critical_slope = (np.tan(np.radians(p.repose_deg))
+                      if 0.0 < p.repose_deg < 90.0 else 0.0)
+
     dt_yr = p.dt_myr * YR_PER_MYR
     n_sub = (diffusion_substeps(nbr, edge, arc, area, p.D, dt_yr) if p.D > 0.0 else 1)
     dt_sub = dt_yr / n_sub
@@ -439,6 +543,16 @@ def evolve(grid, z0, uplift_m_per_myr, is_ocean, params: LemParams = None,
             for _ in range(n_sub):
                 hillslope_diffusion(z, nbr, edge, arc, area, p.D, dt_sub, is_fixed,
                                     in_lake, dz)
+                z += dz
+
+        # After diffusion, not before: diffusion is what steepens the basal slope toward
+        # U/D, so relaxing repose first would leave the step's own oversteepening in place.
+        # Not sub-cycled with it either -- failure is instantaneous against a 0.5 Myr step,
+        # and this operator has no stability limit to respect.
+        if critical_slope > 0.0:
+            for _ in range(p.wasting_passes):
+                mass_wasting(z, nbr, arc, area, critical_slope, p.wasting_relax,
+                             is_fixed, in_lake, dz)
                 z += dz
 
         z[is_fixed] = z_before[is_fixed]
