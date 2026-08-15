@@ -7,6 +7,14 @@ The design rationale, the measurements behind every parameter, and an honest rec
 does and does not reproduce real terrain are in **[terrain-algorithms.md](terrain-algorithms.md)**.
 This file is the operational reference: how to run it, what every knob does, and what comes out.
 
+**[pipeline-review.html](pipeline-review.html)** is a third view and the one to open first if
+you are new to the code: a stage-by-stage walk through what each operator does, with every
+tuned constant listed at the point it acts and sorted into the cell-scale / world-scale /
+vertical classes the rescale turns on. It ends with the findings from the review that produced
+it — including two bugs it found, and two claims of its own that measurement later corrected.
+Self-contained HTML; open it from a clone, no build step. (A hosted copy exists but is private
+to the author's account, so the file in the repo is the canonical one.)
+
 ---
 
 ## Quick start
