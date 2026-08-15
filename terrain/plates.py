@@ -76,11 +76,22 @@ class PlateParams:
     # D acted as a smoother. Making hillslopes resolved makes U and D answerable to each
     # other for the first time.
     #
-    # At U=100 m/Myr, C = U/D = 2e-3 1/m gives 40 m of convex relief over a 200 m hillslope
-    # and a basal slope of 0.4 -- steep mountain terrain, which is what an active orogen
-    # should look like. The craton floor gives C = 4e-5, so 1.8 m over the same length:
-    # gentle rolling ground. Raising D instead would need 0.6 m^2/yr, well outside the
-    # published 0.001-0.1 range for soil creep, so the uplift is what gives.
+    # At U=100 m/Myr, C = U/D = 5e-3 1/m gives 100 m of convex relief over a 200 m hillslope
+    # and a basal slope of 1.0 -- 45 degrees, right at the angle of repose. The craton floor
+    # gives C = 1e-4, so 2 m over the same length: gentle rolling ground. Raising D instead
+    # would need 0.6 m^2/yr, well outside the published 0.001-0.1 range for soil creep, so
+    # the uplift is what gives.
+    #
+    # THIS BUDGET IS SPENT, and that is the operative fact about `u_max_m_per_myr`: it is a
+    # ceiling, not a setting with room above it. Measured slope distribution on the shipped
+    # n=256 world -- p99 62.5 deg, p99.9 76.1 deg, max 83.7 deg -- so the steep ground is
+    # already past repose. Any proposal to raise U for more relief multiplies every hillslope
+    # gradient by the same factor and is answered here rather than by trying it.
+    #
+    # These figures read 2e-3 / 40 m / 0.4 and a craton C of 4e-5 until they were recomputed:
+    # they were derived against D=0.05 and never updated when stage2.py took D to 0.02 as a
+    # deliberate trade. The correction goes the unhelpful way -- the budget is 2.5x more
+    # spent than the old comment claimed, not less.
     u_max_m_per_myr: float = 100.0
     craton_floor_m_per_myr: float = 2.0
 

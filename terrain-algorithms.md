@@ -481,15 +481,40 @@ The mechanism is the second-largest source of non-zonal temperature in the world
 
 **So the aggregate is the wrong measure, and the right one is directional.** The Norway–Labrador contrast is not that one coast sits beside warmer water; it is that the westerlies carry maritime air *into* Europe while at the same latitude the wind leaves Labrador for the sea. Measured: onshore-wind coasts carry **1.9×** the maritime anomaly of offshore-wind coasts. An earlier version decaying the anomaly as `exp(−distance)` from the coast scored **0.64×** — offshore coasts came out *more* maritime — because a geometric decay carries no direction and was really re-deriving continentality under another name. It scored better on zonality while getting the physics backwards, which is the whole argument for testing the mechanism rather than the statistic.
 
-**What the temperature field is actually short of is relief, not distance.** The horizontal length scales are already Earth-equivalent by construction — `continentality_scale_km = 15.3` on a 64.927 km world *is* 1500 km on Earth, and scaling both distances and parameters up changes nothing, since only the ratio enters. Vertically it is a different story:
+**What the temperature field is actually short of is relief, not distance.** The horizontal length scales are already Earth-equivalent by construction — `continentality_scale_km = 15.3` on a 64.927 km world *is* 1500 km on Earth, and scaling both distances and parameters up changes nothing, since only the ratio enters. Vertically it is a different story.
 
-| | this world | Earth |
-|---|---|---|
-| land mean elevation | 15 m | ~840 m |
-| land elevation std | 61 m | ~800 m |
-| lapse-rate signal available | 0.28 °C | ~5 °C |
+**This section previously said the shortfall was ×13 and called it a Stage 1/2 vertical-scale decision. The diagnosis was right and the prescription does not exist**, and both halves needed measuring rather than asserting. Two things were wrong with the original numbers. They were taken on a prototype **three times smaller in radius than the production world**, and they were taken over Stage-1 land *including cells below the datum* — which is not what Earth's ~800 m is measured over, and which inverted the trend badly enough to hide the whole effect: including sub-datum land, elevation standard deviation appears to **fall** with world size as R^−0.265, because a small world's bounded-at-500 m subsidence grabens are a large share of its relief.
 
-Scaling elevation ×13 takes the lapse-rate term to 3.63 °C — more than every other non-zonal term combined — and zonality below 0.94. The bands are a symptom of a flat world, and fixing them is a Stage 1/2 vertical-scale question rather than a climate one.
+Measured properly — current code, seed 1, `coupled.run(passes=3, steps_per_pass=200)`, area-weighted over land above the datum, **including the production world rather than extrapolating to it**:
+
+| | n=64 (R=5.3 km) | n=128 (R=10.6) | n=256 (R=21.2) | **n=785 (R=64.9)** | local exponent, per doubling |
+|---|---|---|---|---|---|
+| land mean | 14.6 m | 20.3 m | 27.8 m | **47.4 m** | 0.475, 0.454, 0.476 |
+| land elevation std | 23.9 m | 34.3 m | 48.2 m | **104.0 m** | 0.521, 0.491, 0.686 |
+| peak | 243 m | 362 m | 685 m | **2,428 m** | 0.574, 0.918, 1.130 |
+| land below the datum | 3.8% | 1.9% | 1.1% | 0.9% | |
+
+So at production the lapse-rate signal is **0.68 °C against Earth's ~5** — a shortfall of **×7.7**, not ×13.
+
+**The production run was worth the twenty minutes, because the extrapolation it replaced was wrong and wrong in an instructive way.** Fitted on the three small worlds alone, the exponents were R^0.465 / R^0.508 / R^0.746, predicting 47 m / 85 m / 1,580 m. The mean came in at **+1.4%** and the peak at **+54%**. Read the last column for why: **only the mean is a power law.** Its local exponent is flat at 0.47 across a twelvefold range in radius. The peak's steepens monotonically — 0.574, 0.918, 1.130 — so a straight line through log–log space was averaging a curve, and extrapolating that average under-predicted badly.
+
+**That also retracts the check this section previously leaned on.** It read the three-point peak exponent of 0.746 against the theoretical 0.757 — steady-state stream power at `n=1` gives relief ∝ L_basin^(1−h·m), with Hack's h = 0.54 and m = 0.45 — and called the agreement evidence the fit was real. It was coincidence: a curve whose local exponent runs from 0.57 to 1.13 crosses 0.757 somewhere in the middle, and the sampled range happened to straddle it. A theoretical value can be matched by an average that describes nothing. What the production run *does* confirm is `stage2.py`'s claim that `K = 1.2e-6` targets ~2 km peaks at n=785 — measured 2,428 m, where the extrapolation said 1,580 m and would have made that comment look wrong.
+
+The ordering of the three is the likely explanation and is not separately tested: **mean is a bulk statistic, peak is a pure extreme, and std sits between them.** Land cell count grows as R², so the maximum over the sample rises with world size on top of any physical scaling, and the deviation from a power law tracks how much of each statistic lives in the tail.
+
+**And the ×7.7 is not available as a knob.** Three routes, all measured or blocked by something already recorded here:
+
+| route | verdict |
+|---|---|
+| raise `U` | **blocked.** Hilltop curvature is `U/D` and that budget is spent — measured slopes run p99 62.5°, p99.9 76.1°, already past the angle of repose. See `plates.py`. |
+| lower `K` alone | **blocked.** Channel relief rises without touching hilltop curvature, but hillslope length goes as `(D/K)^(1/(1+2m))` — ×7.7 lengthens hillslopes 3.2×, and at fixed `U/D` a longer hillslope is a *steeper* one. It also collapses the drainage density the 100 m rescale exists to produce. |
+| raise `U` and `D` together | **consistent, and worse than what it replaces.** Holding `U/D` preserves hillslope form and puts the relief in the channel network, which is correct physics. Price: `D` 0.02 → 0.154, outside the published 0.001–0.1 soil-creep band; diffusion sub-steps 20 → ~154, and sub-stepping is already "the real cost of the rescale"; peaks at **18.7 km on a 64.9 km sphere**, 29% of the planet's radius. |
+
+**Nor can world size close it, and this is the number to quote.** Extrapolating the top-end local exponent of 0.686, reaching Earth's 800 m standard deviation needs R ≈ 1,270 km. At a fixed 100 m cell that is n ≈ 15,300, or **2.35 billion cells — 382× the production budget.** The relief shortfall and the 100 m cell size are the same decision seen from two directions, and the section on why the sphere shrank already stated the trade: this is a large island rendered properly, not a planet.
+
+**The reframing is the part worth keeping.** Relative to its own size this world is not flat — it is **already 12.7 times steeper than Earth**. Earth's land elevation standard deviation is 1.26e-4 of its radius; this world's is 1.60e-3. Giving it Earth's *absolute* 800 m would make it 98× steeper than Earth in relative terms: every continent a wall.
+
+The lapse rate is the only piece of physics in the model denominated in **absolute metres**, which is why it alone reads the shrink as a defect. That exposes a gap in this document's own rescale bookkeeping. The three-class table above sorts every *parameter* into cell-scale, world-scale and vertical-physical, and puts the lapse rate in the third class as "untouched; never referred to the sphere". True of the parameter and false of the term — **elevation is an emergent field, not a parameter, and it shrank with the sphere as nothing in that table predicts.** The mean went as R^0.47 and the peak steepened from R^0.57 to R^1.13; no single class covers a quantity that does that, and this is the one that matters.
 
 ### Seasons, monsoons, and Köppen
 

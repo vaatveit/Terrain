@@ -502,9 +502,18 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
   else) and no knob moves it; it is the ascent factor and the moisture field multiplying,
   which is the same missing vertical dimension as the item above. The anchor is set on
   Earth's land **median** rather than its mean to make the best of it.
-- **Biomes remain visibly zonal.** Adding arid classes outside the tropics widened the
-  desert belt's latitude wander from 4.4° to 9.9°, but breaking the bands properly needs
-  ocean-current heat transport and a seasonal cycle (for monsoons).
+- **Biomes remain visibly zonal**, and this is now understood rather than merely observed.
+  Adding arid classes outside the tropics widened the desert belt's latitude wander from
+  4.4° to 9.9°. Ocean-current heat transport and a seasonal cycle were then both built —
+  the two things this entry used to name as the fix — and temperature zonality moved
+  0.9926 → 0.9898, which is nothing. **The cause is that the world has no vertical
+  dimension to spend.** Land elevation std is 104 m at production against Earth's ~800, so
+  the lapse rate can contribute 0.68 °C where Earth gives ~5, against a latitude term with
+  a std of 13.7 °C. It is not a mistuning and there is no knob: raising uplift is blocked
+  by a hillslope budget already past the angle of repose, and reaching Earth's relief by
+  growing the world would take 2.35 billion cells, 382× the production budget. Relative to
+  its own size this world is already **12.7× steeper** than Earth; what it lacks is
+  absolute metres, which is precisely what the 100 m cell decision traded away.
 - **Endorheic basins are rare** in generated worlds; the logic is unit-tested on
   constructed basins instead.
 - **No meanders, dunes, wave-cut notches, cirques or thermal talus.** All were sub-grid at
