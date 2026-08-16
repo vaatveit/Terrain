@@ -115,8 +115,14 @@ def main():
     # back into erosion: Stages 2 and 5 have run, so it is the reported climate that is
     # being made consistent, not the landscape. Stage 5 therefore still sees the pre-reflood
     # temperature, which is correct -- that is the coastline the ice grew on.
+    # The rivers have to be re-routed before that solve, not carried over. River evaporation
+    # reads the discharge field, and both of its inputs moved: glacial erosion recut the
+    # valleys and the reflood moved the outlets. Solving here without one at all would be
+    # worse still -- it would export an ocean-only climate onto terrain that was eroded with
+    # rivers, which is the drier world the whole of item 2c was about.
     print("[5c] climate on the new coastline")
-    clim = climate.compute_seasons(grid, z, land)
+    q = coupled.routed_discharge(grid, z, cres.discharge_weight, is_ocean)
+    clim = climate.compute_seasons(grid, z, land, discharge=q)
     print(f"    land mean {clim.temperature_c[land].mean():.1f} C, "
           f"precip median "
           f"{climate._area_median(clim.precipitation_mm, grid.area, land):,.0f} mm")

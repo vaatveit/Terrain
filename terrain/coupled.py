@@ -137,8 +137,12 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=DISCHARGE_FLOOR,
     return np.ascontiguousarray(area * scale, dtype=np.float32)
 
 
-def _routed_discharge(grid, z, weight, is_ocean):
+def routed_discharge(grid, z, weight, is_ocean):
     """Accumulated discharge over land, for river evaporation to read.
+
+    Public because any caller that re-solves the climate after this stage needs it. The
+    pipeline does exactly that after reflooding, and solving there without a discharge field
+    would export an ocean-only climate onto terrain that was eroded with rivers.
 
     Routed on the same weighted area the erosion used, so it is the precipitation-weighted
     discharge rather than bare drainage area -- the physical quantity a channel's width
@@ -195,7 +199,7 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
         res = stage2.evolve(grid, z, uplift_m_per_myr, is_ocean, lem,
                             n_steps=steps_per_pass, discharge_weight=weight)
         z = res.elevation
-        discharge = _routed_discharge(grid, z, weight, is_ocean)
+        discharge = routed_discharge(grid, z, weight, is_ocean)
 
         moved = float(np.abs(z[land_mask] - before[land_mask]).mean())
         convergence.append((p_i, moved, float(z[land_mask].max()),
