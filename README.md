@@ -338,7 +338,8 @@ for `n=1`.
 | parameter | default | effect |
 |---|---|---|
 | `t_equator_c` / `t_pole_c` | 27 / −25 | sea-level temperature range |
-| `lapse_rate_c_per_km` | 6.5 | standard environmental lapse rate |
+| `lapse_rate_c_per_km` | 6.5 | standard environmental lapse rate. Physics — leave it alone; it does not care how big the planet is |
+| `climate_relief_gain` | 7.7 | **vertical exaggeration on the elevation the lapse rate reads, and nothing else. This is not physics.** The 100 m rescale redenominated every world-scale *length*, but elevation is an emergent field rather than a parameter and was missed — it shrank as roughly R^0.5, leaving land elevation sd at 104 m against Earth's ~800. 7.7 is the measured shortfall, and it puts the lapse term's contribution at ~5 °C, which is Earth's. `1.0` disables it and reproduces every figure recorded before it existed. **Not free** — see below |
 | `continental_cooling_c` | 15 | annual-mean cooling deep inside continents, weighted by latitude. The main non-zonal signal in temperature |
 | `continentality_c` / `_scale_km` | 6 / 15.3 | seasonal amplitude inland, and its decay length (1500 km ÷ 98.125) |
 | `wind_speed` / `meridional_fraction` | 1.0 / 0.3 | only the ratio matters; direction comes from the three-cell bands |
@@ -641,6 +642,34 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
   0.004 against a nine-tile 0.513 ± 0.057. Planet-wide θ is still *not* a usable statistic
   here — 0.257 ± 0.056 at 40 cells, ±0.106 at 400 — so state per-basin, and state the
   threshold.
+- **The temperature field's relief is a declared exaggeration, not a measurement.**
+  `climate_relief_gain = 7.7` multiplies the elevation the lapse rate reads. Without it this
+  world's 104 m elevation sd gives the lapse rate 0.68 °C of influence where Earth's ~800 m
+  gives ~5; with it the term lands at Earth's magnitude. The justification is that the 100 m
+  rescale redenominated every world-scale length and missed this one because elevation is
+  emergent rather than a parameter — but **it is not physics, and a mountain's temperature
+  on this world is therefore not derivable from its height.** Set it to `1.0` if that matters
+  more to you than the climate zones.
+- **And it is not free, which the plan proposing it said it would be.** Temperature feeds
+  moisture capacity, capacity feeds the river-evaporation source, and precipitation feeds
+  discharge and therefore erosion. The ocean is untouched (its lapse term is zero at any
+  gain), but land is. Measured at n=128, seed 42, gain 1.0 → 7.7:
+
+  | | 1.0 | 7.7 |
+  |---|---|---|
+  | lapse term, sd | 0.26 °C | **2.07 °C** |
+  | temperature zonality | 0.9935 | 0.9658 |
+  | drowned land | 17.36% | 17.35% |
+  | glaciated | 20.6% | 21.7% |
+  | raw windward/leeward | — | **1.48, was above 1.5** |
+
+  The drowning figure is the one that mattered and it did not move, so `glacial.K` needed no
+  recalibration. The rain-shadow cost is real but lands on the raw ratio, which is mostly the
+  coast-to-interior gradient; the isolated orographic test still passes. Two predictions made
+  for this change did **not** come true: zonality was expected at ~0.94 and reached 0.966, and
+  Köppen D was expected to improve and is flat at ~5% against Earth's 24%. The zonality
+  prediction was never achievable — the latitude term's sd is 13.7 °C against 1.5 for
+  everything else combined, so no term can move that aggregate.
 - **Continental interiors are too wet, by a seed-dependent amount.** The interior/coast
   rainfall ratio is 2.35 / 1.29 / 0.67 across three seeds where Earth is ≈0.33, so the bias
   is consistent even though only one of the three actually inverts. It tracks the largest

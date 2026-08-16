@@ -531,12 +531,40 @@ The ordering of the three is the likely explanation and is not separately tested
 | raise `U` | **blocked.** Steady-state hilltop curvature is exactly `U/D`, and at U=100, D=0.02 that is 5×10⁻³ 1/m — 100 m of convex relief over a 200 m hillslope, a basal gradient of 1.0, which is 45° and already at repose. Multiplying `U` multiplies every hillslope gradient by the same factor. This used to be argued from the measured slope percentiles as well; **that half was wrong** and is withdrawn — 98.1% of the over-steep edges are coastline, not hillslope (see Stage 5 above). The conclusion rests on the arithmetic, which is unaffected. See `plates.py`. |
 | lower `K` alone | **blocked.** Channel relief rises without touching hilltop curvature, but hillslope length goes as `(D/K)^(1/(1+2m))` — ×7.7 lengthens hillslopes 3.2×, and at fixed `U/D` a longer hillslope is a *steeper* one. It also collapses the drainage density the 100 m rescale exists to produce. |
 | raise `U` and `D` together | **consistent, and worse than what it replaces.** Holding `U/D` preserves hillslope form and puts the relief in the channel network, which is correct physics. Price: `D` 0.02 → 0.154, outside the published 0.001–0.1 soil-creep band; diffusion sub-steps 20 → ~154, and sub-stepping is already "the real cost of the rescale"; peaks at **18.7 km on a 64.9 km sphere**, 29% of the planet's radius. |
+| **exaggerate the elevation the lapse rate reads** | **taken.** `climate_relief_gain = 7.7` in `ClimateParams`, applied to one term and nothing else. Not a terrain change, so θ, Hack's *h* and drainage density keep their validation — but not free either; see below. |
 
 **Nor can world size close it, and this is the number to quote.** Extrapolating the top-end local exponent of 0.686, reaching Earth's 800 m standard deviation needs R ≈ 1,270 km. At a fixed 100 m cell that is n ≈ 15,300, or **2.35 billion cells — 382× the production budget.** The relief shortfall and the 100 m cell size are the same decision seen from two directions, and the section on why the sphere shrank already stated the trade: this is a large island rendered properly, not a planet.
 
 **The reframing is the part worth keeping.** Relative to its own size this world is not flat — it is **already 12.7 times steeper than Earth**. Earth's land elevation standard deviation is 1.26e-4 of its radius; this world's is 1.60e-3. Giving it Earth's *absolute* 800 m would make it 98× steeper than Earth in relative terms: every continent a wall.
 
 The lapse rate is the only piece of physics in the model denominated in **absolute metres**, which is why it alone reads the shrink as a defect. That exposes a gap in this document's own rescale bookkeeping. The three-class table above sorts every *parameter* into cell-scale, world-scale and vertical-physical, and puts the lapse rate in the third class as "untouched; never referred to the sphere". True of the parameter and false of the term — **elevation is an emergent field, not a parameter, and it shrank with the sphere as nothing in that table predicts.** The mean went as R^0.47 and the peak steepened from R^0.57 to R^1.13; no single class covers a quantity that does that, and this is the one that matters.
+
+#### What was done about it, and what it cost
+
+`climate_relief_gain = 7.7` multiplies the elevation that `climate.temperature` feeds to the lapse rate, and nothing else. It is **not** a change to `lapse_rate_c_per_km`: 6.5 °C/km is atmospheric physics and does not care how big the planet is, whereas the elevation field is emergent and shrank with the rescale. The gain is the measured shortfall, so the lapse term lands at Earth's ~5 °C of influence.
+
+**It is a vertical exaggeration applied to one consumer of the elevation field. It is not physics, and this document says so in those words** — a mountain's temperature on this world is not derivable from its height. The defence is the one the horizontal rescale already used: every world-scale length was redenominated, and this one was missed because it is emergent rather than a parameter. That is an argument for consistency, not for realism. `1.0` disables it and reproduces every figure recorded before it existed.
+
+**The plan proposing this asserted "zero geomorphic cost" and that was wrong.** Temperature feeds moisture capacity in `precipitation`, capacity feeds the river-evaporation source, and precipitation feeds discharge weight and therefore erosion. Ocean cells are genuinely untouched — their lapse term is zero at any gain, because elevation is clamped at zero — so the ocean moisture source does not move. Land does. Measured at n=128, seed 42:
+
+| | gain 1.0 | gain 7.7 |
+|---|---|---|
+| lapse term contribution, sd | 0.26 °C | **2.07 °C** |
+| temperature zonality | 0.9935 | 0.9658 |
+| land temperature sd | 11.27 °C | 11.82 °C |
+| **drowned land** | **17.36%** | **17.35%** |
+| glaciated share | 20.6% | 21.7% |
+| mean lowering under ice | 40.5 m | 39.4 m |
+| Köppen D total | 5.1% | 5.0% |
+| Köppen ET tundra | 4.4% | 5.5% |
+| peak elevation | 504 m | 507 m |
+| raw windward/leeward ratio | above 1.5 | **1.48** |
+
+**The gate was the drowning figure and it held.** `glacial.K` was calibrated against a drowning number, and a colder world grows more ice, so the fear was that the gain would re-open the drowning problem that calibration closed. It did not move — 17.36% to 17.35% — so `K` needed no recalibration. Glaciated share rose about a point and mean lowering fell slightly, which is ice spreading onto ground that erodes less.
+
+**The cost is the rain shadow, and it is small but real.** Colder high ground holds less water, so ridges generate less orographic rain and the raw windward/leeward ratio fell below the 1.5 the test suite asked for. The bar moved to 1.45 with that reason recorded, because the raw ratio is the weak statistic — the suite's own control shows flat ground scores ~1.9× on it, so most of it is the coast-to-interior gradient. `test_the_shadow_is_actually_orographic`, which isolates the mountain's contribution, still passes.
+
+**Two predictions made for this change did not come true, and one of them was never achievable.** Zonality was expected at ~0.94 and reached 0.966. That prediction contradicted something this document already knew: the latitude term's standard deviation is 13.7 °C against about 1.5 for everything else combined, so **no** term can move the aggregate — the same reason the maritime mechanism moved it only 0.9926 → 0.9898. Köppen D was expected to improve and is flat at ~5% against Earth's 24%; the cold classes that did grow are ET tundra and BWk/BSk, not the continental forests. **The gain does what it was built to do — relief now contributes 2.07 °C of temperature structure instead of 0.26 — and the statistics it was expected to move were the wrong ones to have promised.**
 
 ### Seasons, monsoons, and Köppen
 

@@ -1,7 +1,8 @@
 # The relief shortfall: measured at production scale, and what it actually forbids
 
-> **Status: items 1 and 2 are DONE. Item 3 is still deferred and still needs a separate
-> go-ahead.** Kept in the repo for the reasoning, not as a task list.
+> **Status: all three items are DONE.** Kept in the repo for the reasoning, not as a task
+> list. Item 3 shipped at `climate_relief_gain = 7.7`; its measured result, including the
+> one claim below that turned out to be false, is at the end of this file.
 >
 > **Item 2's production run changed the answer, and the extrapolation this plan is built on
 > did not survive it.** Measured at n=785 rather than fitted from three smaller worlds:
@@ -176,10 +177,10 @@ law in radius at all (local exponent 0.574 → 0.918 → 1.130 per doubling), so
 fitted exponent could have extrapolated it. The land mean, whose exponent *is* flat at 0.47,
 came in at +1.4%. **This is the argument for having run it rather than shipping the fit.**
 
-### 3. DEFERRED — not part of this plan, recorded so item 2 has something to decide
+### 3. ~~DEFERRED~~ — **DONE, shipped at 7.7**
 
 If the climatic relief is wanted, buy it in the climate, not the terrain — **S to build, M to
-re-verify**. Do not start this without a separate go-ahead.
+re-verify**.
 
 The cheapest honest route is a single gain on the elevation the **lapse rate** reads, in
 `climate.temperature()` — not a change to `lapse_rate_c_per_km`, which should stay 6.5 °C/km
@@ -193,9 +194,16 @@ climate_relief_gain: float = 7.7   # elevation is an emergent field and shrank a
 production run put that at ×7.7 (0.68 °C against Earth's ~5). Anything downstream of this
 that says "×9 relief gain" means ×7.7.
 
-One parameter, one call site, **zero geomorphic cost** — Stage 2 and Stage 5 are untouched, so
-θ, Hack's h, drainage density and the freshly-calibrated glacial `K` all keep their
-validation.
+One parameter, one call site, ~~**zero geomorphic cost** — Stage 2 and Stage 5 are untouched,
+so θ, Hack's h, drainage density and the freshly-calibrated glacial `K` all keep their
+validation.~~
+
+**"Zero geomorphic cost" was false, and it is the one claim in this plan that was wrong on
+its own terms rather than superseded by better measurement.** Temperature feeds `capacity` in
+`climate.precipitation`, capacity feeds the river-evaporation source, and precipitation feeds
+discharge weight and therefore erosion. Ocean cells genuinely are untouched — their lapse term
+is zero at any gain, since elevation is clamped at zero — so the ocean moisture source does
+not move. Land does. The claim was made by reading the call site and not the consumers.
 
 Expected to move: temperature zonality 0.992 → ~0.94; Köppen D (7.1% against Earth's 24%);
 the forest classes, currently all under-represented.
@@ -210,7 +218,36 @@ before accepting the gain.
 applied to one consumer of the elevation field. It is defensible on the same grounds the
 horizontal rescale was — every world-scale length was already redenominated, and this is the
 one that was missed because it is emergent rather than a parameter — but it is not physics,
-and the doc should say so in those words.
+and the doc should say so in those words. **Done** — `README.md` known limitations,
+`terrain-algorithms.md` "What was done about it, and what it cost", and the `ClimateParams`
+docstring all say it in those words.
+
+#### Measured result — n=128, seed 42
+
+| | gain 1.0 | gain 7.7 |
+|---|---|---|
+| lapse term contribution, sd | 0.26 °C | **2.07 °C** |
+| temperature zonality | 0.9935 | 0.9658 |
+| **drowned land** | **17.36%** | **17.35%** |
+| glaciated share | 20.6% | 21.7% |
+| Köppen D total | 5.1% | 5.0% |
+| Köppen ET tundra | 4.4% | 5.5% |
+| raw windward/leeward | above 1.5 | **1.48** |
+
+**The gate held.** Drowning did not move, so the `K` sweep did not need re-running — the
+knock-on this plan insisted on checking turned out not to exist. The mechanism does its job:
+relief contributes 2.07 °C of temperature structure instead of 0.26.
+
+**Both of the benefits predicted above are wrong.** Zonality was expected at ~0.94 and reached
+0.966 — and that prediction contradicted something already documented in `climate.py`, namely
+that the latitude term's sd is 13.7 °C against ~1.5 for everything else combined, so no term
+can move the aggregate. Köppen D was expected to improve and is flat at ~5%; the classes that
+grew are ET tundra and the cold-desert/steppe pair, not the continental forests. The forest
+classes this plan named are still under-represented.
+
+**The cost is a small real one.** Colder ridges hold less water, so the raw windward/leeward
+ratio fell from above 1.5 to 1.48 and the test bar moved to 1.45 with the reason recorded. The
+isolated orographic test, which controls for the coast-to-interior gradient, still passes.
 
 ### Not worth doing
 

@@ -63,12 +63,24 @@ contributes 0.68 C where on Earth it would contribute around 5 -- against a lati
 whose standard deviation is 13.7 C. Relief, not distance, is what the temperature field is
 short of.
 
-There is no knob for it, and that is settled rather than open. Raising uplift is blocked by a
-hillslope budget already past the angle of repose; reaching Earth's relief by growing the
-world would take 2.35e9 cells, 382x the production budget. Relative to its own size this
-world is already 12.7x steeper than Earth -- what it lacks is absolute metres, which is
-exactly what the 100 m cell decision traded away. The lapse rate is the only physics here
-denominated in absolute metres, which is why it alone reads the shrink as a defect. (These
+There is no knob for it IN THE TERRAIN, and that is settled rather than open. Raising uplift
+is blocked by hilltop curvature, which is exactly U/D and already implies a 45 degree basal
+gradient at the shipped D -- see plates.py, and note that this used to be argued from measured
+slope percentiles as well ("p99 62.5 deg, already past repose"), which was withdrawn when
+98.1% of those edges turned out to be land against ocean at base level. Reaching Earth's
+relief by growing the world would take 2.35e9 cells, 382x the production budget. Relative to
+its own size this world is already 12.7x steeper than Earth -- what it lacks is absolute
+metres, which is exactly what the 100 m cell decision traded away. The lapse rate is the only
+physics here denominated in absolute metres, which is why it alone reads the shrink as a
+defect.
+
+So the knob is HERE instead, and it is honestly labelled: `climate_relief_gain` multiplies
+the elevation the lapse rate reads, and nothing else. It is a vertical exaggeration applied to
+one consumer of the elevation field, not a change to 6.5 C/km, which is atmospheric physics
+and does not care how big the planet is. It is defensible on the same grounds the horizontal
+rescale was -- every world-scale length was already redenominated and this one was missed
+because it is emergent rather than a parameter -- but it is not physics. See ClimateParams.
+(These
 figures read 61 m and 0.28 C until they were measured at n=785: the originals came off a
 prototype 3x smaller in radius AND were taken over land including cells below the datum,
 which inverted the sign of the scaling law. See terrain-algorithms.md.)
@@ -90,6 +102,25 @@ class ClimateParams:
     t_equator_c: float = 27.0
     t_pole_c: float = -25.0
     lapse_rate_c_per_km: float = 6.5      # standard environmental lapse rate
+    # Vertical exaggeration applied to the elevation THE LAPSE RATE READS, and to nothing
+    # else. This is not physics and the docs say so in those words.
+    #
+    # The argument for it: the 100 m rescale redenominated every world-scale LENGTH, and
+    # elevation was missed because it is an emergent field rather than a parameter -- it
+    # silently shrank as roughly R^0.5. Land elevation std is 104 m against Earth's ~800, so
+    # the lapse rate contributes 0.68 C where Earth gives ~5. The lapse rate is the only term
+    # in this model denominated in absolute metres, which is why it alone reads the shrink as
+    # a defect; 7.7 is the measured shortfall. See plan1.md item 3.
+    #
+    # 1.0 disables it and reproduces every figure recorded before it existed.
+    #
+    # IT IS NOT GEOMORPHICALLY FREE, and plan1.md claimed it would be. Temperature feeds
+    # `capacity` in `precipitation`, capacity feeds the river-evaporation source, and
+    # precipitation feeds discharge weight and therefore erosion. Ocean cells are untouched
+    # -- their lapse term is zero at any gain, since elevation is clamped at 0 -- so the
+    # ocean moisture source does not move, but land does. Measured cost at n=128, seed 42:
+    # see the table in plan1.md. Raise this and re-measure; do not assume Stage 2 is inert.
+    climate_relief_gain: float = 7.7
     # Seasons. Tilt drives declination; the lag is real physics but it is NOT what keeps
     # the four samples distinct -- the sample dates are.
     #
@@ -563,7 +594,12 @@ def temperature(grid, elevation_m, coast_distance_km, p: ClimateParams,
     inland = 1.0 - np.exp(-np.asarray(coast_distance_km, dtype=np.float64)
                           / p.continentality_scale_km)
     t = (equilibrium_temperature(grid, p, decl_deg, mean_insol)
-         - p.lapse_rate_c_per_km * np.maximum(elevation_m, 0.0) / 1000.0
+         # `climate_relief_gain` is a vertical exaggeration, not a lapse rate change: 6.5
+         # C/km is atmospheric physics and does not care how big the planet is, whereas the
+         # elevation field is emergent and shrank with the rescale. Applied here so it lands
+         # on exactly one term. Ocean is unaffected -- the clamp makes its lapse term zero.
+         - (p.lapse_rate_c_per_km * p.climate_relief_gain
+            * np.maximum(elevation_m, 0.0) / 1000.0)
          - p.continental_cooling_c * inland * np.abs(np.sin(lat)) ** 1.5)
 
     # DIFFERENTIAL HEATING. Rock and water do not take a season the same way: land has
