@@ -761,7 +761,23 @@ What the tail is instead is the two *intended* mechanisms multiplying. The wette
 
 The mean error is small because the unfinished part is the interior and the interior holds almost no rain. The deep band is wrong by 10×. `iterations` is therefore replaced by `advection_span_km` = 200, which is 3.08 R at every radius — a 1.6× margin on the 1.89 R that world needed, kept because the controlling length is the *streamline* from sea to interior and so grows with `target_land_fraction`. It costs sweeps linearly: about 5× the moisture solve at n=785 and nothing at n=256.
 
-**Every n=785 figure taken before this change was taken on an unconverged field**, including the 22.8%-of-land-under-1-mm number and the season medians behind the anchor work.
+**Every n=785 figure taken before this change was taken on an unconverged field**, including the 22.8%-of-land-under-1-mm number and the season medians behind the anchor work. They have been re-measured on the same world, seed 1, default crust — the two runs differ in nothing but how far the sweep was allowed to travel:
+
+| n=785 annual | p50/mean | <1 mm | 0–1 km | 1–2 | 2–4 | 4–8 | 8–16 | 16+ |
+|---|---|---|---|---|---|---|---|---|
+| 400 sweeps (0.62 R) | 9.46e-2 | 23.0% | 3872 | 1227 | 908 | 404 | **1.26** | **1.7e-6** |
+| 2000 sweeps (3.08 R) | 1.15e-1 | **14.4%** | 3145 | 1008 | 762 | 415 | **106** | **139** |
+
+The interior bands were not dry, they were unfinished: 8–16 km rises 84×, and the band beyond it rises from a number that was pure underflow. Per season, which is where the anchor damage was:
+
+| season | declination | old p50 | new p50 | old p50/mean | new p50/mean |
+|---|---|---|---|---|---|
+| 0 | −22.2° | 5.97 | 8.77 | 1.01e-3 | 1.82e-3 |
+| 1 | −7.5° | 228.1 | 293.7 | 3.80e-2 | 5.96e-2 |
+| 2 | **+22.2°** | **8.82** | **80.2** | 1.26e-3 | 1.40e-2 |
+| 3 | +7.5° | 178.1 | 378.2 | 2.75e-2 | 7.09e-2 |
+
+Season 2 — one of the two that were anchoring on noise — improves 9×, and every season's ratio improves. The annual mean falls 6343 → 5201 against a median pinned at 600, so the distribution narrowed and less of the total sits in the wet tail. **Seasons 0 and 2 are still under `MIN_ANCHOR_RATIO`**; they pass only because the guard runs on the annual field, which is exactly why moving it there was right. And the span itself was confirmed at n=785 rather than extrapolated — 3.08 R, 4.62 R and 6.93 R agree to four figures in every band.
 
 ### The dry interior is not a capacity problem
 
@@ -787,7 +803,7 @@ Nor does the decay rate come from the rainout arithmetic. With `land_recycling` 
 | tropical rainforest (Earth 11%) | ~7% | 11% | 15% | 18% |
 | runoff ratio R/P (Earth ~0.40) | 0.59 | 0.66 | 0.72 | 0.76 |
 
-600 mm ships because it is Earth's figure, not because it scored best. The costs are the shape showing through: the wet tail overshoots the rainforest share, and a heavy-tailed rainfall runs off more efficiently than an even one, so R/P drifts further from Earth. **The seasonal path used to normalise each of its four solves, and no longer does.** That was wrong twice over. A dry season *should* read a drier median than a wet one — pinning all four equal is throwing away the amplitude that makes it a season. And the normalisation is a division by a median that underflows once continents get wide: measured on the shipped world at n=785, two of the four solves anchor at median/mean ≈ 0.001, so scaling each to the same median multiplied those two by ~30× against the sound ones and left an annual field that was ~96% floor noise behind a healthy-looking 600 mm median. There is now a single factor, fitted on the year and carried into the season stack, and it is checked before use (`climate.MIN_ANCHOR_RATIO`). The four n=785 season medians read 6.0 / 228.1 / 8.8 / 178.1 mm where they used to read 600 / 600 / 600 / 600 — which is the model saying plainly that a world this size gets almost no rain on land in two seasons of four.
+600 mm ships because it is Earth's figure, not because it scored best. The costs are the shape showing through: the wet tail overshoots the rainforest share, and a heavy-tailed rainfall runs off more efficiently than an even one, so R/P drifts further from Earth. **The seasonal path used to normalise each of its four solves, and no longer does.** That was wrong twice over. A dry season *should* read a drier median than a wet one — pinning all four equal is throwing away the amplitude that makes it a season. And the normalisation is a division by a median that underflows once continents get wide: measured on the shipped world at n=785, two of the four solves anchor at median/mean ≈ 0.001, so scaling each to the same median multiplied those two by ~30× against the sound ones and left an annual field that was ~96% floor noise behind a healthy-looking 600 mm median. There is now a single factor, fitted on the year and carried into the season stack, and it is checked before use (`climate.MIN_ANCHOR_RATIO`). The four n=785 season medians read 8.8 / 293.7 / 80.2 / 378.2 mm where they used to read 600 / 600 / 600 / 600 — which is the model saying plainly that a world this size gets very little rain on land in the winter hemisphere. (Those medians read 6.0 / 228.1 / 8.8 / 178.1 when first measured; the sweep was stopping at 0.62 R then, and the figures above are the converged ones.)
 
 Measured at n=256 seed 1, full pipeline, before and after: slope–area concavity 0.455 → **0.461**, Hack *h* 0.465 → **0.505**, per-basin θ 0.296 → **0.400**, against SRTM references of 0.516, 0.543 and 0.516. All three moved toward real terrain, which was not the goal and is worth stating as a result rather than a justification.
 

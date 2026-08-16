@@ -267,8 +267,20 @@ class ClimateParams:
     # 200 km is 3.08 R, a 1.6x margin on the 1.89 R that world needed. The margin is not
     # padding: the controlling length is the STREAMLINE from the sea to the most interior
     # cell, so it grows with `target_land_fraction`, and that is a flag a caller can raise.
-    # Costs sweeps linearly -- about 5x the old solve at n=785, and nothing at all at n=256,
-    # where 400 already covered the world twice over.
+    #
+    # CONFIRMED AT PRODUCTION SCALE rather than extrapolated, because extrapolating an
+    # n<=512 fit past its largest point is the exact mistake that cost a revert one commit
+    # earlier. n=785, seed 1, land precipitation median by distance from the coast:
+    #
+    #     span        4-8 km    8-16 km      16+ km   |err| vs 3.08 R
+    #     3.08 R    7.150e-04  1.511e-05   2.616e-06        --
+    #     4.62 R    7.150e-04  1.511e-05   2.616e-06      0.000%
+    #     6.93 R    7.150e-04  1.511e-05   2.616e-06      0.000%
+    #
+    # Identical to four figures in every band at 1.5x and 2.25x the shipped span, deep
+    # interiors included. Costs sweeps linearly: nothing at all at n=256, where 400 already
+    # covered the world twice over, and 5x the sweeps at n=785 for 2.5x the wall clock --
+    # `compute_seasons` there goes 132 s to 330 s.
     advection_span_km: float = 200.0
     # Anchor for the final scaling. Earth's land MEDIAN, and the median is the point.
     #
@@ -1204,30 +1216,43 @@ def _annual_anchor_scale(precip, area, land_mask, target_mm):
     place on the rainfall distribution, and the reciprocal is reading noise. Measured on the
     annual field, which is the only anchor left:
 
-        shipped 0.29/0.40   0.2666 (n=64)  0.2365 (n=128)  0.2050 (n=256)  0.0946 (n=785)
+        shipped 0.29/0.40   0.2666 (n=64)  0.2365 (n=128)  0.2050 (n=256)  0.1150 (n=785)
         0.40/0.50           --             0.2095          --              --
         0.45/0.55           --             0.00899         --              --
         0.50/0.65           --             0.00515         0.00044         --
 
-    0.03 sits 3.2x under the worst healthy world and 3.3x over the best broken one. That
+    0.03 sits 3.8x under the worst healthy world and 3.3x over the best broken one. That
     margin is NOT generous and it is the honest one -- an earlier attempt claimed a hundred-
     fold separation by leaving n=785 out of the table.
+
+    (The n=785 cell read 0.0946 until `advection_span_km` replaced a sweep count that
+    stopped at 0.62 R on a world that size. Only that cell moves: at n=256 and below the old
+    400 sweeps already covered the world, so those three were converged all along.)
 
     THE THRESHOLD IS A TRIPWIRE AND IT CERTIFIES NOTHING. A previous attempt at this guard
     was calibrated on n=64/128/256 and fired on the shipped world at n=785, because the
     healthy ratio falls with world size -- the continents widen in km while the moisture
     model's reach does not -- and a straight-line fit through three sizes missed the real
     value by fifty times. Passing this check does NOT mean the interiors are physical. At
-    n=785 the shipped world has 22.8% of land under 1 mm/yr, and rainfall past ~8 km from
-    the coast is effectively zero:
+    n=785 the shipped world has 14.4% of land under 1 mm/yr. Median precipitation by
+    distance from the coast, mm/yr, before and after the sweep was allowed to finish:
 
-        distance from coast   0-1km   2-4km   4-8km    8-16km    16-24.7km
-        share of land         19.5%   19.3%   22.8%    19.6%     4.4%
-        median precip (mm)    3,480     941     442      1.51     1.4e-6
+        distance from coast   0-1km   1-2km   2-4km   4-8km   8-16km    16+km
+        unconverged           3,872   1,227     908     404     1.26   1.7e-6
+        converged             3,145   1,008     762     415      106      139
 
-    That is a physics gap -- a surface-only model has no aloft and no soil-moisture
-    recycling, so there is nothing to rain in a continental interior -- and the fix for it is
-    a land moisture source, not a lower limit here. If this ever fires on a world that looks
+    MOST OF WHAT LOOKED LIKE A DEAD INTERIOR WAS THE SOLVER. The moisture sweep used to
+    stop at 0.62 R on a world this size, so the two interior bands were not dry, they were
+    unfinished, and the 1.7e-6 was underflow rather than a rainfall. See
+    `advection_span_km`. The share under 1 mm/yr fell 22.8% -> 14.4% with nothing in the
+    model changed.
+
+    What is left is a genuine physics gap, and it is the one worth naming: a surface-only
+    model has no aloft, so an interior can only be watered by what blew in from the sea and
+    by `land_recycling`, which recycles what already fell and therefore has zero as a fixed
+    point. The remaining fix is a moisture source standing IN the interior -- not a lower
+    limit here, and not a rescaling of the terms already present, which the capacity
+    diagnostic in `_advect_step` rules out. If this ever fires on a world that looks
     reasonable, that is the finding, and the number below is not what should move.
     """
     if not np.any(land_mask):

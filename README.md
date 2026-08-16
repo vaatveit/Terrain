@@ -250,10 +250,16 @@ n=128: 0.40/0.50 (43% land) runs; 0.45/0.55 (62% land) is refused. The limit is 
 width of the continents rather than the flags as such, so a higher `crust_frequency` buys
 back room by breaking them up.
 
-Passing that check is not a certificate. Even on the default world at n=785, 22.8% of land
-receives under 1 mm/yr and rainfall past ~8 km from the coast is effectively zero — a
-surface-only model has no aloft and no soil-moisture recycling, so there is nothing to rain
-in a continental interior. See `_annual_anchor_scale` for the measured profile.
+Passing that check is not a certificate. On the default world at n=785, **14.4% of land
+receives under 1 mm/yr** — a surface-only model has no aloft and no soil-moisture recycling,
+so there is little to rain in a continental interior. See `_annual_anchor_scale` for the
+measured profile.
+
+That figure used to read 22.8%, and most of the difference was the solver rather than the
+model: the moisture sweep stopped at 0.62 R on a world that size, so the deep interiors were
+not dry, they were unfinished. Converged, the 8–16 km band goes from 1.26 mm/yr to 106 and
+the band beyond it from 1.7e-6 to 139. **What is left is the physics gap, and it is real but
+smaller than it was advertised as.**
 
 ### Stage 1 — plates · `plates.PlateParams`
 

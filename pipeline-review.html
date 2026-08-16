@@ -970,6 +970,13 @@ offset  5,000 m:  spurious self-receivers    537</code></pre>
     <li><strong>The subtropical desert belt.</strong> Right place, wrong reason, and fixing it
     properly needs a second vertical level.</li>
     <li><strong>Caching <code>_reverse_slots</code>.</strong> Measured at 0.4% of runtime (F7).</li>
+    <li><strong>The dry continental interiors.</strong> Two thirds of this turned out to be the
+    solver: the moisture sweep was a reach in <em>cells</em>, so it stopped at 0.62 R at n=785 and
+    the interiors were unfinished rather than dry. Converged, land under 1 mm/yr falls 22.8% →
+    <strong>14.4%</strong> with nothing in the model changed. The remainder is a real gap, and the
+    capacity diagnostic says it needs a moisture source standing <em>in</em> the interior —
+    the air there is nowhere near its ceiling, so rescaling the existing terms aims at the
+    wrong one.</li>
     <li><strong>The relief shortfall.</strong> Settled last commit: the world is 12.7× steeper
     than Earth relative to its own size, and what it lacks is absolute metres — which is exactly
     what the 100 m cell decision traded away.</li>
