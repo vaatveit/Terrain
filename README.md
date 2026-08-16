@@ -462,8 +462,8 @@ unglaciated):
 
 | metric | SRTM east | typical generated |
 |---|---|---|
-| slope–area concavity θ | 0.516 | 0.46–0.47 |
-| Hack exponent h | 0.543 | 0.546 |
+| slope–area concavity θ | 0.516 | 0.27 at n=785 (0.44 at n=256 — it falls with world size) |
+| Hack exponent h | 0.543 | 0.557 |
 | Horton bifurcation Rb | 5.51 | ~5.1 |
 
 **Measure θ per basin, not planet-wide** — uplift varies across a world, and that variation
@@ -498,15 +498,23 @@ peaks at the channel head, then falls as `A^-θ`. That rising limb is the convex
 Every channel head there is inside the real 0.01–1 km² band, so that criterion does not
 pick between them. `D=0.02` is the chosen trade.
 
-**At production the concavity is fine, and the n=384 figures above understate it twice
-over** — that fixture's basins are 4× smaller, and the θ column there is measured close to
-the channel head. Measured on the n=785 world:
+**The drainage structure at production is good. The concavity is not, and this section used
+to claim otherwise.** Measured on the n=785 world:
 
 | measurement | 9.77 km cells | 100 m cells | real terrain |
 |---|---|---|---|
 | land cells that are local maxima | 4.40% | **0.502%** | 0.14–0.26% (SRTM) |
 | median drainage area | 1.0 cells | **5.98 cells** | 3–4 px (SRTM) |
-| θ, 40 cells and up | — | **0.467** (r² 0.90) | 0.4–0.6 |
+| θ, 40 cells and up | — | **0.271** (r² 0.85) | 0.4–0.6 |
+
+That last row read 0.467 (r² 0.90) until it was re-measured on the shipped `world_42_n`.
+The old figure predates the climate work — precipitation feeds discharge weight, which feeds
+erosion — and it also asserted that θ *rises* with the channel threshold, where it is in fact
+flat at 0.27–0.31 from 6 cells to 120 and falls beyond. **θ also degrades with world size**
+(0.444 at n=256, 0.346 at n=512, 0.271 at n=785, all on reflooded or exported masks), so
+production is the worst case rather than the vindication. Hack *h* does not follow it and
+remains good at 0.557 against 0.543. Why concavity falls with radius is open, and it is now
+the largest gap between this pipeline and real terrain.
 | θ, 400 cells and up | — | **0.556** (r² 0.85) | 0.4–0.6 |
 
 The first two were recorded in terrain-algorithms.md as *unfixed* — a surface genuinely
@@ -577,9 +585,12 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
 - **No meanders, dunes, wave-cut notches, cirques or thermal talus.** All were sub-grid at
   9.77 km cells; at 100 m all are now above the grid scale, and none is implemented yet.
   See [Cell size](#cell-size) for the measured thresholds.
-- **Concavity is resolution- and threshold-sensitive.** θ is 0.467–0.556 on the production
-  world when fitted above the channel head, but 0.36 at n=384 and 0.392 if fitted from
-  6 cells. Always state the threshold alongside the number.
+- **Concavity falls with world size and production is the worst case.** θ is 0.444 at
+  n=256, 0.346 at n=512 and **0.271 at n=785** against SRTM's 0.516 — measured on reflooded
+  or exported masks, so it is not a coastline artefact. It is *not* strongly
+  threshold-sensitive at production: flat at 0.27–0.31 from 6 cells to 120. Hack *h* does
+  not follow it and stays good at 0.557. Why θ degrades with radius is unexplained and is
+  the largest open gap against real terrain.
 - **Endorheic basins are rare** — two of twelve lakes at n=128 — and Turc–Pike runoff
   makes them rarer than the kinked balance did, by giving every catchment some inflow. The
   logic is unit-tested on constructed basins.

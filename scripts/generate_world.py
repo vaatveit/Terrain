@@ -153,8 +153,21 @@ def main():
     # slope-area regression is fitted across the hillslope limb as well as the fluvial one,
     # and theta comes out meaningless. At 9.77 km cells this could not happen -- 6 cells was
     # 500 km^2, far above any channel head -- but at 100 m cells 6 cells IS the head.
-    # Measured on the production world: theta reads 0.392 at 6 cells, 0.467 at 40 (r2 0.904)
-    # and 0.556 at 400. The binned slope-area curve peaks at 8-13 cells.
+    #
+    # Re-measured on the shipped n=785 world, seed 42, exported mask:
+    #
+    #     cells      6      13      20      40      80     120     400
+    #     theta  0.285   0.289   0.280   0.271   0.265   0.310   0.203
+    #     r2     0.919   0.907   0.888   0.848   0.809   0.891   0.613
+    #
+    # 40 is kept, but the reason has changed and it is worth being honest about: theta is
+    # FLAT at 0.27-0.31 across every sensible threshold here, so the choice barely matters
+    # and 40 is no longer buying what it was chosen to buy. This comment used to record
+    # 0.392 / 0.467 / 0.556 at 6 / 40 / 400 with r2 0.904, which said theta RISES with the
+    # threshold. It falls. Those figures predate the climate work -- precipitation feeds
+    # discharge weight, which feeds erosion -- and no longer describe anything this code
+    # produces. Hack h does still respond, peaking at 0.564 near 80-120 cells against the
+    # SRTM east reference of 0.543, and reading 0.557 at 40.
     thr = float(np.median(grid.area) * 40)
     m = metrics.report(z, grid.neighbours, grid.arc_dist, grid.area, is_sink=is_ocean,
                        channel_threshold_km2=thr, label="mesh")
