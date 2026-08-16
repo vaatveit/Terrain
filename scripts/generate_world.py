@@ -177,13 +177,19 @@ def main():
     #
     # The planet-wide figure is mostly seed -- a global regression pools basins with
     # different uplift, and how many of each a world grows is an accident of the crust seed.
-    # At a 400-cell threshold its CV reaches 55%. Both are printed below; only the per-basin
-    # one is worth comparing with SRTM east's 0.516, and it is well short of it.
+    # At a 400-cell threshold its CV reaches 55%. It is no longer reported at all, for the
+    # reason given at `summary` below. The per-basin figure is the one to compare with SRTM
+    # east's 0.516, and it is well short of it.
     thr = float(np.median(grid.area) * 40)
     m = metrics.report(z, grid.neighbours, grid.arc_dist, grid.area, is_sink=is_ocean,
                        channel_threshold_km2=thr, label="mesh")
+    # `concavity_theta` is deliberately absent. It was reported here for a long time and it
+    # is a number that cannot be acted on: 0.2710 / 0.1951 / 0.3037 on three worlds that
+    # differ only in seed. Leaving it in the manifest meant every world shipped with a
+    # headline concavity that was mostly noise, and it was duly quoted as one. Nothing reads
+    # it; `metrics.report` still computes it for anyone who wants it deliberately.
     summary = {k: (float(m[k]) if np.isfinite(m[k]) else None) for k in
-               ("basin_theta_median", "concavity_theta", "hack_h",
+               ("basin_theta_median", "hack_h",
                 "hypsometric_integral", "horton_bifurcation_ratio")}
     print(f"    per-basin theta {m['basin_theta_median']:.3f} "
           f"(SRTM east {SRTM_EAST['concavity_theta']}), "

@@ -1347,9 +1347,19 @@ def _annual_anchor_scale(precip, area, land_mask, target_mm):
 
     THE THRESHOLD IS A TRIPWIRE AND IT CERTIFIES NOTHING. A previous attempt at this guard
     was calibrated on n=64/128/256 and fired on the shipped world at n=785, because the
-    healthy ratio falls with world size -- the continents widen in km while the moisture
-    model's reach does not -- and a straight-line fit through three sizes missed the real
-    value by fifty times. Passing this check does NOT mean the interiors are physical. At
+    healthy ratio falls with world size and a straight-line fit through three sizes missed
+    the real value by fifty times.
+
+    That fall used to be explained here as the continents widening in km while the moisture
+    model's reach does not. THAT EXPLANATION IS WRONG and was wrong when written: every
+    transport length in this module is denominated in world km at the reference radius and
+    multiplied by `radius_km / R_WORLD_KM`, so the reach scales with the sphere exactly as
+    the continents do -- see `per_step_relax`, and `advection_span_km` for the one loop that
+    genuinely did not scale until it was fixed. What actually falls with size is the number
+    of e-foldings between a coast and the deepest interior, because a streamline through a
+    wider continent wanders further than the straight-line distance grows; the decay length
+    keeps up with the radius and the PATH does not. The figures above are unaffected -- only
+    the reason for them was. Passing this check does NOT mean the interiors are physical. At
     n=785 the shipped world has 14.4% of land under 1 mm/yr. Median precipitation by
     distance from the coast, mm/yr, before and after the sweep was allowed to finish:
 
