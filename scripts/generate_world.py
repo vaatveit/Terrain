@@ -161,13 +161,24 @@ def main():
     #     r2     0.919   0.907   0.888   0.848   0.809   0.891   0.613
     #
     # 40 is kept, but the reason has changed and it is worth being honest about: theta is
-    # FLAT at 0.27-0.31 across every sensible threshold here, so the choice barely matters
-    # and 40 is no longer buying what it was chosen to buy. This comment used to record
-    # 0.392 / 0.467 / 0.556 at 6 / 40 / 400 with r2 0.904, which said theta RISES with the
-    # threshold. It falls. Those figures predate the climate work -- precipitation feeds
-    # discharge weight, which feeds erosion -- and no longer describe anything this code
-    # produces. Hack h does still respond, peaking at 0.564 near 80-120 cells against the
-    # SRTM east reference of 0.543, and reading 0.557 at 40.
+    # FLAT across every sensible threshold here, so the choice barely matters and 40 is no
+    # longer buying what it was chosen to buy. This comment used to record 0.392 / 0.467 /
+    # 0.556 at 6 / 40 / 400 with r2 0.904, which said theta RISES with the threshold. It
+    # falls. Those figures predate the climate work -- precipitation feeds discharge weight,
+    # which feeds erosion -- and no longer describe anything this code produces.
+    #
+    # READ `basin_theta_median`, NOT `concavity_theta`. Measured across three n=785 worlds
+    # differing only in seed, at a 40-cell threshold:
+    #
+    #     seed            42      149   deadbeef      mean      sd      CV
+    #     planet-wide  0.2710   0.1951     0.3037    0.2566  0.0557   21.7%
+    #     per basin    0.2932   0.2882     0.2737    0.2850  0.0102    3.6%
+    #     hack h       0.5571   0.5559     0.5627    0.5586  0.0036    0.7%
+    #
+    # The planet-wide figure is mostly seed -- a global regression pools basins with
+    # different uplift, and how many of each a world grows is an accident of the crust seed.
+    # At a 400-cell threshold its CV reaches 55%. Both are printed below; only the per-basin
+    # one is worth comparing with SRTM east's 0.516, and it is well short of it.
     thr = float(np.median(grid.area) * 40)
     m = metrics.report(z, grid.neighbours, grid.arc_dist, grid.area, is_sink=is_ocean,
                        channel_threshold_km2=thr, label="mesh")

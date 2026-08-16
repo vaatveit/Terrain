@@ -212,6 +212,26 @@ class ClimateParams:
     # continental D classes are still missing. Straight trade, and taken, because 13.3% of
     # land under 1 mm/yr is not a climate and an over-wet tropics is.
     #
+    # AND THE INTERIORS COME OUT TOO WET BY AN AMOUNT THE SEED CONTROLS. Interior/coast
+    # rainfall ratio on three n=785 worlds differing only in seed, against Earth's ~0.33:
+    #
+    #     seed            42      149   deadbeef
+    #     max drainage   902 km2  352      209
+    #     interior/coast  2.35     1.29     0.67
+    #
+    # Exact rank order, and max drainage has a 75% coefficient of variation across those
+    # three -- the noisiest quantity measured anywhere in this model, because whether a
+    # world grows one big continent or several middling ones is an accident of the crust
+    # seed. `open_water_fraction` reads sqrt(A/A_full), so this term inherits that variance
+    # directly. Only seed 42 actually inverts the gradient; all three are two to seven times
+    # wetter inland than Earth, so the bias is consistent even where the inversion is not.
+    #
+    # That is the real calibration problem here, and it is not "turn it down": the strength
+    # is derived from hydraulic geometry with no free parameter, and the quantity it is
+    # derived from is seed-dominated. The honest levers are to argue with the geometry, or
+    # to accept that inland open water evaporates at less than ocean strength because it is
+    # cooler and shaded -- a real parameter rather than a fudge. Neither is done.
+    #
     # Set `river_evaporation` to 0.0 for the regression, which restores the pre-2c model
     # exactly. Note the term is only available where a discharge field exists -- the first
     # pass of `coupled.run` has none and runs without it, by construction.

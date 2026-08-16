@@ -462,8 +462,8 @@ unglaciated):
 
 | metric | SRTM east | typical generated |
 |---|---|---|
-| slope–area concavity θ | 0.516 | 0.27 at n=785 (0.44 at n=256 — it falls with world size) |
-| Hack exponent h | 0.543 | 0.557 |
+| slope–area concavity θ | 0.516 | **0.285 ± 0.010 per basin** at n=785 (planet-wide is 0.257 ± 0.056 — too seed-noisy to quote) |
+| Hack exponent h | 0.543 | 0.559 ± 0.004 |
 | Horton bifurcation Rb | 5.51 | ~5.1 |
 
 **Measure θ per basin, not planet-wide** — uplift varies across a world, and that variation
@@ -505,16 +505,21 @@ to claim otherwise.** Measured on the n=785 world:
 |---|---|---|---|
 | land cells that are local maxima | 4.40% | **0.502%** | 0.14–0.26% (SRTM) |
 | median drainage area | 1.0 cells | **5.98 cells** | 3–4 px (SRTM) |
-| θ, 40 cells and up | — | **0.271** (r² 0.85) | 0.4–0.6 |
+| θ per basin, 40 cells | — | **0.285 ± 0.010** | 0.4–0.6 |
 
-That last row read 0.467 (r² 0.90) until it was re-measured on the shipped `world_42_n`.
+That last row read 0.467 (r² 0.90) until it was re-measured on three shipped n=785 worlds.
 The old figure predates the climate work — precipitation feeds discharge weight, which feeds
 erosion — and it also asserted that θ *rises* with the channel threshold, where it is in fact
-flat at 0.27–0.31 from 6 cells to 120 and falls beyond. **θ also degrades with world size**
-(0.444 at n=256, 0.346 at n=512, 0.271 at n=785, all on reflooded or exported masks), so
-production is the worst case rather than the vindication. Hack *h* does not follow it and
-remains good at 0.557 against 0.543. Why concavity falls with radius is open, and it is now
-the largest gap between this pipeline and real terrain.
+flat from 6 cells to 120 and falls beyond. Hack *h* is fine at 0.559 ± 0.004 against 0.543;
+concavity is not, and the ±0.010 across seeds says no world comes near the reference.
+
+**Quote the per-basin figure, not the planet-wide one.** Across three seeds at n=785,
+planet-wide θ at 40 cells came out 0.271 / 0.195 / 0.304 — a coefficient of variation of
+21.7%, rising to 55% at a 400-cell threshold — while per-basin θ held 0.293 / 0.288 / 0.274
+at 3.6%. A global regression pools basins with different uplift, and how many of each a world
+happens to grow is a property of the seed. An earlier version of this section read a
+0.444 / 0.346 / 0.271 decline across n=256 / 512 / 785 as a trend; those are planet-wide
+figures with one seed each, against a seed sd of 0.056, so the trend is not shown by them.
 | θ, 400 cells and up | — | **0.556** (r² 0.85) | 0.4–0.6 |
 
 The first two were recorded in terrain-algorithms.md as *unfixed* — a surface genuinely
@@ -585,12 +590,16 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
 - **No meanders, dunes, wave-cut notches, cirques or thermal talus.** All were sub-grid at
   9.77 km cells; at 100 m all are now above the grid scale, and none is implemented yet.
   See [Cell size](#cell-size) for the measured thresholds.
-- **Concavity falls with world size and production is the worst case.** θ is 0.444 at
-  n=256, 0.346 at n=512 and **0.271 at n=785** against SRTM's 0.516 — measured on reflooded
-  or exported masks, so it is not a coastline artefact. It is *not* strongly
-  threshold-sensitive at production: flat at 0.27–0.31 from 6 cells to 120. Hack *h* does
-  not follow it and stays good at 0.557. Why θ degrades with radius is unexplained and is
-  the largest open gap against real terrain.
+- **Concavity is well below real terrain and the gap is not seed noise.** Per-basin θ is
+  **0.285 ± 0.010** across three n=785 seeds against SRTM's 0.516. Hack *h* does not follow
+  it and stays good at 0.559 ± 0.004. Why concavity comes out low is unexplained and is the
+  largest open gap against real terrain. Planet-wide θ is *not* a usable statistic here —
+  0.257 ± 0.056 at 40 cells, ±0.106 at 400 — so state per-basin, and state the threshold.
+- **Continental interiors are too wet, by a seed-dependent amount.** The interior/coast
+  rainfall ratio is 2.35 / 1.29 / 0.67 across three seeds where Earth is ≈0.33, so the bias
+  is consistent even though only one of the three actually inverts. It tracks the largest
+  basin in exact rank order, and max drainage area has a 75% coefficient of variation across
+  seeds — the noisiest quantity in the model. See `climate.river_evaporation`.
 - **Endorheic basins are rare** — two of twelve lakes at n=128 — and Turc–Pike runoff
   makes them rarer than the kinked balance did, by giving every catchment some inflow. The
   logic is unit-tested on constructed basins.
