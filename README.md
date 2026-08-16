@@ -210,7 +210,8 @@ result = coupled.run(
     passes=3, steps_per_pass=200)
 ```
 
-`scripts/generate_world.py` uses defaults throughout, so **edit the dataclass defaults or
+`scripts/generate_world.py` exposes only `--target-land-fraction` and
+`--continental-fraction` and takes defaults for the rest, so **edit the dataclass defaults or
 call the modules directly** to change anything not exposed as a CLI flag.
 
 ### Stage 1 — crust · `stage1.CrustParams`

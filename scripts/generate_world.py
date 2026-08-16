@@ -41,14 +41,27 @@ def load_or_build(n):
 
 
 def main():
+    crust_defaults = stage1.CrustParams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=256)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=600)
     ap.add_argument("--passes", type=int, default=3)
+    ap.add_argument("--target-land-fraction", type=float,
+                    default=crust_defaults.target_land_fraction,
+                    help="share of the globe above sea level; sea level is solved to hit it "
+                         "(default %(default)s)")
+    ap.add_argument("--continental-fraction", type=float,
+                    default=crust_defaults.continental_fraction,
+                    help="share of SURFACE that is continental crust; the excess drowns as "
+                         "shelf (default %(default)s)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-glacial", action="store_true")
     args = ap.parse_args()
+
+    crust_params = stage1.CrustParams(
+        target_land_fraction=args.target_land_fraction,
+        continental_fraction=args.continental_fraction)
 
     out_dir = pathlib.Path(args.out or (ROOT / "data" / f"world_n{args.n}_s{args.seed}"))
     t_start = time.perf_counter()
@@ -59,7 +72,7 @@ def main():
           f"{np.mean(grid.arc_dist[grid.neighbours >= 0]):.2f} km spacing")
 
     print("[1] tectonic crust")
-    crust = stage1.generate_crust_tectonic(grid, seed=args.seed)
+    crust = stage1.generate_crust_tectonic(grid, crust_params, seed=args.seed)
     land, is_ocean = crust.land_mask, ~crust.land_mask
     print(f"    land {crust.land_fraction:.1%}, {len(crust.landmass_areas)} landmasses, "
           f"relief {crust.elevation.min():,.0f}..{crust.elevation.max():,.0f} m")
@@ -148,7 +161,9 @@ def main():
 
     print(f"[9] export -> {out_dir}")
     params = {
-        "crust": stage1.CrustParams().__dict__, "plates": plates.PlateParams().__dict__,
+        # The one that RAN, not a fresh default -- the two now differ whenever a crust flag
+        # is passed, and the provenance file is the only record of which world this is.
+        "crust": crust_params.__dict__, "plates": plates.PlateParams().__dict__,
         "lem": stage2.LemParams().__dict__, "climate": climate.ClimateParams().__dict__,
         "glacial": None if args.no_glacial else glacial.GlacialParams().__dict__,
         "hydrology": hydrology.HydrologyParams().__dict__,
