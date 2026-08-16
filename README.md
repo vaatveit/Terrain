@@ -117,6 +117,7 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_flow_receiver` | int32 | — | **cell id** the water flows into, always a neighbour. `rec[i] == i` terminates the tree (ocean or outlet). Chain it to walk downstream |
 | `field_discharge_km3_per_yr` | float32 | km³/yr | water volume routed through the cell (Stage 6) |
 | `field_river_width_m` | float32 | m | channel width, `90·√Q`; **0 means no river**. There is no separate river mask — the channel threshold puts a 0.65 m floor under every river cell, so `> 0` is exactly that test |
+| `field_margin_class` | uint8 | code | `0` inland, `1` passive coast, `2` active coast. Re-derived **after** the reflood, on the coastline that ships — the Stage 1 margins describe a coast that no longer exists |
 | `field_lake_mask` | uint8 | — | 1 where a lake stands |
 | `field_lake_level_m` | float32 | m | water surface elevation; NaN off-lake |
 | `field_lake_depth_m` | float32 | m | surface minus bed; 0 off-lake |
@@ -224,7 +225,7 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | `crust_octaves` | 3 | detail in the continent outline |
 | `warp_amp` / `warp_frequency` | 0.35 / 2.2 | domain warp; what makes coastlines fractal rather than blobby |
 | `transition` | 0.12 | width of the continental-slope ramp |
-| `relief_octaves/frequency/km` | 7 / 6.0 / 3.0 | pre-erosion thickness texture |
+| `relief_octaves/frequency/km` | 7 / 6.0 / 1.0 | pre-erosion thickness texture. The 1.0 km is **vertical** — cut ~3× from the Earth value with the rest of the isostasy |
 | `t_continental_km` / `t_oceanic_km` | 12 / 2.4 | crustal thickness by type. Isostasy is **radius-blind** — Earth values would put 4,455 m of relief on a 64.9 km sphere |
 | `rho_continental` / `rho_oceanic` / `rho_mantle` | 2.8 / 2.9 / 3.3 | isostasy densities |
 | `min_island_area_km2` | 0.104 | below this an island is speckle. Cell-scale (~12 cells), so it does **not** rescale with the radius |
@@ -290,9 +291,10 @@ exchange (BWk 18.3% → 13.4%).
 | `u_max_m_per_myr` | 100 | peak orogenic uplift. Sets relief with `LemParams.K`, and hilltop curvature (`U/D`) with `LemParams.D` |
 | `craton_floor_m_per_myr` | 2.0 | uplift on stable interiors |
 | `orogen_decay_km` | 2.04 | how far uplift reaches from a collision boundary. **World-scale** — rescaled by `PlateParams.for_radius` |
-| `arc_offset_km` / `arc_width_km` | 150 / 100 | volcanic arc position inland of a trench |
-| `rift_shoulder_km` | 80 | rift flank width. The graben **subsides**, which is what creates tectonic lake basins |
-| `convergent_thickening_km` / `divergent_thinning_km` | 15 / 8 | crustal root and rift thinning |
+| `arc_offset_km` / `arc_width_km` | 1.53 / 1.02 | volcanic arc position inland of a trench. **World-scale** — 150 / 100 km ÷ 98.125 |
+| `transform_decay_km` | 1.02 | restraining-bend reach at a transform boundary. **World-scale.** Was a bare `100.0` inside `derive_uplift` rather than a field, so `for_radius` never saw it: over a 12.2 km uplift reach `exp(−d/100)` runs 1.000 to 0.885, painting all 17.6% of transform land with a uniform slab instead of a ridge |
+| `rift_shoulder_km` | 0.82 | rift flank width. **World-scale** — 80 km ÷ 98.125. The graben **subsides**, which is what creates tectonic lake basins |
+| `convergent_thickening_km` / `divergent_thinning_km` | 5.0 / 2.7 | crustal root and rift thinning. **Vertical**, so not a radius rescale — cut with the relief budget, as `CrustParams` was |
 
 ### Stages 2 & 4 — erosion · `stage2.LemParams`
 
@@ -302,17 +304,23 @@ exchange (BWk 18.3% → 13.4%).
 | `K` | 1.2e-6 | **erodibility — sets relief, not shape.** Peak elevation scales as `U/K`. No longer resolution-dependent (cell size is fixed), but still different for coupled runs; see below |
 | `D` | 0.02 | hillslope diffusion, m²/yr. **Now a first-class term** — it produces a real hillslope regime, and must be sub-cycled (`diffusion_substeps`) because the explicit stability limit fell from 239 Myr to 25 kyr |
 | `G` | 0.0 | sediment deposition (Davy–Lague). 0 = pure detachment-limited |
+| `repose_deg` | 33.0 | angle of repose for `mass_wasting`, run after diffusion each step. A **separate operator from `D`**, not a nonlinear diffusivity, because Roering's critical-slope flux diverges at `Sc` and would worsen the sub-stepping. 0 disables it. A near-no-op on this world — see Known limitations |
+| `wasting_relax` / `wasting_passes` | 0.25 / 3 | share of the excess removed per pass, and passes per timestep. Must stay under ~1/3: a cell has six edges that can all shed at once, and above that a pass overshoots and inverts the slope it was relaxing |
 | `max_subsidence_m` | 500 | **total** subsidence one cell may accumulate over the run. Erosion balances uplift; nothing balances subsidence with `G = 0`, so a constant rate over 300 Myr drove a graben to 5,063 m. Rift subsidence is finite in nature, so the bound is a total rather than a smaller rate |
 | `dt_myr` | 0.5 | timestep. The implicit solver is unconditionally stable, so this can be large |
 | `fill_every` | 1 | priority-flood cadence. 1 is affordable |
 
-**`K` needs recalibrating in two situations, and both are measured:**
+**`K` needs recalibrating for coupling, and no longer for resolution:**
 
-- **Resolution.** Finer grids resolve smaller headwater areas where slope is steepest, so
-  the same `K` gives more relief. `K=1e-6` gave 5.8 km peaks at n=128 and 17.6 km at n=785.
 - **Coupling.** Stage 4 substitutes discharge for drainage area, a different
   parameterisation in which `K` means something different. Use **1.2e-6 coupled** and
   **~2.5e-6 uncoupled** at n=785.
+- **Resolution — this used to matter and does not now.** `K=1e-6` gave 5.8 km peaks at
+  n=128 and 17.6 km at n=785 *when the sphere was Earth-sized and cells coarsened with `n`*.
+  Cell size is fixed at 100 m for every `n`, so the smallest resolved drainage area is
+  always 0.0086 km² and that dependence is gone. What remains is a weak dependence on the
+  *largest* basin, which still grows with the world: peak relief goes as `L^0.156`, so
+  n=785 runs about 12% above n=384 at the same `K`.
 
 To retarget peak elevation, scale `K` by the ratio you want to remove: relief ∝ 1/K exactly
 for `n=1`.
@@ -323,7 +331,7 @@ for `n=1`.
 |---|---|---|
 | `passes` | 3 | climate–erosion alternations. Two or three is enough; change between passes ran 356 → 107 → 55 m |
 | `steps_per_pass` | 200 | erosion steps per pass |
-| `discharge_floor` | 0.30 | minimum discharge as a fraction of typical. **Sets the coupled/uncoupled peak ratio at `floor^(-m/n)`.** Lower = more relief in deserts and more contrast |
+| `discharge_floor` | 0.30 | minimum discharge as a fraction of typical. **Caps the relief multiplier at `floor^(-m/n)` = 1.72×**, and the cap binds — 17–21% of land sits exactly at the floor. The measured coupled/uncoupled *peak* ratio is 1.43–1.50, below the cap. Lower = more relief in deserts and more contrast |
 
 ### Stage 3 — climate · `climate.ClimateParams`
 
@@ -332,7 +340,7 @@ for `n=1`.
 | `t_equator_c` / `t_pole_c` | 27 / −25 | sea-level temperature range |
 | `lapse_rate_c_per_km` | 6.5 | standard environmental lapse rate |
 | `continental_cooling_c` | 15 | annual-mean cooling deep inside continents, weighted by latitude. The main non-zonal signal in temperature |
-| `continentality_c` / `_scale_km` | 6 / 1500 | seasonal amplitude inland, and its decay length |
+| `continentality_c` / `_scale_km` | 6 / 15.3 | seasonal amplitude inland, and its decay length (1500 km ÷ 98.125) |
 | `wind_speed` / `meridional_fraction` | 1.0 / 0.3 | only the ratio matters; direction comes from the three-cell bands |
 | `meander_deg` / `_frequency` | 7 / 1.8 | Rossby-like waviness. **At 0 the zero-wind latitudes render as ruler-straight rainfall stripes** |
 | `orographic_coeff` | 0.004 | rainout per metre of forced ascent. Raising it strengthens rain shadows and dries interiors |
@@ -374,9 +382,10 @@ n=785, where they were tuned.
 | `balance_per_degc` | 0.35 | metres of ice per year per degree below freezing |
 | `K` / `m` / `n` | 0.003 / 0.30 / 1.0 | abrasion law on ice flux. `m` is below the fluvial value on purpose. `K` was 0.02 — inside the published 0.1–10 mm/yr band, and still removing 34% of the world's total relief in 300 kyr, because the band spans two orders of magnitude and this world's relief budget is 432 m, not several km |
 | `slope_baseline_km` | 1.22 | **driving slope is regional, not local.** With a local slope, overdeepenings are impossible rather than merely rare. Cell-scale (12 cells of flow path) |
-| `min_flux_km3_per_yr` | 0.01 | below this it is snow, not a glacier |
+| `max_balance_m_per_yr` | 3.0 | ceiling on accumulation |
+| `min_flux_km3_per_yr` | 1.04e-6 | below this it is snow, not a glacier. Cell-scale — 1e-2 ÷ 98.125², a volume so R² |
 | `steps` / `dt_yr` | 60 / 5000 | 300 kyr of glaciation |
-| `max_incision_per_step_m` | 25 | explicit-scheme guard |
+| `max_incision_per_step_m` | 8.0 | explicit-scheme guard, and **not a dead one**: 7,417 land cells hit it at n=128 and the deepest total incision comes out at exactly 8 × 60 = 480.00 m, so wherever it binds the local rate is set by the clamp rather than by `K·Q^m·S^n`. `K` and this are not independent knobs |
 
 ### Stages 5b/5c — reflood and re-solve · no parameters
 
@@ -386,7 +395,14 @@ surface slope and gouges below its outlet — that is what carves a fjord — an
 to be let in afterwards or the map carries dry ground below sea level. `stage1.reflood`
 re-applies Stage 1's two rules to the eroded surface: below the datum is water, and ocean is
 the largest connected body of it. A trough joined to the sea floods; a hole that is not
-stays land and becomes a lake candidate for Stage 6. Land goes 29.6% → 25.4% at n=128.
+stays land and becomes a lake candidate for Stage 6.
+
+**How much it takes depends on world size**, so quote the resolution with the figure:
+29.4% → 22.7% at n=64, 29.6% → 25.6% at n=128, and at n=785 the shipped worlds export
+0.295 ± 0.003 against a 0.29 target — i.e. by production the reflood removes *less* than
+the inland basins add back. Drowning after erosion is a small-world effect: median land
+elevation is about 10 m on a small relief budget, so ground lowered at all tends to go
+under, and a larger world stands higher above its datum.
 
 Stage 5c then re-solves the seasonal climate on that coastline, because everything
 downstream reads absolute millimetres and degrees against the new mask. It does not feed
@@ -520,7 +536,6 @@ at 3.6%. A global regression pools basins with different uplift, and how many of
 happens to grow is a property of the seed. An earlier version of this section read a
 0.444 / 0.346 / 0.271 decline across n=256 / 512 / 785 as a trend; those are planet-wide
 figures with one seed each, against a seed sd of 0.056, so the trend is not shown by them.
-| θ, 400 cells and up | — | **0.556** (r² 0.85) | 0.4–0.6 |
 
 The first two were recorded in terrain-algorithms.md as *unfixed* — a surface genuinely
 rough at the cell scale, with half of all land having no upstream contribution at all. Both
@@ -567,12 +582,14 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
 
 - **No subtropical desert belt from circulation.** Needs a vertical dimension the
   surface-only climate model does not have.
-- **Precipitation is over-dispersed** — log₁₀ sd 0.83 against Earth's ~0.45, with the
-  wettest 5% of land taking 47.5% of all land rain against roughly 15%. It is *not*
+- **Precipitation is over-dispersed** — log₁₀ sd **0.681** against Earth's ~0.45, with the
+  wettest 5% of land taking **53.1%** of all land rain against roughly 15%. It is *not*
   convergence (the wettest cells have the same incoming advection weight as everywhere
-  else) and no knob moves it; it is the ascent factor and the moisture field multiplying,
-  which is the same missing vertical dimension as the item above. The anchor is set on
-  Earth's land **median** rather than its mean to make the best of it.
+  else); it is the ascent factor and the moisture field multiplying, which is the same
+  missing vertical dimension as the item above. **No knob moves it and one source did** —
+  all six knobs swept against it are coefficients on transport that was already present,
+  where `river_evaporation` took it from 2.146 to 0.681 at n=785. The anchor is set on
+  Earth's land **median** rather than its mean to make the best of what is left.
 - **Biomes remain visibly zonal**, and this is now understood rather than merely observed.
   Adding arid classes outside the tropics widened the desert belt's latitude wander from
   4.4° to 9.9°. Ocean-current heat transport and a seasonal cycle were then both built —
@@ -581,15 +598,24 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
   dimension to spend.** Land elevation std is 104 m at production against Earth's ~800, so
   the lapse rate can contribute 0.68 °C where Earth gives ~5, against a latitude term with
   a std of 13.7 °C. It is not a mistuning and there is no knob: raising uplift is blocked
-  by a hillslope budget already past the angle of repose, and reaching Earth's relief by
-  growing the world would take 2.35 billion cells, 382× the production budget. Relative to
+  by hilltop curvature, which is exactly `U/D` and already implies a 45° basal gradient,
+  and reaching Earth's relief by growing the world would take 2.35 billion cells, 382× the
+  production budget. (That block used to be argued from the measured slope percentiles
+  instead — p99 62.5°, "already past the angle of repose". It should not be: 98.1% of the
+  over-steep edges are a land cell against ocean held at base level, so the percentiles
+  describe the coastline rather than any hillslope. See `plates.py`.) Relative to
   its own size this world is already **12.7× steeper** than Earth; what it lacks is
   absolute metres, which is precisely what the 100 m cell decision traded away.
-- **Endorheic basins are rare** in generated worlds; the logic is unit-tested on
-  constructed basins instead.
-- **No meanders, dunes, wave-cut notches, cirques or thermal talus.** All were sub-grid at
-  9.77 km cells; at 100 m all are now above the grid scale, and none is implemented yet.
-  See [Cell size](#cell-size) for the measured thresholds.
+- **No meanders, dunes, wave-cut notches or cirques.** All were sub-grid at 9.77 km cells;
+  at 100 m all are now above the grid scale, and none is implemented. See
+  [Cell size](#cell-size) for the measured thresholds. **Thermal talus is the exception —
+  it is implemented and it does almost nothing**, which is the more useful result:
+  `stage2.mass_wasting` relaxes any edge past `repose_deg`, and every repose angle from 45°
+  to 30° gives the same world. 98.1% of the over-steep edges on this world are land against
+  ocean at base level and 1.8% are lake rim, leaving 0.05% that are land-to-land; genuine
+  hillslopes run p50 0.9° because `U/D` equilibrium does not put them near failure. It is
+  kept on because glacial erosion does create real over-steep land (80 → 4,530 edges),
+  almost all of which Stage 5b then floods.
 - **Concavity is well below real terrain and the gap is not seed noise.** Per-basin θ is
   **0.285 ± 0.010** across three n=785 seeds against SRTM's 0.516. Hack *h* does not follow
   it and stays good at 0.559 ± 0.004. Why concavity comes out low is unexplained and is the

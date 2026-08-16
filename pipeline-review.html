@@ -234,7 +234,7 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
     <div class="fact"><dt>Cells</dt><dd>6,162,252</dd></div>
     <div class="fact"><dt>Cell size</dt><dd>100 <span>m</span></dd></div>
     <div class="fact"><dt>World radius</dt><dd>64.9 <span>km</span></dd></div>
-    <div class="fact"><dt>Land</dt><dd>~23 <span>%</span></dd></div>
+    <div class="fact"><dt>Land</dt><dd>29.5 <span>%</span></dd></div>
     <div class="fact"><dt>Peak</dt><dd>2,428 <span>m</span></dd></div>
     <div class="fact"><dt>Runtime</dt><dd>~18 <span>min</span></dd></div>
   </dl>
@@ -411,7 +411,7 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
         <tr><td class="k">LAKE_TOL_M</td><td class="v">1e-3</td><td></td><td class="n">matches Stage 6's tolerance so the two agree on lake bed</td></tr>
         <tr><td class="k">safety (sub-steps)</td><td class="v">0.5</td><td></td><td class="n">uses the <em>worst</em> cell — the 12 pentagons are smallest</td></tr>
         <tr><td class="k">passes × steps</td><td class="v">3 × 200</td><td></td><td class="n">measured |dz| between passes: 112.5 → 14.0 → 8.5 m</td></tr>
-        <tr><td class="k">DISCHARGE_FLOOR</td><td class="v">0.30</td><td></td><td class="n">arid basins erode slowly, not never. Sets the coupled/uncoupled peak ratio at 1.37×</td></tr>
+        <tr><td class="k">DISCHARGE_FLOOR</td><td class="v">0.30</td><td></td><td class="n">arid basins erode slowly, not never. Caps the relief multiplier at <code>0.30^(−0.45)</code> = 1.72×, and 17–21% of land sits at that cap; the measured coupled/uncoupled peak ratio is 1.43–1.50. This row said 1.37×, which is the value for a floor of 0.50</td></tr>
         </tbody>
       </table></div>
       <p>The discharge weight is normalised so <em>mean relief</em> is unchanged, not so the mean
@@ -784,7 +784,9 @@ offset  5,000 m:  spurious self-receivers    537</code></pre>
     anything drawing coasts; or delete it and the print. Leaving it as-is is the only bad option,
     because it looks like a live feature.</p>
     <p><strong>Exporting it surfaced a second bug.</strong> <code>margin_class</code> is computed
-    in Stage 1, but the coastline moves at Stage 5b — reflood takes land from 29.4% to 22.7%.
+    in Stage 1, but the coastline moves at Stage 5b — reflood takes land from 29.4% to 22.7%
+    <em>at n=64, where this was verified</em>; the bite shrinks with world size and at n=785
+    the shipped worlds export 29.5% against a 29% target.
     Shipping the Stage 1 margins next to the post-reflood land mask would have exported a margin
     for a coast that no longer exists, which is the exact failure the reflood comment warns
     about. It is now re-derived on the shipped coastline, beside the climate re-solve that

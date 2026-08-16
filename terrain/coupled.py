@@ -110,10 +110,21 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=DISCHARGE_FLOOR,
     shape physically: arid basins erode slowly, not never -- episodic runoff, groundwater
     and hillslope processes all keep working when the rain does not.
 
-    Note the floor sets the coupled/uncoupled peak ratio, at floor^(-m/n) = 1.37x, and that
-    is a feature. Arid rain-shadow orogens are where the highest ground is, which is why
-    the Altiplano and Tibet stand where they do. The absolute level is set by K, which is
-    recalibrated for the coupled parameterisation -- see stage2.LemParams.
+    Note the floor CAPS the relief multiplier, at floor^(-m/n) = 0.30^-0.45 = 1.72x, and
+    that is a feature. Arid rain-shadow orogens are where the highest ground is, which is
+    why the Altiplano and Tibet stand where they do. The cap genuinely binds: run this
+    function over the exported precipitation of a shipped world and 17.6% of land at n=64,
+    21.0% at n=128 lands exactly on the floor, so the multiplier's p99 and its max are both
+    1.719. The measured coupled/uncoupled PEAK ratio is 1.43-1.50, i.e. below the cap --
+    a peak's relief is not set by its own local multiplier alone.
+
+    This line read "1.37x" for a long time. That is 0.5^-0.45, the value for a floor of
+    0.50: the number was borrowed from the half-discharge illustration above, which is a
+    correct statement about a different cell. It dates from when this function defaulted to
+    0.50 while `run` used 0.30 -- see DISCHARGE_FLOOR, which unified them at 0.30.
+
+    The absolute level is set by K, which is recalibrated for the coupled parameterisation
+    -- see stage2.LemParams.
     """
     p = np.asarray(precipitation_mm, dtype=np.float64)
     mask = np.asarray(land_mask, dtype=bool)

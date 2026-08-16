@@ -281,7 +281,7 @@ Neither needed a change to the drainage code. Both were the same symptom: a land
 
 | process | feature scale | at 9.81 km cells | at 100 m cells |
 |---|---|---|---|
-| Thermal talus | needs slope > angle of repose | **impossible** — 33° across one cell is 6,371 m of drop, against ~8 km of total world relief | **viable** — 65 m of drop, which mountain terrain clears |
+| Thermal talus | needs slope > angle of repose | **impossible** — 33° across one cell is 6,371 m of drop, against ~8 km of total world relief | **built** — 65 m of drop, which mountain terrain clears; see below |
 | Aeolian dunes | 0.05–2 km | sub-grid | resolved |
 | Wave-cut notches | 1–50 m | sub-grid by 2–4 orders of magnitude | marginal |
 | Cirques | 0.5–3 km | sub-grid | resolved |
@@ -289,7 +289,19 @@ Neither needed a change to the drainage code. Both were the same symptom: a land
 | **Fjords** | 20–200 km | resolved | resolved (world-spanning) |
 | **Ice sheets** | 500–4,000 km | resolved | larger than the world |
 
-None of the newly viable operators is implemented. What changed is that writing one is now worth doing, and `tests/test_glacial.py` pins the geometry so a future grid change cannot quietly take it back. Note the last two rows moved the other way: a 64.9 km sphere is smaller than an Earth ice sheet, so continental glaciation is no longer a thing this world can express.
+**One of the newly viable operators has since been built, and the measurement is worth more than the operator.** `stage2.mass_wasting` relaxes any edge steeper than `repose_deg = 33°`, moving material from the high cell to the low one with a volume split that conserves mass exactly on an unstructured mesh, and it runs after diffusion on every timestep — diffusion is what steepens the basal slope toward `U/D`, so relaxing first would leave the step's own oversteepening in place. Then the sweep came back flat: at n=256 every repose angle from 45° down to 30° gives the same world (θ 0.438–0.463, peak 691 m, z std 47.4 m).
+
+The reason is that the statistic which motivated it was answering a different question. It was written because measured slopes run p99 62.5°, p99.9 76.1°, max 83.7° — apparently a real share of ground past failure. Decomposing those edges on an n=128 world after Stage 2:
+
+| steep edges (>33°) | count | share |
+|---|---|---|
+| touching an OCEAN cell | 169,078 | 98.1% |
+| touching a LAKE cell | 3,124 | 1.8% |
+| land–land, neither | 80 | **0.05%** |
+
+Almost every over-steep edge is a cell against a surface *pinned at a level* — the shoreline, where ocean is held at base level, or a lake rim. Those are not hillslopes and the operator correctly leaves them alone. Genuine hillslopes on the same world run p50 **0.9°** and p90 **9.4°**, nowhere near repose, because `U/D` equilibrium does not put them there. **That retires one of the two supports under the uplift ceiling** — see the route table below, which no longer cites the percentiles. It is kept on regardless, at a cost that does not show in the run time, because there is one regime where it bites: glacial erosion takes the land–land count from 80 to 4,530. Stage 5b then floods almost all of it (back to 38), so a post-glacial pass would be relaxing ground about to become seabed — a property of this world's hypsometry rather than a general one.
+
+The other newly viable operators are not implemented. What changed is that writing one is now worth doing, and `tests/test_glacial.py` pins the geometry so a future grid change cannot quietly take it back. Note the last two rows moved the other way: a 64.9 km sphere is smaller than an Earth ice sheet, so continental glaciation is no longer a thing this world can express.
 
 So Stage 5 is glacial erosion, driven from the Stage 3 temperature field (which already carries the lapse rate, so latitude and altitude are handled together — a latitude-only ELA put ice on 1.2% of land and missed low-lying polar shields entirely).
 
@@ -353,7 +365,15 @@ Exempting both is what ships. Land relief rises with it — standard deviation 4
 
 Stage 1 solves the land mask and Stages 2 and 5 then move the surface underneath it by hundreds of metres, with nothing re-deriving it. Glacial erosion is why that matters: ice is driven by its own surface slope and will gouge below its own outlet, which is precisely what carves a fjord — and the water then has to be let in.
 
-Measured after a full n=128 run: **20.9% of land sat below the datum, and 99.9% of that was connected to the sea**, median depth 106 m at median latitude 63°. Glacially overdeepened coastal troughs, correctly cut and left dry. The fix reuses Stage 1's two rules verbatim on the new surface — below the datum is water, ocean is the largest connected body of it — so a trough joined to the sea floods and a hole that is not joined to the sea stays land and becomes a lake candidate. Land goes 29.6% → 23.3%.
+Measured after a full n=128 run: **20.9% of land sat below the datum, and 99.9% of that was connected to the sea**, median depth 106 m at median latitude 63°. Glacially overdeepened coastal troughs, correctly cut and left dry. The fix reuses Stage 1's two rules verbatim on the new surface — below the datum is water, ocean is the largest connected body of it — so a trough joined to the sea floods and a hole that is not joined to the sea stays land and becomes a lake candidate.
+
+**How much it takes depends strongly on world size, and this is worth stating because it is easy to quote the wrong one.** Measured on current `main`, seed 1, the printed before/after at Stage 5b:
+
+| | n=64 | n=128 | n=785 |
+|---|---|---|---|
+| land, Stage 1 → shipped | 29.4% → **22.7%** | 29.6% → **25.6%** | 29% target → **29.5% ± 0.3** exported |
+
+At n=64 the reflood takes 6.7 points and at n=128 it takes 4.0, but by production it takes *less than the inland basins add back*: the three shipped n=785 worlds export 0.2987 / 0.2929 / 0.2931 against a 0.29 target, so the net movement is upward. Same mechanism as the stale-mask finding under [river evaporation](#river-evaporation-the-only-source-that-is-not-local-rain) — drowning after erosion is a small-world effect, because median land elevation is about 10 m on a small relief budget and a large world's ground stands higher above the datum. **Quote the resolution with the figure.** This paragraph gave 23.3% with no resolution attached, which matched nothing.
 
 The climate is then re-solved on the coastline that ships (**Stage 5c**). Everything downstream reads absolute millimetres and degrees against the new mask, and the old fields were solved for a continent that is now part sea — coast distance, the ocean moisture source and the sea-surface anomaly all move when a fifth of the land floods. It does not feed back into erosion; Stages 2 and 5 have run. Stage 5 keeps the *pre*-reflood temperature, which is correct: that is the coastline the ice grew on. It is also what makes the precipitation anchor land exactly on its target rather than near it, since the median is now taken over the mask it is normalising for.
 
@@ -506,7 +526,7 @@ The ordering of the three is the likely explanation and is not separately tested
 
 | route | verdict |
 |---|---|
-| raise `U` | **blocked.** Hilltop curvature is `U/D` and that budget is spent — measured slopes run p99 62.5°, p99.9 76.1°, already past the angle of repose. See `plates.py`. |
+| raise `U` | **blocked.** Steady-state hilltop curvature is exactly `U/D`, and at U=100, D=0.02 that is 5×10⁻³ 1/m — 100 m of convex relief over a 200 m hillslope, a basal gradient of 1.0, which is 45° and already at repose. Multiplying `U` multiplies every hillslope gradient by the same factor. This used to be argued from the measured slope percentiles as well; **that half was wrong** and is withdrawn — 98.1% of the over-steep edges are coastline, not hillslope (see Stage 5 above). The conclusion rests on the arithmetic, which is unaffected. See `plates.py`. |
 | lower `K` alone | **blocked.** Channel relief rises without touching hilltop curvature, but hillslope length goes as `(D/K)^(1/(1+2m))` — ×7.7 lengthens hillslopes 3.2×, and at fixed `U/D` a longer hillslope is a *steeper* one. It also collapses the drainage density the 100 m rescale exists to produce. |
 | raise `U` and `D` together | **consistent, and worse than what it replaces.** Holding `U/D` preserves hillslope form and puts the relief in the channel network, which is correct physics. Price: `D` 0.02 → 0.154, outside the published 0.001–0.1 soil-creep band; diffusion sub-steps 20 → ~154, and sub-stepping is already "the real cost of the rescale"; peaks at **18.7 km on a 64.9 km sphere**, 29% of the planet's radius. |
 
@@ -930,6 +950,8 @@ Measured at n=256 seed 1, full pipeline, before and after: slope–area concavit
 
 Erode, recompute climate on the new topography, re-erode against the new discharge, repeat. The doc called this the stage most implementations skip and the one that most improves plausibility; it is also the cheapest of the four to implement, because the coupling needs no new solver.
 
+**Every absolute elevation below predates the rescale to 100 m cells, and none has been re-measured.** They were taken on a 9.77 km mesh at Earth radius, where the calibrated coupled `K` was 3.7e-6 and peaks ran 9.1 km. The shipped world is `K = 1.2e-6` coupled against ~2.5e-6 uncoupled, with a **measured 2,428 m peak** at n=785; `stage2.LemParams` carries the current calibration and is the authority on it. What survives here is the *ratios*, which is what this section is about: which normalisation inflates the world rather than redistributing erosion within it, and how the discharge floor trades peak height against wet–dry contrast. Read the metres as relative.
+
 **Couple through discharge, not through a fudged erodibility.** Stream power is properly `E = K·Q^m·S^n`; drainage area is only a stand-in for discharge under uniform rainfall. Accumulating `area × P/mean(P)` instead of area restores the real variable, keeps `Q` in area units so `K` retains its calibrated meaning, and is algebraically identical to scaling `K` by `P^m`. It also degenerates *exactly* to the uncoupled run when precipitation is uniform — bit-identical, which makes a strong regression test.
 
 **It does what it is supposed to do.** Against an uncoupled run of the same total duration, so the comparison is about *where* erosion went rather than how much there was:
@@ -956,9 +978,9 @@ Worth noting for the testbed: **the drainage metrics are blind to this stage.** 
 
 Solve for the scale by bisection; it is self-calibrating and needs no per-resolution tuning. That matters because the precipitation skew *sharpens* with resolution, so the earlier normalisations drifted: the coupled/uncoupled peak ratio ran 1.16× at n=256 rising to 1.63× at n=785, and is now 1.43× / 1.50× — flat.
 
-**The residual ~1.45× is not a bug and should not be removed.** Relief goes as `Q^(-m/n)`, so cells at the discharge floor erode `0.5^(-0.45) = 1.37×` slower — and arid rain-shadow orogens are precisely where the highest ground is. The Altiplano and Tibet are high *because* they are dry. Suppressing this would suppress the effect the stage exists to produce.
+**The residual ~1.45× is not a bug and should not be removed.** Relief goes as `Q^(-m/n)`, so the floor *caps* the relief multiplier at `0.30^(-0.45)` = **1.72×** — and arid rain-shadow orogens are precisely where the highest ground is. The cap binds: measured on shipped worlds, 17.6% of land at n=64 and 21.0% at n=128 sits exactly at the floor, so the multiplier's p99 and its max are both 1.719. The measured peak ratio of 1.43–1.50 therefore sits *below* the cap, which is what it should do — a peak's relief is not set by its own local multiplier alone. (This read `0.5^(-0.45) = 1.37×` until the arithmetic was checked. 1.37 is the value for a floor of **0.50**; the shipped floor is 0.30, and the number had been borrowed from a correct illustration about a half-discharge cell.) The Altiplano and Tibet are high *because* they are dry. Suppressing this would suppress the effect the stage exists to produce.
 
-**So the level is fixed by recalibrating `K`, and that is principled rather than a fudge.** Stage 4 replaces drainage area with discharge, which is a different parameterisation — `K` genuinely carries a different meaning there, and calibrating it against the uncoupled model was the actual mistake. Production `K` is 3.7e-6 coupled against ~2.5e-6 uncoupled at n=785; both sit well inside the published 1e-7–1e-4 range. A useful side effect: the faster erosion converges, so peaks now settle (9,108 m at every pass) where before they were still climbing at the end of the run.
+**So the level is fixed by recalibrating `K`, and that is principled rather than a fudge.** Stage 4 replaces drainage area with discharge, which is a different parameterisation — `K` genuinely carries a different meaning there, and calibrating it against the uncoupled model was the actual mistake. Coupled `K` is the one to set; both it and the uncoupled value sit well inside the published 1e-7–1e-4 range. A useful side effect: the faster erosion converges, so peaks settle at every pass where before they were still climbing at the end of the run.
 
 The discharge floor still trades peak height against contrast, measured at n=256 over three passes against an uncoupled peak of 6,688 m:
 

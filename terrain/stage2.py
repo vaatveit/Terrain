@@ -64,9 +64,12 @@ class LemParams:
     # COUPLING. Stage 4 replaces drainage area with discharge, which is a different
     # parameterisation, so K carries a different meaning there and needs its own value. The
     # coupled run holds ~1.45x the relief of the uncoupled one at the same K, because arid
-    # cells sit at the discharge floor and erode floor^(-m/n) = 1.37x slower -- and arid
-    # rain-shadow orogens are exactly where the highest ground is. That is the behaviour
-    # the stage exists to produce, so the fix is to recalibrate K rather than to suppress it.
+    # cells sit at the discharge floor and erode more slowly -- and arid rain-shadow orogens
+    # are exactly where the highest ground is. The floor caps the relief multiplier at
+    # floor^(-m/n) = 0.30^-0.45 = 1.72x and 17-21% of land sits at that cap, so the measured
+    # 1.45x is below the ceiling rather than equal to it. (This comment read 1.37x, which is
+    # 0.5^-0.45 -- the right arithmetic for the wrong floor.) That is the behaviour the stage
+    # exists to produce, so the fix is to recalibrate K rather than to suppress it.
     #
     # Measured on the 100 m world, uncoupled at n=384: relief goes as K^-0.668, giving
     # 1799 m peaks at K=8e-7 and ~2010 m extrapolated to n=785. Times the coupling factor,
