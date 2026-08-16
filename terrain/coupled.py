@@ -33,6 +33,10 @@ class CoupledResult:
     elevation: np.ndarray
     climate: climate_mod.Climate
     discharge_weight: np.ndarray
+    # Routed accumulation on the returned topography, km^2 of contributing area, zero at
+    # sea. Returned because `climate` is no longer reproducible from elevation alone --
+    # river evaporation reads this, so it is part of the recipe.
+    discharge: np.ndarray
     passes: int
     seconds: float
     # Per pass: (pass index, mean |dz| between passes, max elevation, mean precip on land)
@@ -133,10 +137,29 @@ def discharge_weight(area, precipitation_mm, land_mask, floor=DISCHARGE_FLOOR,
     return np.ascontiguousarray(area * scale, dtype=np.float32)
 
 
+def _routed_discharge(grid, z, weight, is_ocean):
+    """Accumulated discharge over land, for river evaporation to read.
+
+    Routed on the same weighted area the erosion used, so it is the precipitation-weighted
+    discharge rather than bare drainage area -- the physical quantity a channel's width
+    responds to. `metrics=False` because only Hack's law and the slope-area fit need the
+    longest-path fields, and this needs neither: ~1.1 s at 6.2M cells, once per pass.
+    """
+    from terrain import flow
+    fr = flow.route(z, grid.neighbours, grid.arc_dist, weight, is_ocean, metrics=False)
+    return np.where(is_ocean, 0.0, fr.acc).astype(np.float64)
+
+
 def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
         clim: climate_mod.ClimateParams = None, passes=3, steps_per_pass=200,
         discharge_floor=DISCHARGE_FLOOR, verbose=False, seasonal=True) -> CoupledResult:
     """Alternate erosion and climate until the pair stops moving.
+
+    The loop now runs in both directions. Climate drives erosion through discharge, as it
+    always did; erosion drives climate back through the same field, because a river is a
+    moisture source standing where no wind delivered it. That second direction is what an
+    ocean-only model cannot have -- see `climate.river_evaporation` -- and it is why pass 0
+    differs from the passes after it rather than merely preceding them.
 
     `seasonal` solves four points through the year and couples erosion to their annual mean,
     at about 4.5x the climate cost. It is on by default because the two annual fields are
@@ -154,11 +177,17 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
     convergence = []
     cl = None
     weight = None
+    # Routed discharge from the previous pass, feeding river evaporation back into the
+    # climate -- the second direction of the coupling, and the only moisture source in the
+    # model that does not depend on the rain falling where it stands. None on pass 0 by
+    # construction: there is no drainage network until something has been eroded. See
+    # `climate.river_evaporation`.
+    discharge = None
 
     for p_i in range(passes):
         # Climate on the CURRENT topography -- this is the half of the loop that makes it
         # a loop rather than a one-off post-process.
-        cl = solve(grid, z, land_mask, clim)
+        cl = solve(grid, z, land_mask, clim, discharge=discharge)
         weight = discharge_weight(grid.area, cl.precipitation_mm, land_mask,
                                   floor=discharge_floor, exponent=lem.m / lem.n)
 
@@ -166,6 +195,7 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
         res = stage2.evolve(grid, z, uplift_m_per_myr, is_ocean, lem,
                             n_steps=steps_per_pass, discharge_weight=weight)
         z = res.elevation
+        discharge = _routed_discharge(grid, z, weight, is_ocean)
 
         moved = float(np.abs(z[land_mask] - before[land_mask]).mean())
         convergence.append((p_i, moved, float(z[land_mask].max()),
@@ -178,7 +208,7 @@ def run(grid, z0, uplift_m_per_myr, is_ocean, lem: stage2.LemParams = None,
     # `solve`, not `compute_climate` -- calling the plain one here left the loop eroding on
     # a seasonal year while the world was exported carrying an equinox one, and the two
     # differ by 22% at the median cell.
-    cl = solve(grid, z, land_mask, clim)
+    cl = solve(grid, z, land_mask, clim, discharge=discharge)
     return CoupledResult(elevation=z, climate=cl, discharge_weight=weight,
-                         passes=passes, seconds=time.perf_counter() - t0,
-                         convergence=convergence)
+                         discharge=discharge, passes=passes,
+                         seconds=time.perf_counter() - t0, convergence=convergence)

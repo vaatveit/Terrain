@@ -153,6 +153,64 @@ class ClimateParams:
     zonal_band_deg: float = 2.0
     # Moisture
     evaporation: float = 1.0              # source strength over ocean
+    # Open water inland evaporates too, and this is the only moisture source in the model
+    # that does not depend on the rain falling where it stands. That is the whole point of
+    # it. `land_recycling` returns a fraction of what just fell, so its per-sweep gain is
+    # strictly under one and zero is a fixed point: a cell far enough from the sea converges
+    # to no rain at all, however the constants are tuned. A river carries water that fell
+    # somewhere else, routed by the TOPOGRAPHY rather than by the wind, so it puts a source
+    # in the interior that the interior did not have to earn.
+    #
+    # Strength is the ocean's, per unit open water, because open water is open water. What
+    # has to be estimated is the AREA of it, and that comes from hydraulic geometry rather
+    # than from a knob: channel width goes as the square root of discharge, W ~ 0.5*sqrt(A)
+    # in metres for A in km^2, which puts the Mississippi near 900 m and a 10 km^2 stream
+    # near 1.6 m. A 100 m cell is therefore full of water at about 40,000 km^2 of drainage.
+    #
+    # No river on this world comes close to that -- the whole sphere is 52,970 km^2 -- so
+    # the fraction stays small, and small is correct. A 1,000 km^2 basin gives 0.16, a 16 m
+    # channel in a 100 m cell. It matters anyway because the interior it is added to is at
+    # 4e-4 of saturation: a few percent of ocean strength is still two orders of magnitude
+    # more water than arrives there today.
+    #
+    # Measured on the full coupled pipeline, seed 1, three passes, on against off:
+    #
+    #                     <1mm/yr   log10 sd   wettest 5%   p50/mean   theta   max z
+    #     n=256  off        5.33%      1.130        49.8%     0.2856   0.430    695
+    #            on         0.00%      0.688        45.9%     0.3063   0.445    621
+    #     n=785  off       13.30%      2.146        64.1%     0.1907   0.258   2014
+    #            on         0.02%      0.681        53.1%     0.2506   0.313   1866
+    #
+    # AND IT NARROWS THE DISTRIBUTION, which is the part worth noticing. The rainfall
+    # spread is the defect recorded in `_advect_step` as the one nothing moved -- six knobs
+    # swept, none of them worth the trade. A moisture source that is strongest where the
+    # water already collects, and bounded by saturation once it gets there, turns out to be
+    # the thing that does move it: log10 sd 2.146 -> 0.681 at n=785 against Earth's ~0.45.
+    # That was not the reason for building this and it is the larger of the two results.
+    #
+    # It is mostly the real rivers, not a floor under every cell. Cutting the source off
+    # below a drainage threshold, n=256:
+    #
+    #     source on              share of land   <1mm/yr   log10 sd
+    #     nothing                          --      5.33%      1.129
+    #     drainage > 10 km^2             0.4%      2.48%      0.963
+    #     drainage > 1 km^2              3.9%      0.35%      0.860
+    #     everywhere                     100%      0.00%      0.688
+    #
+    # Trunk streams cover under 4% of the land and remove 93% of the rainless ground on
+    # their own. The headwater trickle closes the rest and does most of the narrowing.
+    #
+    # THE COST IS THE TROPICS. Koppen Af goes 11.1% -> 18.1% of land at n=785 against
+    # Earth's ~5%, because the water the interiors gain lands mostly where it is already
+    # warm and wet. The arid classes come back toward Earth (BWk 18.3% -> 13.4%) and the
+    # continental D classes are still missing. Straight trade, and taken, because 13.3% of
+    # land under 1 mm/yr is not a climate and an over-wet tropics is.
+    #
+    # Set `river_evaporation` to 0.0 for the regression, which restores the pre-2c model
+    # exactly. Note the term is only available where a discharge field exists -- the first
+    # pass of `coupled.run` has none and runs without it, by construction.
+    river_evaporation: float = 1.0
+    river_full_area_km2: float = 40000.0
     # Rainout per metre of forced ascent. Expressed per metre it is resolution-robust: the
     # total climb over a range is the same however finely the range is sampled.
     #
@@ -1031,10 +1089,20 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
     Clausius-Clapeyron capacity bounds the operator and supplies the mechanism that makes
     convergence zones like the ITCZ rain heavily rather than diverge.
 
-    THE OUTPUT DISTRIBUTION IS TWICE AS WIDE AS EARTH'S AND NOTHING HERE FIXES IT. Land
+    THE OUTPUT DISTRIBUTION IS TWICE AS WIDE AS EARTH'S AND NOTHING *HERE* FIXES IT. Land
     rainfall comes out with a log10 standard deviation of 0.83 against Earth's ~0.45, and
     the wettest 5% of land takes 47.5% of all land rain against roughly 15%. Recorded here
     because the obvious diagnosis is wrong and the obvious knobs do not work.
+
+    SOMETHING OUTSIDE THIS FUNCTION DID FIX MOST OF IT, and the six-knob table below is
+    what made that finding possible rather than what refuted it. `river_evaporation` -- a
+    moisture source read off the routed discharge, strongest exactly where water already
+    collects and bounded by saturation once it arrives -- takes log10 sd from 2.146 to
+    0.681 at n=785 and the wettest 5% from 64.1% of the rain to 53.1%. The knobs below all
+    failed because every one of them is a coefficient on transport that was already there;
+    the spread needed a new source, not a reweighting of the old one. What follows is
+    therefore still true as written -- none of these six move it -- and no longer the last
+    word on the defect.
 
     It is NOT convergence. The wettest 5% of land has a median incoming advection weight of
     1.001 against 0.999 for the other 95% -- identical -- and only 11.9% of those cells are
@@ -1121,13 +1189,29 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
     return new_m, precip
 
 
+def open_water_fraction(discharge_km2, p: ClimateParams):
+    """Share of a cell's surface that is river, from hydraulic geometry.
+
+    Channel width goes as the square root of discharge, so the fraction of a fixed-width
+    cell that is water goes as sqrt(A / A_full). See `river_full_area_km2` for where the
+    40,000 km^2 comes from and why nothing on this world reaches it.
+    """
+    a = np.maximum(np.asarray(discharge_km2, dtype=np.float64), 0.0)
+    return np.clip(np.sqrt(a / p.river_full_area_km2), 0.0, 1.0)
+
+
 def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateParams,
-                  spacing_km=None, decl_deg=0.0, anchor=True):
+                  spacing_km=None, decl_deg=0.0, anchor=True, discharge=None):
     """Steady-state moisture transport with orographic and background rainout.
 
     `anchor=False` returns the pattern in the solver's own arbitrary units instead of
     millimetres. `compute_seasons` needs that -- see `_annual_anchor_scale` for why a season
     must not normalise itself.
+
+    `discharge` is the routed accumulation over land, in km^2 of contributing area, and it
+    is what lets an interior be watered by rain that fell somewhere else. None -- the first
+    pass of `coupled.run`, and every caller that has no topography solved yet -- gives the
+    ocean-only model exactly. See `river_evaporation`.
     """
     n = grid.cell_count
     nbr = np.ascontiguousarray(grid.neighbours)
@@ -1143,6 +1227,12 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
     capacity = np.clip(
         np.exp(p.saturation_gain * (temperature_c.astype(np.float64) - 15.0)), 0.05, 4.0)
     source = np.where(~land_mask, p.evaporation * capacity, 0.0)
+    # The land source rides on the same deficit-filling mechanism the ocean uses in
+    # `_advect_step`, which is what keeps it bounded: it can fill air up to saturation and
+    # never past it, so no amount of river can make a cell diverge.
+    if discharge is not None and p.river_evaporation > 0.0:
+        river = p.river_evaporation * capacity * open_water_fraction(discharge, p)
+        source = np.where(land_mask, river, source)
 
     # Orographic loss: how much of an incoming parcel survives the forced ascent into
     # this cell. Averaged over the upwind neighbours, weighted by how much comes from each.
@@ -1247,13 +1337,21 @@ def _annual_anchor_scale(precip, area, land_mask, target_mm):
     `advection_span_km`. The share under 1 mm/yr fell 22.8% -> 14.4% with nothing in the
     model changed.
 
-    What is left is a genuine physics gap, and it is the one worth naming: a surface-only
-    model has no aloft, so an interior can only be watered by what blew in from the sea and
-    by `land_recycling`, which recycles what already fell and therefore has zero as a fixed
-    point. The remaining fix is a moisture source standing IN the interior -- not a lower
-    limit here, and not a rescaling of the terms already present, which the capacity
-    diagnostic in `_advect_step` rules out. If this ever fires on a world that looks
-    reasonable, that is the finding, and the number below is not what should move.
+    THAT GAP HAS SINCE BEEN CLOSED, and the table above is the ocean-only model. It stands
+    because it is what this guard was calibrated against and because `river_evaporation`
+    can be switched off, not because it is current. Both figures are single seasonal solves
+    on Stage 1 crust; on the full coupled pipeline at n=785, land under 1 mm/yr runs 13.30%
+    without river evaporation and 0.02% with it, and the deep bands go 126.9 -> 423.6 mm
+    (8-16 km) and 110.6 -> 887.1 (16+ km).
+
+    The reason a river is the term that works, where nothing in `_advect_step` was: a
+    surface-only model has no aloft, so an interior can only be watered by what blew in
+    from the sea and by `land_recycling` -- and recycling returns a fraction of what just
+    fell, so its per-sweep gain is under one and zero is a fixed point however it is tuned.
+    A river carries water routed by the TOPOGRAPHY rather than the wind. That is a source
+    the interior did not have to earn, and it is the only one in the model. If this guard
+    ever fires on a world that looks reasonable, that is the finding, and the number below
+    is not what should move.
     """
     if not np.any(land_mask):
         return 1.0
@@ -1317,7 +1415,7 @@ def _weighted_ascent(xyz, nbr, rev, out_w, z):
 
 
 def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None,
-                    decl_deg=0.0, mean_insol=None, anchor=True) -> Climate:
+                    decl_deg=0.0, mean_insol=None, anchor=True, discharge=None) -> Climate:
     from terrain import plates
 
     p = params or ClimateParams()
@@ -1354,14 +1452,15 @@ def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None,
                                  land_mask=land_mask)
     wind = monsoon_wind(grid, land_mask, t, p, decl_deg=decl_deg)
     precip, moisture = precipitation(grid, elevation_m, land_mask, t, wind, p, spacing,
-                                     decl_deg=decl_deg, anchor=anchor)
+                                     decl_deg=decl_deg, anchor=anchor, discharge=discharge)
 
     return Climate(temperature_c=t, seasonality_c=seasonality,
                    wind=wind.astype(np.float32), precipitation_mm=precip,
                    moisture=moisture, coast_distance_km=dist, sst_anomaly_c=anom)
 
 
-def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None) -> Climate:
+def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None,
+                    discharge=None) -> Climate:
     """Four solves through the year, returned as one Climate with seasonal stacks.
 
     `temperature_c` and `precipitation_mm` stay the ANNUAL mean and total, so `coupled.run`,
@@ -1378,8 +1477,12 @@ def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None) 
     mean_insol = _mean_annual_insolation(grid.lat, p)
     # anchor=False: the seasons come back in the solver's own units and keep their relative
     # amplitude. One factor is fitted below, on the year. See `_annual_anchor_scale`.
+    # One discharge field for all four, not one per season. The river is the year's water:
+    # it is routed from the annual precipitation the previous pass produced, and a season
+    # does not get its own drainage network.
     seasons = [compute_climate(grid, elevation_m, land_mask, p, decl_deg=d,
-                               mean_insol=mean_insol, anchor=False) for d in decls]
+                               mean_insol=mean_insol, anchor=False, discharge=discharge)
+               for d in decls]
 
     t = np.mean([s.temperature_c for s in seasons], axis=0).astype(np.float32)
     precip = np.mean([s.precipitation_mm for s in seasons], axis=0)

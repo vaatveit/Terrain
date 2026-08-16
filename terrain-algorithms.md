@@ -733,7 +733,7 @@ Also note what does *not* work as a test: comparing the p90/p10 spread of precip
 
 **The circulation must meander.** Perfectly zonal bands put the four zero-wind latitudes on exact circles, and they showed up in the output as ruler-straight stripes of anomalous rainfall — plainly visible in the biome map as a dark line along the equator. Perturbing the band latitudes with low-frequency noise (standing in for Rossby waves) drops the equatorial stripe from 2.05× its neighbours to 1.61×, and a wet ITCZ at that ratio is physically correct anyway. It costs some of the orographic signal, because a less consistent wind direction makes the upwind/downwind comparison noisier.
 
-**The output distribution is twice as wide as Earth's, the obvious diagnosis is wrong, and no knob fixes it.** Land rainfall comes out with a log₁₀ standard deviation of 0.83 against Earth's ~0.45, and the wettest 5% of land takes **47.5% of all land rain** where Earth is nearer 15%.
+**The output distribution is twice as wide as Earth's, the obvious diagnosis is wrong, and no knob fixes it — but a new source did.** Land rainfall comes out with a log₁₀ standard deviation of 0.83 against Earth's ~0.45, and the wettest 5% of land takes **47.5% of all land rain** where Earth is nearer 15%. The sweep below is still accurate: none of those six move it. What moved it was adding a moisture source rather than reweighting the transport already present — see [river evaporation](#river-evaporation-the-only-source-that-is-not-local-rain), which takes log₁₀ sd from 2.146 to 0.681 at n=785. Read the sweep as the evidence that pointed there, not as a refuted claim.
 
 The natural suspect is the convergence zones — the saturation cap above exists precisely because convergent flow concentrates moisture — and it is not them. The wettest 5% of land has a median incoming advection weight of **1.001** against **0.999** for the other 95%: identical, and only 11.9% of those cells are even saturated. A `convective_efficiency` factor scaling the overflow was written and measured before being reverted; a tenfold change moved log₁₀ sd from 0.837 to 0.823.
 
@@ -794,6 +794,55 @@ Capacity is the obvious suspect — interiors are cold high ground, `capacity` h
 Capacity **rises** inland — continental interiors run hotter once they are away from the sea — and not one land cell anywhere is at its ceiling. The air inland has room for water it never receives, so the dryness is transport, not thermodynamics, and a moisture source that scales with capacity would be aiming at the wrong term.
 
 Nor does the decay rate come from the rainout arithmetic. With `land_recycling` the per-sweep multiplier over land is `1 - relax·rainout_factor·(1 - recycling)`, an e-folding of **18 world km** at n=512 with air ascending and 181 with it subsiding. The measured e-folding is **1–2 km**. Between 30× and 100× of the decay is geometric — the streamline from the sea to an interior cell is far longer than the straight line, and `out_w` spreads each parcel across several neighbours on the way — rather than anything the rainout constants control. That argues for a moisture source standing *in* the interior, and against tuning the ones already there.
+
+### River evaporation: the only source that is not local rain
+
+Every moisture source in the model before this one bottomed out at zero. The ocean is a source, but it is at the coast, and what leaves it decays along the streamline. `land_recycling` looks like an interior source and is not: it returns a fraction of what just fell, so the per-sweep multiplier over land is strictly under one and **zero is a fixed point**. A cell far enough from the sea converges to no rain at all, and no value of any constant changes that — it is a property of the loop, not of the tuning.
+
+A river breaks it because a river is routed by the **topography**, not by the wind. Water that fell on a coastal range arrives in the interior having crossed ground the air could not carry it over, and then it evaporates. That is a source the interior did not have to earn.
+
+The strength is the ocean's, per unit open water, because open water is open water. What has to be estimated is the *area*, and that comes from hydraulic geometry rather than from a knob: channel width goes as the square root of discharge, `W ≈ 0.5·√A` metres for `A` in km², which puts the Mississippi near 900 m and a 10 km² stream near 1.6 m. A 100 m cell is full of water at about 40,000 km² of drainage. Nothing on this world approaches that — the whole sphere is 52,970 km² — so the fraction stays small, and small is correct. The largest basin at n=256 drains 270 km², giving 0.0822: an 8.2 m channel in a 100 m cell, exactly `0.5·√270`. It matters anyway, because the interior it is added to sits at 4×10⁻⁴ of saturation.
+
+The source rides the same deficit-filling path the ocean uses in `_advect_step`, so it fills air up to saturation and never past it. No amount of river makes a cell diverge. `coupled.run` routes discharge after each erosion pass and feeds it to the next climate solve, which is the second direction of the coupling; pass 0 has no drainage network and runs the ocean-only model by construction.
+
+Measured on the full coupled pipeline, seed 1, three passes, off against on:
+
+| | <1 mm/yr | log₁₀ sd | wettest 5% holds | p50/mean | θ | Hack *h* | max z | seconds |
+|---|---|---|---|---|---|---|---|---|
+| n=256 off | 5.33% | 1.130 | 49.8% | 0.2856 | 0.430 | 0.481 | 695 m | 114 |
+| n=256 on | **0.00%** | **0.688** | 45.9% | 0.3063 | 0.445 | 0.481 | 621 m | 111 |
+| n=785 off | 13.30% | 2.146 | 64.1% | 0.1907 | 0.258 | 0.557 | 2014 m | 1811 |
+| n=785 on | **0.02%** | **0.681** | 53.1% | 0.2506 | 0.313 | 0.565 | 1866 m | 1916 |
+
+Land precipitation median by distance from coast at n=785, mm/yr:
+
+| | 0–1 km | 1–2 | 2–4 | 4–8 | 8–16 | 16+ |
+|---|---|---|---|---|---|---|
+| off | 1598 | 824 | 683 | 453 | 127 | 111 |
+| on | 1263 | 636 | 586 | 512 | **424** | **887** |
+
+**The distribution result is the larger one and was not the goal.** log₁₀ sd 2.146 → 0.681 against Earth's ~0.45, on the defect recorded above as the one six swept knobs could not move. They could not move it because every one of them is a coefficient on transport that was already present; the spread needed a *source*, and one that is strongest where water already collects and bounded by saturation once it arrives.
+
+**It is mostly the real rivers, not a floor under every cell.** Cutting the source off below a drainage threshold, n=256:
+
+| source on | share of land carrying it | <1 mm/yr | log₁₀ sd |
+|---|---|---|---|
+| nothing | — | 5.33% | 1.129 |
+| drainage > 10 km² | 0.4% | 2.48% | 0.963 |
+| drainage > 1 km² | 3.9% | **0.35%** | 0.860 |
+| everywhere | 100% | 0.00% | 0.688 |
+
+Trunk streams cover under 4% of land and remove 93% of the rainless ground on their own. The headwater trickle closes the rest and does most of the narrowing.
+
+**The cost is the tropics.** Köppen shares at n=785:
+
+| | Af rainforest | BWk cold desert | BWh hot desert | Cfa humid subtropical | BSk cold steppe |
+|---|---|---|---|---|---|
+| off | 11.1% | 18.3% | 8.6% | — | — |
+| on | **18.1%** | 13.4% | — | 8.1% | 8.0% |
+| Earth | ~5% | ~5% | ~10% | ~6% | ~7% |
+
+The water the interiors gain lands mostly where it is already warm and wet, so Af roughly triples Earth's share. The arid classes come back toward Earth in exchange, and the continental D classes are still missing entirely — that one is untouched by this and remains open. Straight trade, and taken: 13.3% of land under 1 mm/yr is not a climate, and an over-wet tropics is. Convergence is unaffected (per-pass |dz| 113.4 / 14.1 / 8.3 off against 113.4 / 18.5 / 9.2 on, pass 0 identical by construction), and the cost is 5.8% of runtime.
 
 **What can be fixed is the anchor, and it was set on the wrong statistic.** Absolute depths are not derivable from this model, so the anchor is a free choice — and the mean was the wrong free choice, because with a tail that heavy, pinning the mean at Earth's 1000 mm divided everyone else down to a median of 321 mm where Earth's is ~600. Half the world was arid by construction. Judged on Köppen's arid share, which is what actually reads absolute millimetres:
 

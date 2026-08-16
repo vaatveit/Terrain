@@ -3,6 +3,7 @@
 Run:  .venv\\Scripts\\python.exe -m pytest tests -q
 """
 
+import dataclasses
 import pathlib
 import sys
 
@@ -470,6 +471,74 @@ def test_moisture_never_exceeds_saturation(world):
     capacity = np.exp(p.saturation_gain * (one.temperature_c.astype(np.float64) - 15.0))
     capacity = np.clip(capacity, 0.05, 4.0)
     assert np.all(one.moisture <= capacity + 1e-6)
+
+
+def test_river_evaporation_is_off_without_a_discharge_field(world):
+    """No drainage network, no river source, and bit-for-bit the pre-2c model.
+
+    `coupled.run` has no discharge on pass 0 and every caller that has not eroded anything
+    has none ever, so this is the common path rather than an edge case. It is also the
+    regression switch: `river_evaporation = 0.0` has to reproduce the same field with a
+    discharge field present, or the term is not isolated and nothing measured against it
+    means anything.
+    """
+    g, z, land, _ = world
+    p = climate.ClimateParams()
+    base = climate.compute_climate(g, z, land, p)
+    assert np.array_equal(
+        base.precipitation_mm,
+        climate.compute_climate(g, z, land, p, discharge=None).precipitation_mm)
+
+    from terrain import flow
+    fr = flow.route(np.ascontiguousarray(z, np.float32), g.neighbours, g.arc_dist, g.area,
+                    ~land, metrics=False)
+    q = np.where(land, fr.acc, 0.0).astype(np.float64)
+    off = dataclasses.replace(p, river_evaporation=0.0)
+    assert np.array_equal(
+        base.precipitation_mm,
+        climate.compute_climate(g, z, land, off, discharge=q).precipitation_mm)
+
+
+def test_a_river_waters_the_ground_it_runs_through(world):
+    """The one property `land_recycling` cannot have: a source that is not local rain.
+
+    Recycling returns a fraction of what just fell, so its per-sweep gain is under one and
+    an interior converges to zero however it is tuned. A river carries water routed by the
+    topography instead of the wind, so putting one through dry ground has to raise the rain
+    there. Tested on a synthetic discharge field rather than a routed one, so the assertion
+    is about the source term and not about where this particular world's rivers happen to
+    run.
+    """
+    g, z, land, _ = world
+    p = climate.ClimateParams()
+    base = climate.compute_climate(g, z, land, p).precipitation_mm.astype(np.float64)
+
+    # The driest fifth of land, and a trunk river through it at the area where a channel
+    # fills its cell -- the strongest source the parameterisation can produce.
+    dry = land & (base <= np.percentile(base[land], 20))
+    assert dry.sum() > 50
+    q = np.where(dry, p.river_full_area_km2, 0.0)
+    wet = climate.compute_climate(g, z, land, p, discharge=q).precipitation_mm.astype(np.float64)
+
+    assert wet[dry].mean() > base[dry].mean()
+    # And it is bounded by saturation, not merely larger: the source fills the deficit in
+    # `_advect_step` and cannot push a cell past its capacity however much river it is fed.
+    one = climate.compute_climate(g, z, land, p, discharge=q)
+    cap = np.clip(np.exp(p.saturation_gain * (one.temperature_c.astype(np.float64) - 15.0)),
+                  0.05, 4.0)
+    assert np.all(one.moisture <= cap + 1e-6)
+
+
+def test_open_water_fraction_follows_hydraulic_geometry():
+    """Width goes as the square root of discharge, and a cell cannot be more than full."""
+    p = climate.ClimateParams()
+    q = np.array([0.0, p.river_full_area_km2 / 4.0, p.river_full_area_km2,
+                  p.river_full_area_km2 * 100.0])
+    f = climate.open_water_fraction(q, p)
+    assert f[0] == 0.0
+    assert f[1] == pytest.approx(0.5)      # quarter the discharge, half the width
+    assert f[2] == pytest.approx(1.0)
+    assert f[3] == 1.0                     # clipped; a cell is not more than water
 
 
 def test_precipitation_falls_from_tropics_to_poles(world):

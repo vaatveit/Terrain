@@ -473,7 +473,9 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
         <tr><td class="k">itcz_follow / taper</td><td class="v">0.4 / 45°</td><td></td><td class="n">9.4° excursion, tapered so the westerlies never reverse</td></tr>
         <tr><td class="k">monsoon_c</td><td class="v">0.2</td><td></td><td class="n">the knee. In direct tension with the rain shadow — 0.60 buys a stronger monsoon for a third of the shadow</td></tr>
         <tr><td class="k">monsoon_ref_c / km</td><td class="v">8.0 / 5.0</td><td><span class="cls cls-world">world</span></td><td class="n">the first version used cell spacing, giving a reference gradient of 80 °C/km — i.e. nothing</td></tr>
-        <tr><td class="k">land_recycling</td><td class="v">0.70</td><td></td><td class="n">evapotranspiration; also in tension with the shadow</td></tr>
+        <tr><td class="k">land_recycling</td><td class="v">0.70</td><td></td><td class="n">evapotranspiration; also in tension with the shadow. Returns a fraction of local rain, so its gain is under one and zero is a fixed point — it slows the decay inland, it cannot stop it</td></tr>
+        <tr><td class="k">river_evaporation</td><td class="v">1.0</td><td></td><td class="n">open water inland, at the ocean's strength per unit area. The only source routed by <em>topography</em> rather than wind, and so the only one a far interior does not have to earn. 0.0 restores the ocean-only model</td></tr>
+        <tr><td class="k">river_full_area_km2</td><td class="v">40000</td><td></td><td class="n">where a channel fills a 100 m cell, from hydraulic geometry (W ≈ 0.5·√A m). Nothing here approaches it — the biggest n=256 basin drains 270 km², giving an 8.2 m channel</td></tr>
         <tr><td class="k">saturation_gain</td><td class="v">0.06</td><td></td><td class="n">per °C; the cap is what makes the fixed point converge at all</td></tr>
         <tr><td class="k">advection_span_km</td><td class="v">200.0</td><td><span class="cls cls-world">world</span></td><td class="n">3.08 R at every radius. Replaces <code>iterations</code> = 400, which was a reach in <em>cells</em> — 40 km, i.e. 1.9 R at n=256 but 0.62 R at n=785, leaving the big worlds unfinished in the interiors</td></tr>
         <tr><td class="k">target_median_precip_mm</td><td class="v">600.0</td><td></td><td class="n">Earth's land <em>median</em>. Anchoring the mean instead put half the world in desert by construction</td></tr>
@@ -484,7 +486,9 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
       cannot represent air that arrives dry; the <code>subsidence_floor</code> surrogate puts the
       belt in the right place for the wrong reason. And the rainfall distribution is twice as
       wide as Earth's (log₁₀ sd 0.83 against ~0.45), which is <em>not</em> a convergence artifact
-      and does not respond to any of the six knobs swept against it.</p>
+      and does not respond to any of the six knobs swept against it — though it does respond to a
+      new <em>source</em>: <code>river_evaporation</code> takes log₁₀ sd from 2.146 to 0.681 at
+      n=785, because the six knobs were all coefficients on transport that was already there.</p>
     </div>
   </div>
 
@@ -970,13 +974,15 @@ offset  5,000 m:  spurious self-receivers    537</code></pre>
     <li><strong>The subtropical desert belt.</strong> Right place, wrong reason, and fixing it
     properly needs a second vertical level.</li>
     <li><strong>Caching <code>_reverse_slots</code>.</strong> Measured at 0.4% of runtime (F7).</li>
-    <li><strong>The dry continental interiors.</strong> Two thirds of this turned out to be the
-    solver: the moisture sweep was a reach in <em>cells</em>, so it stopped at 0.62 R at n=785 and
-    the interiors were unfinished rather than dry. Converged, land under 1 mm/yr falls 22.8% →
-    <strong>14.4%</strong> with nothing in the model changed. The remainder is a real gap, and the
-    capacity diagnostic says it needs a moisture source standing <em>in</em> the interior —
-    the air there is nowhere near its ceiling, so rescaling the existing terms aims at the
-    wrong one.</li>
+    <li><strong>The dry continental interiors — closed.</strong> Two problems stacked. The
+    moisture sweep was a reach in <em>cells</em>, so it stopped at 0.62 R at n=785 and the
+    interiors were unfinished rather than dry (<code>advection_span_km</code>). And every
+    moisture source depended on local rain, so zero was a fixed point however the constants were
+    tuned; <code>river_evaporation</code> is a source routed by topography instead of wind, and it
+    is the only one in the model that an interior does not have to earn. On the coupled pipeline
+    at n=785, land under 1 mm/yr goes 13.30% → <strong>0.02%</strong>. It also narrowed the
+    rainfall distribution, which was the other open limit. The cost is Köppen Af at 18.1% of land
+    against Earth's ~5%.</li>
     <li><strong>The relief shortfall.</strong> Settled last commit: the world is 12.7× steeper
     than Earth relative to its own size, and what it lacks is absolute metres — which is exactly
     what the 100 m cell decision traded away.</li>

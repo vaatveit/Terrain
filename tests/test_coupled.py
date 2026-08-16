@@ -183,9 +183,20 @@ def test_returned_climate_describes_the_returned_topography(setup):
     # `compute_climate` while the loop ran on `compute_seasons`, so the world was eroded
     # against a year and exported carrying an equinox -- two fields that differ by 22% at
     # the median cell.
-    fresh = climate_mod.compute_seasons(g, res.elevation, crust.land_mask)
+    # ...and with the DISCHARGE the returned topography carries. River evaporation reads it,
+    # so elevation alone no longer determines the climate and the recipe gained an input --
+    # which is why `run` returns the field. Recomputing without it here would not be a
+    # weaker version of this test, it would be a different one that always failed.
+    fresh = climate_mod.compute_seasons(g, res.elevation, crust.land_mask,
+                                        discharge=res.discharge)
     assert np.array_equal(res.climate.precipitation_mm, fresh.precipitation_mm)
     assert np.array_equal(res.climate.temperature_season, fresh.temperature_season)
+
+    # The property the test exists for, restated so it cannot rot: a climate solved on the
+    # PREVIOUS pass's terrain would not reproduce, and neither would one solved on the right
+    # terrain with the wrong pass's rivers.
+    stale = climate_mod.compute_seasons(g, res.elevation, crust.land_mask)
+    assert not np.array_equal(res.climate.precipitation_mm, stale.precipitation_mm)
 
 
 def test_arid_high_ground_keeps_more_relief_than_wet_high_ground(setup):

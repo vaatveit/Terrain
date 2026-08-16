@@ -250,16 +250,31 @@ n=128: 0.40/0.50 (43% land) runs; 0.45/0.55 (62% land) is refused. The limit is 
 width of the continents rather than the flags as such, so a higher `crust_frequency` buys
 back room by breaking them up.
 
-Passing that check is not a certificate. On the default world at n=785, **14.4% of land
-receives under 1 mm/yr** — a surface-only model has no aloft and no soil-moisture recycling,
-so there is little to rain in a continental interior. See `_annual_anchor_scale` for the
-measured profile.
+Passing that check is not a certificate, but the thing it used to warn about is now largely
+fixed. The dead continental interior turned out to be two problems stacked, and neither was
+the one the docs named:
 
-That figure used to read 22.8%, and most of the difference was the solver rather than the
-model: the moisture sweep stopped at 0.62 R on a world that size, so the deep interiors were
-not dry, they were unfinished. Converged, the 8–16 km band goes from 1.26 mm/yr to 106 and
-the band beyond it from 1.7e-6 to 139. **What is left is the physics gap, and it is real but
-smaller than it was advertised as.**
+1. **The moisture sweep was a reach in cells**, so it stopped at 0.62 R at n=785 and the
+   interiors were unfinished rather than dry. See `advection_span_km`.
+2. **Every moisture source depended on local rain.** `land_recycling` returns a fraction of
+   what just fell, so its gain is under one and a far enough interior converges to zero
+   however it is tuned. `river_evaporation` is the fix: open water inland evaporates, and a
+   river carries water routed by the *topography* rather than by the wind, so it is a source
+   the interior did not have to earn.
+
+Measured on the full coupled pipeline at n=785, seed 1, river evaporation off against on:
+
+| | <1 mm/yr | log₁₀ sd | wettest 5% holds | 4–8 km | 8–16 km | 16+ km |
+|---|---|---|---|---|---|---|
+| off | 13.30% | 2.146 | 64.1% | 453 | 127 | 111 |
+| on | **0.02%** | **0.681** | 53.1% | 512 | 424 | 887 |
+
+The second column is the larger result and was not the goal: the rainfall distribution being
+twice Earth's width is a defect recorded in `_advect_step` as the one that six swept knobs
+could not move, and this moves it to 0.681 against Earth's ~0.45. **The cost is the tropics**
+— Köppen Af goes 11.1% → 18.1% of land against Earth's ~5%, since the water the interiors
+gain lands mostly where it is already warm. The arid classes come back toward Earth in
+exchange (BWk 18.3% → 13.4%).
 
 ### Stage 1 — plates · `plates.PlateParams`
 
@@ -327,6 +342,8 @@ for `n=1`.
 | `eddy` | 0.07 | isotropic mixing. **Must be > 0** or the zero-wind latitudes become moisture traps |
 | `saturation_gain` | 0.06 | how fast warm air holds more water |
 | `evaporation` | 1.0 | ocean source strength |
+| `river_evaporation` | 1.0 | open water inland evaporates too, at the ocean's strength per unit area. **The only moisture source that does not depend on the rain falling where it stands** — `land_recycling` returns a fraction of local rain, so its gain is under one and a far interior converges to zero however it is tuned. Set to 0.0 to restore the ocean-only model |
+| `river_full_area_km2` | 40000 | drainage area at which a channel fills a 100 m cell, from hydraulic geometry (W ≈ 0.5·√A metres). Nothing on this world approaches it: the biggest basin at n=256 drains 270 km², giving an 8.2 m channel |
 | `advection_span_km` | 200 | how far the fixed-point sweep carries moisture, as a distance rather than a sweep count. **Replaces `iterations` = 400, which was a reach in cells** — 40 km, so 1.9 R at n=256 but 0.62 R at n=785, and the big worlds were left unfinished in exactly the interiors that were the complaint |
 | `target_median_precip_mm` | 600 | final scaling, on Earth's land **median**; the model gives a pattern, not absolute depths, and its wet tail makes the mean a statistic of the tail rather than of the world |
 | `ekman_deg` | 45 | deflection of the surface current from the wind; right in the north, left in the south |
