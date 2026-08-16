@@ -229,6 +229,27 @@ call the modules directly** to change anything not exposed as a CLI flag.
 | `rho_continental` / `rho_oceanic` / `rho_mantle` | 2.8 / 2.9 / 3.3 | isostasy densities |
 | `min_island_area_km2` | 0.104 | below this an island is speckle. Cell-scale (~12 cells), so it does **not** rescale with the radius |
 
+**The two fractions are not independent, and the reported land fraction is neither of
+them.** Sea level is solved so that `target_land_fraction` of the surface is above the
+datum — that part is exact. But `land_mask` is not `elevation > 0`: ocean is the *largest
+connected* water body, and every other below-datum pool is an inland sea for Stage 6 to
+fill. The gap `continental_fraction − target_land_fraction` is shelf that has to drown, and
+the more continental crust there is, the more of that shelf is landlocked rather than joined
+to the sea. Measured at n=128, seed 42:
+
+| flags | above datum | inland seas | reported `land_fraction` |
+|---|---|---|---|
+| 0.29 / 0.40 (default) | 29.0% | 1.6% | **30.5%** |
+| 0.50 / 0.65 | 49.9% | 15.0% | **64.9%** |
+
+**There is also a ceiling, and it is the climate that sets it.** Past roughly 45–50% land
+the continents are wider than a surface-only moisture model can carry water across, the
+precipitation anchor divides by a number that has underflowed, and `climate.precipitation`
+raises rather than emitting a scaled-noise world — see `_anchor_scale`. Measured at n=128:
+0.40/0.50 (43% land) runs; 0.45/0.55 (62% land) is refused. The limit is about the width of
+the continents, not the flags as such, so a higher `crust_frequency` buys back room by
+breaking them up.
+
 ### Stage 1 — plates · `plates.PlateParams`
 
 | parameter | default | effect |

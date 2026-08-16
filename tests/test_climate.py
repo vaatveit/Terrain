@@ -398,6 +398,39 @@ def test_precipitation_is_finite_and_bounded(world):
         f"land median {med:.0f} mm against a {target:.0f} mm anchor")
 
 
+def test_a_degenerate_anchor_is_refused_rather_than_divided_by(world):
+    """The anchor is a division, and on wide continents the divisor underflows.
+
+    Found by running the production pipeline at n=785 with `target_land_fraction` 0.5 and
+    `continental_fraction` 0.65: a surface-only moisture model cannot carry water into the
+    middle of a 65% supercontinent, so the MEDIAN land cell held numerical floor rather than
+    rainfall, and `target_mm / ref` came out at ~2.5e7. That overflowed float32 on the way
+    out of `precipitation` -- but only at n=785. The identical world at n=128 produced
+    1.3e7 mm/yr silently, and stayed silent through export, biomes and Koppen, which is the
+    failure this test exists to prevent.
+
+    Both directions matter. The shipped world must keep sailing through with room to spare
+    -- the guard is worthless if it fires on a world the pipeline is supposed to make.
+    """
+    g, _, land, cl = world
+    area, target = g.area, climate.ClimateParams().target_median_precip_mm
+
+    p = cl.precipitation_mm.astype(np.float64)
+    ref = climate._area_median(p, area, land)
+    mean = np.average(p[land], weights=area[land])
+    assert ref / mean > 3 * climate.MIN_ANCHOR_RATIO, (
+        f"the SHIPPED world sits at {ref / mean:.3g}, too close to the "
+        f"{climate.MIN_ANCHOR_RATIO} guard; re-measure before loosening it -- and see "
+        "`_anchor_scale` on why the answer is a land moisture source, not a lower limit")
+    assert climate._anchor_scale(p, area, land, target) == pytest.approx(target / ref)
+
+    # A wet coast and a dead interior: the median is in the floor, the mean is not.
+    broken = np.full(land.shape, 1e-30)
+    broken[np.flatnonzero(land)[:len(np.flatnonzero(land)) // 4]] = 500.0
+    with pytest.raises(ValueError, match="degenerate"):
+        climate._anchor_scale(broken, area, land, target)
+
+
 def test_moisture_never_exceeds_saturation(world):
     """The saturation cap is what makes the fixed-point iteration converge at all.
 

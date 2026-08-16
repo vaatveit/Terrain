@@ -1082,10 +1082,88 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
     # what it produces is a spatial pattern, and the pattern is what Stage 4 needs. The
     # anchor is the area-weighted land MEDIAN, not the mean, because the mean here is a
     # statistic of the wet tail rather than of the world -- see `target_median_precip_mm`.
-    ref = _area_median(precip, grid.area, land_mask)
-    if ref > 0:
-        precip *= p.target_median_precip_mm / ref
+    # The division is checked: the divisor underflows on wide continents. See `_anchor_scale`.
+    precip *= _anchor_scale(precip, grid.area, land_mask, p.target_median_precip_mm)
     return precip.astype(np.float32), moisture.astype(np.float32)
+
+
+# Land wetter than this fraction of the area-weighted land MEAN counts as rain-bearing, and
+# only rain-bearing land sets the anchor below. The floor has to be relative because the
+# pre-scaling field is in no units at all -- it is a pattern, and the scaling is what gives
+# it millimetres. The mean is the right thing to take it relative to precisely because it is
+# a statistic of the wet tail: the tail is the part that does not underflow.
+# The anchor is a median, and this is the test for whether that median still means anything:
+# it has to be at least this fraction of the land MEAN. Below it, the median cell is sitting
+# in the numerical floor of the advection rather than anywhere on the rainfall distribution,
+# and the reciprocal that scales the field is reading noise. See `_anchor_scale`.
+MIN_ANCHOR_RATIO = 0.01
+# Above this the field is not wet, it is broken. Wettest place on Earth is ~11,900 mm/yr.
+# Second line of defence, for a degeneracy that leaves the ratio above looking healthy.
+MAX_CREDIBLE_PRECIP_MM = 1e6
+
+
+def _anchor_scale(precip, area, land_mask, target_mm):
+    """Factor that puts the area-weighted land median at `target_mm`, or refuses to.
+
+    The scaling itself is unchanged and deliberately so -- `target_median_precip_mm` is
+    Earth's land median and the contract is that this world's land median equals it. What is
+    new is that the division is now checked, because the divisor can underflow.
+
+    A surface-only model has no aloft and no soil-moisture recycling, so a continental
+    interior does not get the ~200 mm Central Asia gets: rainfall decays geometrically away
+    from the coast toward zero. Widen the continents far enough and the MEDIAN land cell is
+    in that floor, at which point `target_mm / ref` is an arbitrary large number multiplying
+    the wet tail. Measured at n=785 with `target_land_fraction` 0.5 and
+    `continental_fraction` 0.65 it overflowed float32 on the way out of this function.
+
+    `ref / mean` is what separates the two cases, and it separates them by two orders of
+    magnitude. Measured (min over the four seasons, seeds 1 and 42):
+
+        world                              n=64     n=128    n=256
+        shipped 0.29 / 0.40                0.227    0.177    0.102
+        0.40 / 0.50  (43% land)                     0.113
+        0.45 / 0.55  (62% land)                     0.0015
+        0.50 / 0.65  (65% land)                     0.0012   8.0e-6
+
+    So the healthy worlds sit above 0.10 and the broken ones below 0.002. 0.01 is the
+    geometric middle of that gap.
+
+    THE HEALTHY RATIO FALLS WITH WORLD SIZE -- 0.227, 0.177, 0.102 as the radius doubles
+    twice -- because the continents genuinely get wider in km while the moisture model's
+    reach does not. Extrapolating the same slope puts n=785 near 0.05, still five times clear
+    of the limit, but this is the number to re-measure if the threshold ever fires on a world
+    that looks reasonable. The right response then is not to lower the limit; it is that the
+    moisture model needs a land source term, which is a physics change and a revalidation.
+
+    THE FAILURE HAD TO BECOME LOUD AT EVERY RESOLUTION. At n=128 the degenerate anchor
+    produced 1.3e7 mm/yr with no warning of any kind, and stayed silent through export,
+    biomes and Koppen; it only announced itself at n=785, where the product finally left
+    float32's range. A world that is quietly wrong at one size and loudly wrong at another
+    has to fail at both.
+    """
+    if not np.any(land_mask):
+        return 1.0
+    ref = _area_median(precip, area, land_mask)
+    mean = float(np.average(precip[land_mask], weights=area[land_mask]))
+    if mean <= 0.0 or ref <= 0.0:
+        return 1.0
+    ratio = ref / mean
+    if ratio < MIN_ANCHOR_RATIO:
+        raise ValueError(
+            f"precipitation anchor is degenerate: the land median is {ratio:.2g} of the land "
+            f"mean, under the {MIN_ANCHOR_RATIO} limit, so the median cell is in the "
+            "numerical floor of the moisture advection rather than on the rainfall "
+            "distribution. The continents are too wide for a surface-only moisture model to "
+            "carry water across. Lower continental_fraction or target_land_fraction, or "
+            "break the continents up with a higher crust_frequency.")
+    scale = target_mm / ref
+    peak = float(np.max(precip)) * scale
+    if not np.isfinite(peak) or peak > MAX_CREDIBLE_PRECIP_MM:
+        raise ValueError(
+            f"precipitation anchor is degenerate: scaling by {scale:.3g} would put the "
+            f"wettest land at {peak:.3g} mm/yr, past the {MAX_CREDIBLE_PRECIP_MM:.3g} "
+            f"sanity ceiling, though the median/mean ratio {ratio:.3g} looks healthy.")
+    return scale
 
 
 def _area_median(values, area, mask):
@@ -1203,11 +1281,9 @@ def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None) 
     # that reads 600 -- measured 803 mm, a third high. Rescaling the year and carrying the
     # same factor into the season stack fixes the anchor without touching the seasonal
     # SHAPE, which is what Koppen reads.
-    ref = _area_median(precip, grid.area, land_mask)
-    if ref > 0:
-        scale = p.target_median_precip_mm / ref
-        precip = precip * scale
-        stack_p = stack_p * scale
+    scale = _anchor_scale(precip, grid.area, land_mask, p.target_median_precip_mm)
+    precip = precip * scale
+    stack_p = stack_p * scale
     precip = precip.astype(np.float32)
     stack_p = stack_p.astype(np.float32)
     stack_t = np.stack([s.temperature_c for s in seasons])
