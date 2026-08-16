@@ -23,8 +23,13 @@ from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# Reference values measured on real SRTM tiles; see terrain-algorithms.md.
-SRTM_EAST = {"concavity_theta": 0.516, "hack_h": 0.543, "drainage_density": 0.744}
+# Reference values measured on real SRTM tiles; see terrain-algorithms.md. Means and
+# ranges over nine tiles, not the east tile alone -- east has the highest concavity of the
+# nine (0.516 against a 0.311 mean), and quoting it as "the SRTM value" is how a phantom
+# concavity gap got into the docs. The bands below are the measured nine-tile ranges;
+# the published fluvial bands (theta 0.40-0.60, h 0.50-0.62) exclude five of nine real
+# tiles and are the wrong yardstick for a whole planet.
+SRTM = {"concavity_theta": 0.311, "hack_h": 0.513, "drainage_density": 0.732}
 
 
 def load_or_build(n):
@@ -173,20 +178,20 @@ def main():
     )
     print(f"  measured in {time.perf_counter() - t0:.1f} s")
 
-    print(f"\n  {'metric':22s} {'generated':>12s} {'SRTM east':>12s}   verdict")
+    print(f"\n  {'metric':22s} {'generated':>12s} {'SRTM mean':>12s}   verdict")
     for key, name, lo, hi in (
-        ("concavity_theta", "slope-area theta", 0.40, 0.60),
-        ("hack_h", "Hack exponent h", 0.50, 0.62),
+        ("concavity_theta", "slope-area theta", 0.130, 0.516),
+        ("hack_h", "Hack exponent h", 0.434, 0.602),
     ):
         v = r[key]
         ok = np.isfinite(v) and lo <= v <= hi
-        print(f"  {name:22s} {v:12.3f} {SRTM_EAST[key]:12.3f}   "
-              f"{'inside' if ok else 'OUTSIDE'} {lo}-{hi}")
+        print(f"  {name:22s} {v:12.3f} {SRTM[key]:12.3f}   "
+              f"{'inside' if ok else 'OUTSIDE'} 9-tile {lo}-{hi}")
     # Drainage density is the one metric here that is NOT scale-free -- it is channel length
     # per unit area, so a 9.8 km mesh and a 30 m DEM are orders of magnitude apart by
     # construction. Shown for tracking across runs at fixed resolution, not for comparison.
     print(f"  {'drainage density*':22s} {r['drainage_density']:12.5f} "
-          f"{SRTM_EAST['drainage_density']:12.3f}   *not scale-free; do not compare")
+          f"{SRTM['drainage_density']:12.3f}   *not scale-free; do not compare")
     print(f"  {'channel cells':22s} {r['channel_cells']:12,}")
     print(f"  {'hypsometric integral':22s} {r['hypsometric_integral']:12.3f}")
     print(f"  {'Horton Rb':22s} {r['horton_bifurcation_ratio']:12.3f}")

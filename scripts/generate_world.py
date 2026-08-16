@@ -24,7 +24,15 @@ from terrain import (  # noqa: E402
 from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SRTM_EAST = {"concavity_theta": 0.516, "hack_h": 0.543}
+# Real terrain, measured over nine SRTM 1-arcsec tiles (see scripts/validate_metrics.py).
+# `basin_theta_median` is the PER-BASIN pool -- 102 basins at the same 40-cell threshold
+# used below -- because that is the statistic printed here.
+#
+# This was `SRTM_EAST = {"concavity_theta": 0.516, ...}` and the line below printed the
+# per-basin theta against it. Two mismatches in one comparison: 0.516 is a whole-window
+# fit, and it is the highest of the nine tiles. East's own per-basin median is 0.398 and
+# the nine-tile pool is 0.290.
+SRTM = {"basin_theta_median": 0.290, "hack_h": 0.513}
 
 
 def load_or_build(n):
@@ -178,8 +186,10 @@ def main():
     # The planet-wide figure is mostly seed -- a global regression pools basins with
     # different uplift, and how many of each a world grows is an accident of the crust seed.
     # At a 400-cell threshold its CV reaches 55%. It is no longer reported at all, for the
-    # reason given at `summary` below. The per-basin figure is the one to compare with SRTM
-    # east's 0.516, and it is well short of it.
+    # reason given at `summary` below. The per-basin figure is the one to compare with real
+    # terrain, and it lands on it: 0.285 +/- 0.010 across seeds against 0.290 pooled over
+    # 102 basins in nine SRTM tiles. This comment read "well short of" SRTM east's 0.516,
+    # which is a whole-window fit on the highest of those nine.
     thr = float(np.median(grid.area) * 40)
     m = metrics.report(z, grid.neighbours, grid.arc_dist, grid.area, is_sink=is_ocean,
                        channel_threshold_km2=thr, label="mesh")
@@ -192,8 +202,8 @@ def main():
                ("basin_theta_median", "hack_h",
                 "hypsometric_integral", "horton_bifurcation_ratio")}
     print(f"    per-basin theta {m['basin_theta_median']:.3f} "
-          f"(SRTM east {SRTM_EAST['concavity_theta']}), "
-          f"Hack h {m['hack_h']:.3f} (SRTM east {SRTM_EAST['hack_h']})")
+          f"(SRTM 9-tile {SRTM['basin_theta_median']}), "
+          f"Hack h {m['hack_h']:.3f} (SRTM 9-tile {SRTM['hack_h']})")
 
     print(f"[9] export -> {out_dir}")
     params = {

@@ -473,19 +473,30 @@ The first six rows only bite when detail is switched back on. `resample` is live
 ## Validating a world
 
 `terrain.metrics.report` computes the diagnostics, and the same code runs on real DEM
-tiles via `terrain.dem.load_window`. Reference values from SRTM (southern Appalachians,
-unglaciated):
+tiles via `terrain.dem.load_window`. Reference values are measured over **nine** SRTM
+1-arcsec tiles — Appalachians, Olympics, Pyrenees, Sahara, Andes, Tien Shan, Amazon,
+Mindanao, Uintas — each a 63 km window:
 
-| metric | SRTM east | typical generated |
+| metric | SRTM, 9 tiles | typical generated |
 |---|---|---|
-| slope–area concavity θ | 0.516 | **0.285 ± 0.010 per basin** at n=785 (planet-wide is 0.257 ± 0.056 — too seed-noisy to quote) |
-| Hack exponent h | 0.543 | 0.559 ± 0.004 |
-| Horton bifurcation Rb | 5.51 | ~5.1 |
+| slope–area concavity θ, per basin | 0.293 ± 0.131 (102 basins) | **0.285 ± 0.010** at n=785 |
+| slope–area concavity θ, whole window | 0.311 ± 0.139 (range 0.130–0.516) | planet-wide 0.257 ± 0.056 — too seed-noisy to quote |
+| Hack exponent h | 0.513 ± 0.057 | 0.559 ± 0.004 |
+| Horton bifurcation Rb | 5.87 (range 4.67–6.95) | ~5.1 |
 
-**Measure θ per basin, not planet-wide** — uplift varies across a world, and that variation
-lands in a global regression. **Judge worlds by the mesh metrics, not by the exported
-raster**: at ~5 km/px against SRTM's 30 m, no raster window is both wide enough for three
-decades of drainage area and small enough to avoid equirectangular distortion.
+The per-basin row is at a **40-cell (0.344 km²)** channel threshold, matching the generated
+figure it sits beside; the whole-window row is at the **1.0 km²** `validate_metrics.py` uses
+on SRTM. θ is threshold-sensitive, so quote the threshold with it — at 0.344 km² the
+whole-window mean falls to 0.236, because on a 30 m DEM that threshold drags the hillslope
+limb into the fit. **Compare per-basin against
+per-basin and use more than one tile** — this table used to read "SRTM east 0.516" against
+the generated 0.285 and call the difference the largest open gap in the project. It was
+neither: about 0.12 of it was per-basin-vs-whole-window, and the rest was that east is the
+highest-θ tile of the nine. **Measure θ per basin, not planet-wide** — uplift varies across a
+world, and that variation lands in a global regression. **Judge worlds by the mesh metrics,
+not by the exported raster**: at ~5 km/px against SRTM's 30 m, no raster window is both wide
+enough for three decades of drainage area and small enough to avoid equirectangular
+distortion.
 
 ## Cell size
 
@@ -514,20 +525,26 @@ peaks at the channel head, then falls as `A^-θ`. That rising limb is the convex
 Every channel head there is inside the real 0.01–1 km² band, so that criterion does not
 pick between them. `D=0.02` is the chosen trade.
 
-**The drainage structure at production is good. The concavity is not, and this section used
-to claim otherwise.** Measured on the n=785 world:
+**The drainage structure at production is good.** Measured on the n=785 world:
 
-| measurement | 9.77 km cells | 100 m cells | real terrain |
+| measurement | 9.77 km cells | 100 m cells | real terrain, 9 SRTM tiles |
 |---|---|---|---|
-| land cells that are local maxima | 4.40% | **0.502%** | 0.14–0.26% (SRTM) |
-| median drainage area | 1.0 cells | **5.98 cells** | 3–4 px (SRTM) |
-| θ per basin, 40 cells | — | **0.285 ± 0.010** | 0.4–0.6 |
+| land cells that are local maxima | 4.40% | **0.502%** | 0.287% mean, range 0.090–0.508% |
+| median drainage area | 1.0 cells | **5.98 cells** | 3 cells median, range 2–13 |
+| θ per basin, 40 cells | — | **0.285 ± 0.010** | **0.290** median, 102 basins |
 
 That last row read 0.467 (r² 0.90) until it was re-measured on three shipped n=785 worlds.
 The old figure predates the climate work — precipitation feeds discharge weight, which feeds
 erosion — and it also asserted that θ *rises* with the channel threshold, where it is in fact
-flat from 6 cells to 120 and falls beyond. Hack *h* is fine at 0.559 ± 0.004 against 0.543;
-concavity is not, and the ±0.010 across seeds says no world comes near the reference.
+flat from 6 cells to 120 and falls beyond. Hack *h* is 0.559 ± 0.004 against a nine-tile
+0.513 ± 0.057.
+
+**The real-terrain column is measured, and it did not used to be.** It read 0.14–0.26% and
+3–4 px "(SRTM)" for the first two rows and a published 0.4–0.6 band for θ — and this section
+concluded from that θ row that "the concavity is not good". Measured per basin at the same
+threshold over nine tiles, real terrain gives 0.290 against this world's 0.285. The local
+maxima row is quoted as a range rather than a target because the DEM has eight neighbours to
+the mesh's six, which biases the generated figure up on its own.
 
 **Quote the per-basin figure, not the planet-wide one.** Across three seeds at n=785,
 planet-wide θ at 40 cells came out 0.271 / 0.195 / 0.304 — a coefficient of variation of
@@ -616,11 +633,14 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
   hillslopes run p50 0.9° because `U/D` equilibrium does not put them near failure. It is
   kept on because glacial erosion does create real over-steep land (80 → 4,530 edges),
   almost all of which Stage 5b then floods.
-- **Concavity is well below real terrain and the gap is not seed noise.** Per-basin θ is
-  **0.285 ± 0.010** across three n=785 seeds against SRTM's 0.516. Hack *h* does not follow
-  it and stays good at 0.559 ± 0.004. Why concavity comes out low is unexplained and is the
-  largest open gap against real terrain. Planet-wide θ is *not* a usable statistic here —
-  0.257 ± 0.056 at 40 cells, ±0.106 at 400 — so state per-basin, and state the threshold.
+- **Concavity is fine, and this bullet used to say it was the largest open gap in the
+  project.** Per-basin θ is **0.285 ± 0.010** across three n=785 seeds, against **0.290**
+  measured the same way over 102 basins in nine SRTM tiles. The gap it reported was against
+  SRTM east's 0.516 — a whole-window fit on the highest tile of nine, compared to a per-basin
+  median. Correcting either half shrinks it; correcting both closes it. Hack *h* is 0.559 ±
+  0.004 against a nine-tile 0.513 ± 0.057. Planet-wide θ is still *not* a usable statistic
+  here — 0.257 ± 0.056 at 40 cells, ±0.106 at 400 — so state per-basin, and state the
+  threshold.
 - **Continental interiors are too wet, by a seed-dependent amount.** The interior/coast
   rainfall ratio is 2.35 / 1.29 / 0.67 across three seeds where Earth is ≈0.33, so the bias
   is consistent even though only one of the three actually inverts. It tracks the largest

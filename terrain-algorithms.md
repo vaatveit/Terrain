@@ -228,7 +228,7 @@ Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip an
 
 The grid is dimensionless. Radius scales `arc_dist`, `edge_len` and `area` and nothing else, so moving to 100 m cells changed no graph algorithm and no topology. It changed which processes sit above the grid scale — and the decisive number is not the angle of repose but **the channel head**.
 
-Real channels initiate at drainage areas of 0.01–1 km². A 9.77 km cell is **82.7 km²**, so every land cell already carried more drainage than a channel head needs. There was no hillslope domain anywhere in the world; the entire landscape was channel network, and `D` was a numerical smoother wearing the name of soil creep. That single fact explains the whole cluster of symptoms recorded elsewhere in this document: drainage density of 1.0 cells against SRTM's 3–4 px, 4.40% of land cells as local maxima against SRTM's 0.14–0.26%, and hillslope diffusion moving 0.014 m against 4 km of relief. A 100 m cell is **0.0086 km²**, below the threshold, so hillslopes exist as terrain.
+Real channels initiate at drainage areas of 0.01–1 km². A 9.77 km cell is **82.7 km²**, so every land cell already carried more drainage than a channel head needs. There was no hillslope domain anywhere in the world; the entire landscape was channel network, and `D` was a numerical smoother wearing the name of soil creep. That single fact explains the whole cluster of symptoms recorded elsewhere in this document: drainage density of 1.0 cells against a nine-tile SRTM median of 3, 4.40% of land cells as local maxima against a nine-tile mean of 0.287%, and hillslope diffusion moving 0.014 m against 4 km of relief. A 100 m cell is **0.0086 km²**, below the threshold, so hillslopes exist as terrain.
 
 **Shrinking the planet is not the same as adding cells, and only one of them was affordable.** Global 100 m on Earth is `510.1×10⁶ km² / 0.0086 km²` ≈ **5.9×10¹³ cells** (`n ≈ 2.4M`), seven orders of magnitude past the 6.16M budget. Shrinking the sphere keeps the cell count and buys the resolution by giving up world size: 4πR² = 52,973 km², about the area of Croatia, with landmasses ~120 km across. That is the trade, stated plainly — this is a large island rendered properly, not a planet.
 
@@ -266,12 +266,14 @@ Every channel head there sits inside the real 0.01–1 km² band, so that criter
 
 **This resolved two findings previously recorded here as unfixed.** The section on straight-line artifacts closed by conceding that some mountain flanks still combed with detail off, because the mesh was genuinely rough at cell scale, and called it "a Stage 2 question about drainage density at 9.8 km cells, not an export question." That diagnosis was right and the grid was the answer:
 
-| measurement | 9.77 km cells | 100 m cells | real terrain |
+| measurement | 9.77 km cells | 100 m cells | real terrain, 9 SRTM tiles |
 |---|---|---|---|
-| land cells that are local maxima | 4.40% | **0.502%** | 0.14–0.26% (SRTM) |
-| median drainage area | 1.0 cells | **5.98 cells** | 3–4 px (SRTM) |
+| land cells that are local maxima | 4.40% | **0.502%** | 0.287% mean, range 0.090–0.508% |
+| median drainage area | 1.0 cells | **5.98 cells** | 3 cells median, range 2–13 |
 
 Neither needed a change to the drainage code. Both were the same symptom: a landscape with no hillslope domain, where half of all land had no upstream contribution at all.
+
+**The real-terrain column read "0.14–0.26% (SRTM)" and "3–4 px (SRTM)" and neither was reproducible.** Re-measured D8-strict (a cell above all eight neighbours) over the nine tiles, local maxima run 0.090% on the Olympics to 0.508% in the Sahara — east alone is 0.320%, so the old range bracketed no tile now measured. The drainage figure held up. Two cautions on the local-maxima row, which is why it is quoted as a range and not used as a target: the count is sensitive to how ties are handled, and SRTM's int16 quantisation makes ties common on low-relief ground; and the generated world is a **hex mesh with six neighbours against the DEM's eight**, so a cell has fewer chances to be beaten and the generated 0.502% is biased upward relative to the SRTM figures by the comparison itself. It is inside the measured real range, at the top of it, and the residual is not worth chasing without a neighbour-count-matched estimator.
 
 **One threshold had to move with the grid, and it is an easy trap.** `metrics.report` takes a single `channel_threshold_km2` and uses it both to define the channel mask and to select cells for the slope–area regression — but that regression is only valid on the fluvial limb. At 9.77 km cells, 6 cells of drainage was 500 km², far above any channel head, so the two uses never conflicted. At 100 m cells, 6 cells **is** the channel head, so fitting from there mixes hillslope and fluvial ground and θ reads 0.392. `generate_world.py` now reports at 40 cells. Any θ quoted from this pipeline should carry its threshold.
 
@@ -608,7 +610,7 @@ Two details are load-bearing. The weight must be compactly supported — `((R �
 
 **What this does not fix, and the measurement that says so.** After all four fixes some mountain flanks still render as a regular comb, and it is not the export: it survives with detail off and C1 on, so it is in the mesh field itself. The generated surface is genuinely rough at the cell scale — **4.40% of land cells are local maxima among their own neighbours, against 0.14–0.26% for SRTM pixels**, a 17–31× excess — and half of all land cells have no upstream contribution at all (median drainage area 1.0 cells, against 3–4 pixels on SRTM). No interpolation can smooth away topography that is really there. That is a Stage 2 question about drainage density at 9.8 km cells, not an export question.
 
-**Since resolved by the grid rescale, and the diagnosis above is why.** Both numbers were symptoms of a landscape with no hillslope domain — at 82.7 km² per cell, every land cell already carried more drainage than a real channel head needs, so there was nothing for hillslope diffusion to act on and nothing to smooth the cell-scale roughness. At 100 m cells the local-maxima fraction falls to **0.502%** (from 4.40%, against SRTM's 0.14–0.26%) and median drainage rises to **5.98 cells** (from 1.0, against SRTM's 3–4 px). Neither needed a change to the drainage code. See "Cell size" above.
+**Since resolved by the grid rescale, and the diagnosis above is why.** Both numbers were symptoms of a landscape with no hillslope domain — at 82.7 km² per cell, every land cell already carried more drainage than a real channel head needs, so there was nothing for hillslope diffusion to act on and nothing to smooth the cell-scale roughness. At 100 m cells the local-maxima fraction falls to **0.502%** (from 4.40%, against a nine-tile SRTM range of 0.090–0.508%) and median drainage rises to **5.98 cells** (from 1.0, against a nine-tile median of 3, range 2–13). Neither needed a change to the drainage code. See "Cell size" above.
 
 **A fourth, smaller one: the detail noise was mostly aliasing.** Stage 8 ran 6 octaves from a base frequency of 180 regardless of raster width. At width 8192 the finest octave has 1.1 km features against a 4.9 km pixel — four of the six octaves sat below Nyquist, and energy above Nyquist folds back as long straight moiré fringes, which is the exact artifact detail exists to avoid. The octave count is now derived from the width. The honest consequence: at the default width (8×n) a pixel is only ~1.5× finer than a cell, so **one octave is all that fits**, and getting more detail means exporting a wider raster rather than turning a knob.
 
@@ -637,18 +639,29 @@ A terrain that matches on slope histogram but fails the slope–area relation is
 
 ### Measured reference values
 
-The metrics module is implemented and calibrated against two contrasting SRTM 1-arcsec tiles, each a 2048² window (~63 km across, 4.19M cells). These are the numbers generated terrain gets compared against.
+The metrics module is calibrated against **nine** SRTM 1-arcsec tiles, each a 2048² window (~63 km across, 4.19M cells) placed by `dem.best_window` on the roughest part of its tile. All figures at a 1.0 km² channel threshold. These are the numbers generated terrain gets compared against.
 
-| | **east** — S. Appalachians | **west** — Olympics / N. Cascades | Published |
-|---|---|---|---|
-| Character | mature, humid, unglaciated fluvial | young, active margin, glaciated | |
-| Slope–area concavity θ | **0.516** (R² 0.89) | **0.404** (R² 0.88) | 0.4–0.6 |
-| Hack exponent h | **0.543** (R² 0.88) | **0.434** (R² 0.54) | 0.5–0.62 |
-| Horton Rb / Rl / Ra | 5.51 / 1.75 / 4.07 | 4.67 / 2.31 / 4.06 | 3–5 / 1.5–3.5 / 3–6 |
-| Drainage density | 0.744 km/km² | 0.480 km/km² | threshold-dependent |
-| Mean slope | 12.8° | 13.4° | |
+| tile | region | θ window | θ per-basin | Hack h | Rb | drainage density | mean slope |
+|---|---|---|---|---|---|---|---|
+| g | Uinta Mts, Utah | 0.130 (R² 0.70) | 0.165 | 0.464 | 6.92 | 0.889 | 9.3° |
+| b | Ahaggar, Sahara | 0.193 (R² 0.89) | 0.213 | 0.602 | 5.79 | 0.796 | 8.5° |
+| d | Tien Shan | 0.211 (R² 0.48) | 0.334 | 0.434 | 5.71 | 0.929 | 17.1° |
+| e | Guiana / lower Amazon | 0.219 (R² 0.80) | 0.214 | 0.531 | 5.48 | 0.699 | 9.3° |
+| c | Peruvian Andes | 0.248 (R² 0.75) | 0.307 | 0.515 | 6.95 | 0.734 | 20.1° |
+| west | Olympics / N. Cascades | 0.403 (R² 0.88) | 0.400 | 0.434 | 4.67 | 0.480 | 13.4° |
+| a | Pyrenees | 0.408 (R² 0.80) | 0.399 | 0.541 | 6.85 | 0.720 | 18.6° |
+| f | Mindanao | 0.473 (R² 0.89) | 0.438 | 0.552 | 4.94 | 0.601 | 12.1° |
+| **east** | **S. Appalachians** | **0.516** (R² 0.89) | **0.398** | 0.543 | 5.51 | 0.744 | 12.8° |
+| | **all nine** | **0.311 ± 0.139** | **0.327 ± 0.115** (70 basins pooled) | **0.513 ± 0.057** | **5.87** | 0.732 | 13.5° |
+| | published | 0.4–0.6 | 0.4–0.6 | 0.5–0.62 | 3–5 | threshold-dependent | |
 
-**Use the east tile as the strict reference.** It is unglaciated and lands inside the published band on every fluvial metric. The west tile falls low on θ and h, and its Hack fit is visibly worse (R² 0.54 against 0.88) — that is a real geomorphic signal rather than a measurement problem. Glacial erosion violates stream-power scaling: U-shaped valleys have flat floors and steep walls, which flattens the slope–area relation, and glacial troughs are shorter and blunter relative to basin area than fluvial networks. Its much lower drainage density says the same thing.
+**This table used to have two tiles in it, and reading θ off the east one was the single largest measurement error in the project.** East is the *maximum* of nine. Whole-window θ across real terrain has a coefficient of variation of 45% — the same order as the seed noise that planet-wide θ on a generated world is (correctly) refused for. Only four of nine tiles land inside the published 0.4–0.6 band, and seven of nine sit *above* the published Rb band.
+
+The published bands are not wrong; they describe **actively incising humid fluvial terrain**, which is what they were measured on. Most of the Earth is not that. The low-θ tiles all have a reason — g is a glaciated high plateau, b is arid with relict drainage, d and c are arid-to-semi-arid active orogens where hillslopes outrun channels — and none of them is a measurement failure.
+
+**So there is no such thing as "the SRTM reference".** Quote the nine-tile distribution, or quote a named tile and say why that one. East is still the right *single* choice when a mature humid fluvial comparison is what is wanted; it is not the right choice for asking whether a whole generated planet looks like Earth, because a whole planet contains Saharas and Uintas too.
+
+The east/west contrast the earlier table was built on does survive, and is worth keeping: the west tile's Hack fit is visibly worse (R² 0.54 against 0.88) and its drainage density is the lowest of the nine. Glacial erosion violates stream-power scaling — U-shaped valleys have flat floors and steep walls, which flattens slope–area, and glacial troughs are shorter and blunter relative to basin area than fluvial networks. The Pyrenees tile (a), also glaciated, has the same low Hack R². That was a real signal. It was just never a two-point distribution.
 
 **Three implementation traps, all of which produced badly wrong numbers before being fixed:**
 
@@ -681,14 +694,16 @@ So the ranking for the testbed is: **slope–area concavity is the primary discr
 
 | | Stage 1 (noise) | **Stage 2 (eroded)** | SRTM east |
 |---|---|---|---|
-| Slope–area θ, per-basin | 0.124 | **0.464** | 0.516 |
+| Slope–area θ, per-basin | 0.124 | **0.464** | 0.398 |
 | Slope–area θ, whole planet | 0.094 | **0.498** | 0.516 |
 | Hack exponent h | 0.464 | **0.543** | 0.543 |
 | Hypsometric integral | 0.366 | 0.196 | 0.217 |
 | Horton Rb | 5.84 | 5.42 | 5.51 |
 | Peak elevation | 623 m | 6,273 m | — |
 
-θ moved from 0.094 to 0.498 and Hack's exponent landed on 0.543, matching the SRTM reference exactly. **The document's central claim — noise gives you shape, erosion gives you realism — is now a measured result rather than an assertion.**
+θ moved from 0.094 to 0.498 and Hack's exponent landed on 0.543. **The document's central claim — noise gives you shape, erosion gives you realism — is now a measured result rather than an assertion.** That claim rests on the θ movement, which is a factor of five and survives any reasonable choice of reference.
+
+**Two caveats on the "SRTM east" column in both tables above, which are records of a pre-climate run and are left as measured.** Hack's 0.543 was described here as "matching the SRTM reference exactly"; it is not a meaningful agreement, because *h* across the nine tiles is 0.513 ± 0.057 and three decimal places of coincidence with one tile is luck at that spread. And the hypsometric integral reads well here (0.196 against east's 0.217) only because east is near the *bottom* of the real range — the nine tiles run 0.190 to 0.417 with a mean of 0.315, so measured against real terrain generally this world is at the low extreme rather than on target. Neither changes the conclusion of this section. Both are reasons not to read a single tile's column as a scorecard.
 
 **Solver validation.** With *uniform* uplift the recovered θ equals `m/n` to ±0.001 (m=0.45 → 0.451, m=0.60 → 0.600, R² = 1.000). That is the strongest available end-to-end check: it only comes out right if the implicit solver, the flow routing, the spherical cell areas and the metrics all agree.
 
@@ -720,7 +735,7 @@ Implemented per the spec, with crust type still generated from noise independent
 
 | | throwaway Stage 1 | **tectonic Stage 1** | SRTM east |
 |---|---|---|---|
-| Slope–area θ, per-basin | 0.464 | **0.452** (IQR 0.450–0.454) | 0.516 |
+| Slope–area θ, per-basin | 0.464 | **0.452** (IQR 0.450–0.454) | 0.398 |
 | Hack exponent h | 0.543 | **0.529** | 0.543 |
 | Horton Rb | 5.42 | 5.44 | 5.51 |
 | Peak elevation | 6,273 m | 8,369 m | — |
@@ -870,7 +885,21 @@ Three n=785 worlds, identical code and parameters, seeds 42 / 149 / 3735928559, 
 
 **Planet-wide θ is mostly seed.** At 40 cells it swings 0.195 to 0.304 on worlds that differ in nothing but their random number stream, and by 400 cells the coefficient of variation is 55%. Per-basin θ at 13–40 cells is six times tighter, and Hack *h* is tighter still. This is the quantitative form of the advice in the README to measure θ per basin rather than planet-wide: a global regression pools basins with different uplift, and how many of each kind a world happens to grow is a property of the seed.
 
-**So the concavity number to quote is the per-basin one: θ = 0.285 ± 0.010 against SRTM east's 0.516.** That conclusion survives the seed test comfortably — the spread is ±0.01 and the gap is 0.23, so no seed comes close to the reference.
+**So the concavity number to quote is the per-basin one: θ = 0.285 ± 0.010.** That much survives the seed test comfortably — the spread is ±0.01, six times tighter than planet-wide.
+
+**What does not survive is the gap this used to report.** This paragraph read "against SRTM east's 0.516 … the gap is 0.23, so no seed comes close to the reference", and it was wrong twice over. It set a **per-basin median** against a **whole-window fit**, and it took that fit from the single highest tile of the nine now measured. Matched on both counts — per-basin against per-basin, at the same 40-cell (0.344 km²) threshold the generated figure is quoted at, pooled over every basin in all nine tiles:
+
+| | basins | mean | sd | median |
+|---|---|---|---|---|
+| real terrain, 9 tiles @ 0.344 km² | 102 | 0.293 | 0.131 | **0.290** |
+| real terrain, 9 tiles @ 1.0 km² | 70 | 0.327 | 0.115 | 0.333 |
+| **generated, 3 seeds @ 0.344 km²** | — | **0.285** | **0.010** | — |
+
+0.285 against 0.290. The concavity of this world is indistinguishable from real terrain measured the same way, and three individual tiles (g 0.165, b 0.213, e 0.214) come out *below* it.
+
+**Where the phantom 0.23 came from is worth keeping, because the two halves are separable.** About 0.12 of it was the estimator: east's own per-basin median is 0.398, not 0.516, so that much of the "gap" never left the reference tile and would have shown up against east alone. The rest was sampling — east is the maximum of nine, and the real distribution's median is 0.29, not 0.52. Neither half was a property of the generated world, and nothing about the model changed to close it.
+
+The residual disagreement at the more conservative 1.0 km² threshold (0.333 real against 0.285) is 0.4 sd of the basin-to-basin spread. That is not a defect to chase; it is a threshold choice, and it is the reason any θ from this pipeline has to carry the threshold it was measured at.
 
 **The apparent decline with world size is NOT established.** An earlier version of this section reported θ 0.444 at n=256, 0.346 at n=512 and 0.271 at n=785 as a monotonic trend and called it the largest open gap. Those are *global* θ values with one seed apiece, and the seed sd at n=785 alone is 0.056 — so the n=512 and n=785 points sit about 1.3 sd apart, and the two smaller ones came from a different measurement path (coupled-only, reflooded here rather than exported). The trend may well be real. It is not shown by that evidence, and settling it needs several seeds at each radius rather than one.
 
@@ -939,7 +968,7 @@ Max drainage area varies with a coefficient of variation of **75%** across these
 
 600 mm ships because it is Earth's figure, not because it scored best. The costs are the shape showing through: the wet tail overshoots the rainforest share, and a heavy-tailed rainfall runs off more efficiently than an even one, so R/P drifts further from Earth. **The seasonal path used to normalise each of its four solves, and no longer does.** That was wrong twice over. A dry season *should* read a drier median than a wet one — pinning all four equal is throwing away the amplitude that makes it a season. And the normalisation is a division by a median that underflows once continents get wide: measured on the shipped world at n=785, two of the four solves anchor at median/mean ≈ 0.001, so scaling each to the same median multiplied those two by ~30× against the sound ones and left an annual field that was ~96% floor noise behind a healthy-looking 600 mm median. There is now a single factor, fitted on the year and carried into the season stack, and it is checked before use (`climate.MIN_ANCHOR_RATIO`). The four n=785 season medians read 8.8 / 293.7 / 80.2 / 378.2 mm where they used to read 600 / 600 / 600 / 600 — which is the model saying plainly that a world this size gets very little rain on land in the winter hemisphere. (Those medians read 6.0 / 228.1 / 8.8 / 178.1 when first measured; the sweep was stopping at 0.62 R then, and the figures above are the converged ones.)
 
-Measured at n=256 seed 1, full pipeline, before and after: slope–area concavity 0.455 → **0.461**, Hack *h* 0.465 → **0.505**, per-basin θ 0.296 → **0.400**, against SRTM references of 0.516, 0.543 and 0.516. All three moved toward real terrain, which was not the goal and is worth stating as a result rather than a justification.
+Measured at n=256 seed 1, full pipeline, before and after: slope–area concavity 0.455 → **0.461**, Hack *h* 0.465 → **0.505**, per-basin θ 0.296 → **0.400**, against SRTM east references of 0.516, 0.543 and 0.398 (east's per-basin median — *not* its 0.516, which is the whole-window fit). All three moved toward real terrain, which was not the goal and is worth stating as a result rather than a justification.
 
 **Two limitations, recorded rather than papered over:**
 

@@ -628,7 +628,7 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
         <thead><tr><th>Constant</th><th>Value</th><th>Role</th></tr></thead>
         <tbody>
         <tr><td class="k">channel threshold</td><td class="v">40 × median cell area</td><td class="n">must sit <em>above</em> the channel head or the fit spans the hillslope limb — though θ is flat in the threshold at n=785, so the choice now buys little. Across three seeds at 40 cells: per-basin θ <strong>0.285 ± 0.010</strong> (CV 3.6%), planet-wide 0.257 ± 0.056 (CV 21.7%, and 55% at 400 cells). Read the per-basin figure; the planet-wide one is mostly seed. The 0.392/0.467/0.556 this row used to give predates the climate work</td></tr>
-        <tr><td class="k">SRTM east reference</td><td class="v">θ 0.516, h 0.543</td><td class="n">measured on 63 km windows</td></tr>
+        <tr><td class="k">SRTM reference, 9 tiles</td><td class="v">per-basin θ <strong>0.290</strong>, h 0.513</td><td class="n">63 km windows, 102 basins, same 40-cell threshold. This row read "SRTM east θ 0.516" and the generated 0.285 was called a 0.23 shortfall against it — but 0.516 is a whole-window fit on the highest tile of nine, against a per-basin median. Matched, 0.285 against 0.290. Whole-window θ across the nine runs 0.130–0.516</td></tr>
         <tr><td class="k">min_channel_cells / max_basins</td><td class="v">400 / 40</td><td class="n">per-basin regression gates</td></tr>
         <tr><td class="k">log-bin count / min per bin</td><td class="v">40 (25 per basin) / 20</td><td class="n">slope–area is very noisy</td></tr>
         <tr><td class="k">EPS (priority flood)</td><td class="v">1e-4</td><td class="n">see F1 — this one is broken above 2,048 m</td></tr>

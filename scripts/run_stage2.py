@@ -21,7 +21,11 @@ from terrain import metrics, stage1, stage2  # noqa: E402
 from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SRTM_EAST = {"concavity_theta": 0.516, "hack_h": 0.543}
+# Nine SRTM tiles, not the east one alone -- and note the per-basin and whole-window
+# references are DIFFERENT NUMBERS (0.290 against 0.311 mean). This dict held east's
+# whole-window 0.516 and the `.get` fallback below served it to the per-basin row too,
+# which is the comparison that produced a 0.23 concavity gap that does not exist.
+SRTM = {"basin_theta_median": 0.290, "concavity_theta": 0.311, "hack_h": 0.513}
 STAGE1_BASELINE = {"concavity_theta": 0.106, "hack_h": 0.469}
 
 
@@ -169,17 +173,16 @@ def main():
     after = measure(grid, z, is_ocean, "stage2")
     print(f"  measured in {time.perf_counter() - t0:.1f} s")
 
-    print(f"\n  {'metric':22s} {'stage1':>9s} {'stage2':>9s} {'SRTM east':>10s}   verdict")
+    print(f"\n  {'metric':22s} {'stage1':>9s} {'stage2':>9s} {'SRTM x9':>10s}   verdict")
     for key, name, lo, hi in (
-        ("basin_theta_median", "theta, per-basin", 0.40, 0.60),
-        ("concavity_theta", "theta, whole planet*", 0.40, 0.60),
-        ("hack_h", "Hack exponent h", 0.50, 0.62),
+        ("basin_theta_median", "theta, per-basin", 0.165, 0.438),
+        ("concavity_theta", "theta, whole planet*", 0.130, 0.516),
+        ("hack_h", "Hack exponent h", 0.434, 0.602),
     ):
         v = after[key]
         ok = np.isfinite(v) and lo <= v <= hi
-        ref = SRTM_EAST.get(key, SRTM_EAST["concavity_theta"])
-        print(f"  {name:22s} {before[key]:9.3f} {v:9.3f} {ref:10.3f}   "
-              f"{'INSIDE' if ok else 'outside'} {lo}-{hi}")
+        print(f"  {name:22s} {before[key]:9.3f} {v:9.3f} {SRTM[key]:10.3f}   "
+              f"{'INSIDE' if ok else 'outside'} 9-tile {lo}-{hi}")
     print("  *whole-planet theta mixes cratons and orogens, so it is NOT comparable to")
     print("   published values or to a DEM window. Per-basin is the like-for-like number.")
     if after["basin_count"]:
