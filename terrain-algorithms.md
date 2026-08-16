@@ -746,9 +746,38 @@ What the tail is instead is the two *intended* mechanisms multiplying. The wette
 | `background_rainout_km` ×0.5 | 1.072 | 321 mm | 42.1% | |
 | `eddy` 0.07 → 0.70 | 0.916 | 231 mm | 51.9% | narrower, median falls |
 | `land_recycling` 0.85 | 1.047 | 357 mm | 42.6% | mild, and fights the shadow |
-| `iterations` 400 → 1200 | 1.055 | 317 mm | 47.0% | converged; not a solver artifact |
+| `iterations` 400 → 1200 | 1.055 | 317 mm | 47.0% | converged **at that radius**; see below |
 
 (The single-solve figures run wider than the shipped 0.833 because averaging four seasons compresses the distribution.) This is the same limit as the missing desert belt below: a surface-only model has no aloft.
+
+**The last row was measured at n=256, and "converged" does not survive the trip to production.** A Jacobi sweep moves information exactly one cell, so a fixed sweep count is a reach denominated in *cells* — the same unit error `per_step_relax` exists to prevent, and the moisture loop was the one place it was never applied. 400 sweeps reach 40 km of world: **1.9 R at n=256, 0.94 R at n=512, 0.62 R at n=785**. The small worlds were solved; the big ones were unfinished, and the part left out was the deep interior, which is precisely what the degeneracy complaint was about. Measured at n=512, seed 1, land precipitation median by distance from the coast, against a converged 2400-sweep solve:
+
+| sweeps | reach | 4–8 km | 8–16 km | 16+ km | mean \|err\| |
+|---|---|---|---|---|---|
+| 400 | 0.94 R | 5.23e-04 | **5.19e-07** | 1.56e-04 | 0.291% |
+| 600 | 1.42 R | 6.20e-04 | 4.88e-06 | 4.70e-04 | |
+| 800 | 1.89 R | 6.27e-04 | 5.32e-06 | 4.70e-04 | 0.000% |
+| 2400 | 5.67 R | 6.27e-04 | 5.32e-06 | 4.70e-04 | |
+
+The mean error is small because the unfinished part is the interior and the interior holds almost no rain. The deep band is wrong by 10×. `iterations` is therefore replaced by `advection_span_km` = 200, which is 3.08 R at every radius — a 1.6× margin on the 1.89 R that world needed, kept because the controlling length is the *streamline* from sea to interior and so grows with `target_land_fraction`. It costs sweeps linearly: about 5× the moisture solve at n=785 and nothing at n=256.
+
+**Every n=785 figure taken before this change was taken on an unconverged field**, including the 22.8%-of-land-under-1-mm number and the season medians behind the anchor work.
+
+### The dry interior is not a capacity problem
+
+Capacity is the obvious suspect — interiors are cold high ground, `capacity` has a floor of 0.05, and moisture is truncated to it every sweep. Measured on a converged n=512 solve:
+
+| by distance from coast | 0–1 km | 2–4 km | 4–8 km | 8–16 km | 16+ km |
+|---|---|---|---|---|---|
+| temperature °C | 13.3 | 10.8 | 13.4 | 17.8 | 21.9 |
+| capacity | 0.904 | 0.776 | 0.907 | 1.18 | 1.51 |
+| moisture | 0.292 | 0.108 | 0.0343 | 4.4e-4 | 0.0357 |
+| moisture / capacity | 0.514 | 0.281 | 0.0714 | 4.1e-4 | 0.0236 |
+| saturated cells | 0 | 0 | 0 | 0 | 0 |
+
+Capacity **rises** inland — continental interiors run hotter once they are away from the sea — and not one land cell anywhere is at its ceiling. The air inland has room for water it never receives, so the dryness is transport, not thermodynamics, and a moisture source that scales with capacity would be aiming at the wrong term.
+
+Nor does the decay rate come from the rainout arithmetic. With `land_recycling` the per-sweep multiplier over land is `1 - relax·rainout_factor·(1 - recycling)`, an e-folding of **18 world km** at n=512 with air ascending and 181 with it subsiding. The measured e-folding is **1–2 km**. Between 30× and 100× of the decay is geometric — the streamline from the sea to an interior cell is far longer than the straight line, and `out_w` spreads each parcel across several neighbours on the way — rather than anything the rainout constants control. That argues for a moisture source standing *in* the interior, and against tuning the ones already there.
 
 **What can be fixed is the anchor, and it was set on the wrong statistic.** Absolute depths are not derivable from this model, so the anchor is a free choice — and the mean was the wrong free choice, because with a tail that heavy, pinning the mean at Earth's 1000 mm divided everyone else down to a median of 321 mm where Earth's is ~600. Half the world was arid by construction. Judged on Köppen's arid share, which is what actually reads absolute millimetres:
 

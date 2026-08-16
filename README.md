@@ -321,7 +321,7 @@ for `n=1`.
 | `eddy` | 0.07 | isotropic mixing. **Must be > 0** or the zero-wind latitudes become moisture traps |
 | `saturation_gain` | 0.06 | how fast warm air holds more water |
 | `evaporation` | 1.0 | ocean source strength |
-| `iterations` | 400 | fixed-point sweeps |
+| `advection_span_km` | 200 | how far the fixed-point sweep carries moisture, as a distance rather than a sweep count. **Replaces `iterations` = 400, which was a reach in cells** — 40 km, so 1.9 R at n=256 but 0.62 R at n=785, and the big worlds were left unfinished in exactly the interiors that were the complaint |
 | `target_median_precip_mm` | 600 | final scaling, on Earth's land **median**; the model gives a pattern, not absolute depths, and its wet tail makes the mean a statistic of the tail rather than of the world |
 | `ekman_deg` | 45 | deflection of the surface current from the wind; right in the north, left in the south |
 | `current_scale_km` | 10 | distance a current carries its heat anomaly (981 km on Earth) |

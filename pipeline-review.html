@@ -475,7 +475,7 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
         <tr><td class="k">monsoon_ref_c / km</td><td class="v">8.0 / 5.0</td><td><span class="cls cls-world">world</span></td><td class="n">the first version used cell spacing, giving a reference gradient of 80 °C/km — i.e. nothing</td></tr>
         <tr><td class="k">land_recycling</td><td class="v">0.70</td><td></td><td class="n">evapotranspiration; also in tension with the shadow</td></tr>
         <tr><td class="k">saturation_gain</td><td class="v">0.06</td><td></td><td class="n">per °C; the cap is what makes the fixed point converge at all</td></tr>
-        <tr><td class="k">iterations</td><td class="v">400</td><td></td><td class="n">converged — 1200 moves log₁₀ sd by 0.02</td></tr>
+        <tr><td class="k">advection_span_km</td><td class="v">200.0</td><td><span class="cls cls-world">world</span></td><td class="n">3.08 R at every radius. Replaces <code>iterations</code> = 400, which was a reach in <em>cells</em> — 40 km, i.e. 1.9 R at n=256 but 0.62 R at n=785, leaving the big worlds unfinished in the interiors</td></tr>
         <tr><td class="k">target_median_precip_mm</td><td class="v">600.0</td><td></td><td class="n">Earth's land <em>median</em>. Anchoring the mean instead put half the world in desert by construction</td></tr>
         </tbody>
       </table></div>

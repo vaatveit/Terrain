@@ -490,6 +490,27 @@ def test_precipitation_falls_from_tropics_to_poles(world):
     assert equator > 2 * mid > 4 * polar
 
 
+def test_the_moisture_sweep_reaches_the_same_distance_on_every_sphere():
+    """The unit error `advection_span_km` fixes, pinned so it cannot come back.
+
+    A sweep moves information exactly one cell, so a fixed sweep count is a reach in CELLS.
+    The old `iterations` = 400 covered 40 km of world at every radius -- 1.9 R at n=256 but
+    0.62 R at n=785 -- so the big worlds were left unfinished in the deep interiors, which
+    is the one place anybody was looking. A distance has to come back as the same multiple
+    of the radius at both ends of the range.
+    """
+    p = climate.ClimateParams()
+    reach = []
+    for n in (64, 192):
+        g = build_goldberg(n)
+        sweeps = climate.sweeps_for_span(g, p.advection_span_km)
+        reach.append(sweeps * climate.mean_spacing_km(g) / g.radius_km)
+    assert reach[0] == pytest.approx(reach[1], rel=0.02)
+    # A converged n=512 solve needed 1.89 R. Below that the interiors are unfinished rather
+    # than dry, and every interior statistic taken off them is measuring the solver.
+    assert reach[0] > 1.9
+
+
 def test_interiors_are_drier_than_coasts_but_not_dead(world):
     g, _, land, cl = world
     p, d = cl.precipitation_mm, cl.coast_distance_km

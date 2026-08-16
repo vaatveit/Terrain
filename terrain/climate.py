@@ -243,7 +243,33 @@ class ClimateParams:
     # orographic signal while holding interiors to something a continent could support.
     land_recycling: float = 0.70
     saturation_gain: float = 0.06         # how fast warm air holds more water, per degC
-    iterations: int = 400
+    # How far the sweep carries moisture before it stops, in world km at the reference
+    # radius. It replaces a fixed count of 400 sweeps, which was the last transport constant
+    # in this module still denominated in CELLS -- a Jacobi sweep moves information exactly
+    # one cell, so a fixed count is a reach in cells and therefore a different physical
+    # distance on every sphere. Precisely the failure `per_step_relax` was written to fix,
+    # and the one loop it was never applied to. 400 sweeps reached 40 km: 1.9 R at n=256,
+    # 0.94 R at n=512, 0.62 R at n=785. So the small worlds were solved and the big ones
+    # were merely unfinished, and the deep interiors of the big ones were the part left out.
+    #
+    # Measured at n=512, seed 1, land precipitation median by distance from the coast,
+    # against a converged 2400-sweep solve:
+    #
+    #     sweeps  reach       4-8 km    8-16 km      16+ km   mean |err|
+    #        400  0.94 R    5.23e-04   5.19e-07    1.56e-04       0.291%
+    #        600  1.42 R    6.20e-04   4.88e-06    4.70e-04
+    #        800  1.89 R    6.27e-04   5.32e-06    4.70e-04       0.000%
+    #       2400  5.67 R    6.27e-04   5.32e-06    4.70e-04
+    #
+    # The mean error is small because the unfinished part is the interior and the interior
+    # holds little rain; the deep band is wrong by 10x, which is the whole subject.
+    #
+    # 200 km is 3.08 R, a 1.6x margin on the 1.89 R that world needed. The margin is not
+    # padding: the controlling length is the STREAMLINE from the sea to the most interior
+    # cell, so it grows with `target_land_fraction`, and that is a flag a caller can raise.
+    # Costs sweeps linearly -- about 5x the old solve at n=785, and nothing at all at n=256,
+    # where 400 already covered the world twice over.
+    advection_span_km: float = 200.0
     # Anchor for the final scaling. Earth's land MEDIAN, and the median is the point.
     #
     # This model produces a pattern, not depths, so the anchor is a free choice -- and the
@@ -316,6 +342,21 @@ def per_step_relax(grid, scale_km, spacing_km=None):
     # Capped below 1: a step longer than the e-folding distance would otherwise ask for
     # more than complete decay in a single sweep.
     return min(spacing_km / scale, 0.9)
+
+
+def sweeps_for_span(grid, span_km, spacing_km=None):
+    """How many advection sweeps it takes to carry a field `span_km` across the world.
+
+    The counterpart to `per_step_relax`, and for the same reason. That one converts a
+    distance into a per-step RATE; this converts a distance into a step COUNT. Both exist
+    because a sweep is one cell wide, so anything expressed per sweep is a length in cells
+    and means a different physical distance on every sphere. `advection_span_km` records
+    what happened when the moisture loop was left as a bare count.
+    """
+    if spacing_km is None:
+        spacing_km = mean_spacing_km(grid)
+    span = float(span_km) * float(grid.radius_km) / R_WORLD_KM
+    return max(1, int(np.ceil(span / float(spacing_km))))
 
 
 # Where in the year the four samples sit, as fractions of it. Evenly spaced, because the
@@ -1001,12 +1042,38 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
         background_rainout 0.5x  1.072   321   42.1%
         eddy 0.07 -> 0.70        0.916   231   51.9%      narrower, but median falls
         land_recycling 0.85      1.047   357   42.6%      mild, and fights the shadow
-        iterations 400 -> 1200   1.055   317   47.0%      converged; not a solver artifact
+        iterations 400 -> 1200   1.055   317   47.0%      converged AT THAT RADIUS only
 
     (The single-solve figures run wider than the shipped 0.833 because averaging the four
     seasons compresses the distribution.) This is the same limit already recorded at the
     top of this module: a surface-only model has no aloft. The anchor is chosen to make the
     best of it -- see `target_median_precip_mm` -- and the shape is left alone.
+
+    THE DRY INTERIOR IS NOT A CAPACITY PROBLEM, which is worth knowing because capacity is
+    the obvious suspect: interiors are the cold high ground, `capacity` has a floor of 0.05,
+    and moisture is truncated to it every sweep. Measured on a converged n=512 solve, by
+    distance from the coast:
+
+                          0-1 km   2-4 km   4-8 km  8-16 km    16+ km
+        temperature C       13.3     10.8     13.4     17.8      21.9
+        capacity           0.904    0.776    0.907     1.18      1.51
+        moisture           0.292    0.108   0.0343   4.4e-4    0.0357
+        moisture/capacity  0.514    0.281   0.0714   4.1e-4    0.0236
+        saturated cells        0        0        0        0         0
+
+    Capacity RISES inland -- continental interiors run hotter, not colder, once they are
+    away from the sea -- and not one land cell anywhere is at its ceiling. So the air inland
+    has room for water it never receives. The dryness is transport, not thermodynamics, and
+    a source that scales with capacity would be aiming at the wrong term.
+
+    Nor does the decay rate come from the arithmetic here. With `land_recycling` the
+    per-sweep multiplier over land is 1 - relax*rainout_factor*(1 - recycling), an e-folding
+    of 18 world km at n=512 with air ascending and 181 with it subsiding. The measured
+    e-folding is 1 to 2 km. Between 30x and 100x of the decay is therefore geometric -- the
+    streamline from the sea to an interior cell is far longer than the straight line, and
+    `out_w` spreads each parcel over several neighbours on the way -- rather than anything
+    the rainout constants control. That is an argument for a moisture source standing IN the
+    interior, and against tuning the ones that are already there.
     """
     n = moisture.shape[0]
     k = nbr.shape[1]
@@ -1078,7 +1145,7 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
     moisture = np.zeros(n, dtype=np.float64)
     new_m = np.empty(n, dtype=np.float64)
     precip = np.zeros(n, dtype=np.float64)
-    for _ in range(p.iterations):
+    for _ in range(sweeps_for_span(grid, p.advection_span_km, spacing_km)):
         _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
                      recycle, new_m, precip)
         moisture, new_m = new_m, moisture
