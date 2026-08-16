@@ -330,7 +330,22 @@ def test_amplification_must_not_be_fed_back_onto_the_mesh(world):
     """
     g, crust, res, fr = world
     land = crust.land_mask
-    thr = float(np.median(g.area) * 6)
+    # 40 cells, matching `scripts/generate_world.py`. This read 6 for a long time, which is
+    # BELOW the channel head at 100 m cells -- the slope-area regression was then fitted
+    # across the hillslope limb as well as the fluvial one and returned a number that was
+    # not a concavity. It went unnoticed because the difference asserted below stayed large
+    # enough to pass. Measured on this fixture, base theta and the fit behind it:
+    #
+    #       6 cells   theta  0.055   r2 0.009      <- what this test used to read
+    #      20 cells   theta -0.182   r2 0.027
+    #      40 cells   theta  0.327   r2 0.187
+    #     100 cells   theta -1.679   r2 0.230
+    #
+    # r2 0.009 is not a weak fit, it is no fit. Only at 40 does theta land near the ~0.31
+    # this test's comments have always quoted. The fit is still poor because n=128 is too
+    # small for the regression -- see the note on undersampling in tests/test_stage2.py --
+    # but the threshold must at least sit above the channel head.
+    thr = float(np.median(g.area) * 40)
     amp_mesh = amplify.amplify(
         g.xyz, res.elevation,
         amplify.detail_amplitude(fr.slope, fr.acc, land,
@@ -348,6 +363,7 @@ def test_amplification_must_not_be_fed_back_onto_the_mesh(world):
     # latest step is the coupled loop moving to seasonal precipitation, which erodes a
     # different world and this one is less sensitive -- measured 0.016 against 0.024. Still
     # 5% of a theta near 0.31, which is what the warning in terrain/amplify.py is about.
+    # At the corrected 40-cell threshold the difference measures 0.0235 on a base of 0.327.
     assert abs(amped["concavity_theta"] - base["concavity_theta"]) > 0.01, (
         "if this stops being true the warning in terrain/amplify.py can be relaxed")
     moved = abs(amped["channel_cells"] - base["channel_cells"])

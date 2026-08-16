@@ -383,10 +383,13 @@ def test_precipitation_is_finite_and_bounded(world):
 
     The mean is a statistic of this model's wet tail rather than of its world -- the
     wettest 5% of land takes about half of all land rain -- so pinning it put the median
-    at 321 mm against Earth's ~600 and made half the world arid by construction. The
-    seasonal path normalises each of the four solves separately and then averages them,
-    and the median is not linear, so the annual median only lands NEAR the target; the
-    tolerance is loose on purpose and the mean is deliberately not pinned at all.
+    at 321 mm against Earth's ~600 and made half the world arid by construction. The mean
+    is deliberately not pinned at all.
+
+    The tolerance used to be 25% because each season normalised its own median and the
+    median is not linear, so four seasons reading 600 averaged to 803. There is now a single
+    anchor fitted on the year itself, so the year hits the target exactly and the loose
+    tolerance would no longer be testing anything.
     """
     g, _, land, cl = world
     p = cl.precipitation_mm
@@ -394,8 +397,60 @@ def test_precipitation_is_finite_and_bounded(world):
     assert (p >= 0).all()
     med = climate._area_median(p, g.area, land)
     target = climate.ClimateParams().target_median_precip_mm
-    assert med == pytest.approx(target, rel=0.25), (
-        f"land median {med:.0f} mm against a {target:.0f} mm anchor")
+    assert med == pytest.approx(target, rel=1e-3), (
+        f"land median {med:.1f} mm against a {target:.0f} mm anchor")
+
+
+def test_the_seasons_are_not_each_normalised_to_the_same_median(world):
+    """A dry season has to read drier than a wet one, which is what a season IS.
+
+    Every solve used to be scaled to `target_median_precip_mm` on its own, which pinned all
+    four medians equal and threw the seasonal amplitude away. It was also how a degenerate
+    solve got amplified: on the shipped n=785 world two of the four seasons anchor on
+    numerical floor, and normalising each to the same median multiplied those two by ~30x
+    against the sound ones, leaving an annual field that was ~96% floor noise behind a
+    healthy-looking 600 mm median. Measured season medians there, one anchor on the year:
+    6.0, 228.1, 8.8, 178.1 mm.
+    """
+    g, z, land, _ = world
+    cs = climate.compute_seasons(g, z, land)
+    med = [climate._area_median(cs.precipitation_season[i], g.area, land) for i in range(4)]
+    assert max(med) > 1.2 * min(med), (
+        f"season medians {['%.0f' % m for m in med]} are near-identical, which means "
+        "something is normalising each solve separately again")
+
+
+def test_a_degenerate_anchor_is_refused_rather_than_divided_by(world):
+    """The anchor is a division, and on wide continents the divisor underflows.
+
+    Found by running the pipeline at n=785 with `target_land_fraction` 0.5 and
+    `continental_fraction` 0.65: a surface-only moisture model cannot carry water into the
+    middle of a 65% supercontinent, so the median land cell held numerical floor rather than
+    rainfall and the scale factor came out at ~2.5e7, overflowing float32 on the way out of
+    `precipitation`. The same world at n=128 produced 1.3e7 mm/yr silently and stayed silent
+    through export, biomes and Koppen -- which is the failure this test exists to prevent.
+
+    Both directions matter, and the second one is why an earlier version of this guard had
+    to be reverted: it was calibrated without n=785 and refused the SHIPPED world.
+    """
+    g, _, land, cl = world
+    area, target = g.area, climate.ClimateParams().target_median_precip_mm
+
+    p = cl.precipitation_mm.astype(np.float64)
+    ref = climate._area_median(p, area, land)
+    ratio = ref / np.average(p[land], weights=area[land])
+    assert ratio > 2 * climate.MIN_ANCHOR_RATIO, (
+        f"the SHIPPED world sits at {ratio:.3g} against the {climate.MIN_ANCHOR_RATIO} "
+        "guard. The production world measures 0.0946 at n=785 and this fixture is smaller, "
+        "so it should read higher; if it does not, re-measure before touching the limit -- "
+        "and see `_annual_anchor_scale` on why the answer is a land moisture source")
+    assert climate._annual_anchor_scale(p, area, land, target) == pytest.approx(target / ref)
+
+    # A wet coast and a dead interior: the median is in the floor, the mean is not.
+    broken = np.full(land.shape, 1e-30)
+    broken[np.flatnonzero(land)[:np.count_nonzero(land) // 4]] = 500.0
+    with pytest.raises(ValueError, match="degenerate"):
+        climate._annual_anchor_scale(broken, area, land, target)
 
 
 def test_moisture_never_exceeds_saturation(world):

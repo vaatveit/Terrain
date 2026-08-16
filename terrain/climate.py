@@ -1043,8 +1043,13 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
 
 
 def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateParams,
-                  spacing_km=None, decl_deg=0.0):
-    """Steady-state moisture transport with orographic and background rainout."""
+                  spacing_km=None, decl_deg=0.0, anchor=True):
+    """Steady-state moisture transport with orographic and background rainout.
+
+    `anchor=False` returns the pattern in the solver's own arbitrary units instead of
+    millimetres. `compute_seasons` needs that -- see `_annual_anchor_scale` for why a season
+    must not normalise itself.
+    """
     n = grid.cell_count
     nbr = np.ascontiguousarray(grid.neighbours)
     xyz = np.ascontiguousarray(grid.xyz)
@@ -1082,10 +1087,98 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
     # what it produces is a spatial pattern, and the pattern is what Stage 4 needs. The
     # anchor is the area-weighted land MEDIAN, not the mean, because the mean here is a
     # statistic of the wet tail rather than of the world -- see `target_median_precip_mm`.
-    ref = _area_median(precip, grid.area, land_mask)
-    if ref > 0:
-        precip *= p.target_median_precip_mm / ref
+    if anchor:
+        ref = _area_median(precip, grid.area, land_mask)
+        if ref > 0:
+            precip *= p.target_median_precip_mm / ref
     return precip.astype(np.float32), moisture.astype(np.float32)
+
+
+# The anchor is a division, and this is the test for whether the divisor still means
+# anything: the land median has to be at least this fraction of the land mean. See
+# `_annual_anchor_scale`, and read the whole of it before touching the number.
+MIN_ANCHOR_RATIO = 0.03
+
+
+def _annual_anchor_scale(precip, area, land_mask, target_mm):
+    """One factor for the whole year, checked before it is used.
+
+    TWO CHANGES LIVE HERE, and the second is the reason the first is safe.
+
+    **Each season used to normalise its own median to `target_median_precip_mm`, and no
+    longer does.** That was wrong on its face -- a dry season SHOULD read a lower median than
+    a wet one, and pinning them equal is what the seasonal amplitude means. It was also
+    dangerous, because the normalisation is a division by a median that can underflow.
+    Measured on the SHIPPED world at n=785 (seed 1, Stage 1 crust), median/mean per season:
+
+        season 0   0.00101      scale 6.7e7      peak 2.5e8 mm/yr
+        season 1   0.0380       scale 1.7e6      peak 7.0e6
+        season 2   0.00126      scale 4.5e7      peak 1.7e8
+        season 3   0.0275       scale 2.2e6      peak 9.8e6
+
+    Two of the four solstice/equinox solves anchor on numerical floor. Because each was then
+    scaled to the same median, their MEANS came out at 5.9e5, 1.6e4, 4.7e5 and 2.2e4 -- so
+    the annual mean of the four was ~96% seasons 0 and 2, the two degenerate ones, amplified
+    thirtyfold against the two sound ones. The year the pipeline runs on was mostly floor
+    noise wearing a healthy annual median of exactly 600.0 mm.
+
+    Anchoring once, on the annual field, removes the amplification: the seasons keep their
+    relative amplitude and a dry season stays dry. The same n=785 world's four season
+    medians afterwards, in mm:
+
+        before (each self-normalised)    600.0    600.0    600.0    600.0
+        after  (one annual factor)         6.0    228.1      8.8    178.1
+
+    which is the model saying plainly that on a world this size the continents get almost no
+    rain in two seasons of four. That was always true; normalising it away is what hid it.
+
+    **And the surviving division is checked.** `ref / mean` under `MIN_ANCHOR_RATIO` means
+    the median land cell holds the numerical floor of the moisture advection rather than a
+    place on the rainfall distribution, and the reciprocal is reading noise. Measured on the
+    annual field, which is the only anchor left:
+
+        shipped 0.29/0.40   0.2666 (n=64)  0.2365 (n=128)  0.2050 (n=256)  0.0946 (n=785)
+        0.40/0.50           --             0.2095          --              --
+        0.45/0.55           --             0.00899         --              --
+        0.50/0.65           --             0.00515         0.00044         --
+
+    0.03 sits 3.2x under the worst healthy world and 3.3x over the best broken one. That
+    margin is NOT generous and it is the honest one -- an earlier attempt claimed a hundred-
+    fold separation by leaving n=785 out of the table.
+
+    THE THRESHOLD IS A TRIPWIRE AND IT CERTIFIES NOTHING. A previous attempt at this guard
+    was calibrated on n=64/128/256 and fired on the shipped world at n=785, because the
+    healthy ratio falls with world size -- the continents widen in km while the moisture
+    model's reach does not -- and a straight-line fit through three sizes missed the real
+    value by fifty times. Passing this check does NOT mean the interiors are physical. At
+    n=785 the shipped world has 22.8% of land under 1 mm/yr, and rainfall past ~8 km from
+    the coast is effectively zero:
+
+        distance from coast   0-1km   2-4km   4-8km    8-16km    16-24.7km
+        share of land         19.5%   19.3%   22.8%    19.6%     4.4%
+        median precip (mm)    3,480     941     442      1.51     1.4e-6
+
+    That is a physics gap -- a surface-only model has no aloft and no soil-moisture
+    recycling, so there is nothing to rain in a continental interior -- and the fix for it is
+    a land moisture source, not a lower limit here. If this ever fires on a world that looks
+    reasonable, that is the finding, and the number below is not what should move.
+    """
+    if not np.any(land_mask):
+        return 1.0
+    ref = _area_median(precip, area, land_mask)
+    mean = float(np.average(precip[land_mask], weights=area[land_mask]))
+    if mean <= 0.0 or ref <= 0.0:
+        return 1.0
+    ratio = ref / mean
+    if ratio < MIN_ANCHOR_RATIO:
+        raise ValueError(
+            f"precipitation anchor is degenerate: the land median is {ratio:.2g} of the "
+            f"land mean, under the {MIN_ANCHOR_RATIO} limit, so the median cell holds the "
+            "numerical floor of the moisture advection rather than a place on the rainfall "
+            "distribution. The continents are too wide for a surface-only moisture model to "
+            "carry water across. Lower continental_fraction or target_land_fraction, or "
+            "break the continents up with a higher crust_frequency.")
+    return target_mm / ref
 
 
 def _area_median(values, area, mask):
@@ -1132,7 +1225,7 @@ def _weighted_ascent(xyz, nbr, rev, out_w, z):
 
 
 def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None,
-                    decl_deg=0.0, mean_insol=None) -> Climate:
+                    decl_deg=0.0, mean_insol=None, anchor=True) -> Climate:
     from terrain import plates
 
     p = params or ClimateParams()
@@ -1169,7 +1262,7 @@ def compute_climate(grid, elevation_m, land_mask, params: ClimateParams = None,
                                  land_mask=land_mask)
     wind = monsoon_wind(grid, land_mask, t, p, decl_deg=decl_deg)
     precip, moisture = precipitation(grid, elevation_m, land_mask, t, wind, p, spacing,
-                                     decl_deg=decl_deg)
+                                     decl_deg=decl_deg, anchor=anchor)
 
     return Climate(temperature_c=t, seasonality_c=seasonality,
                    wind=wind.astype(np.float32), precipitation_mm=precip,
@@ -1191,23 +1284,22 @@ def compute_seasons(grid, elevation_m, land_mask, params: ClimateParams = None) 
     p = params or ClimateParams()
     decls = [declination_deg(f * p.days_per_year, p) for f in SEASON_PHASE]
     mean_insol = _mean_annual_insolation(grid.lat, p)
+    # anchor=False: the seasons come back in the solver's own units and keep their relative
+    # amplitude. One factor is fitted below, on the year. See `_annual_anchor_scale`.
     seasons = [compute_climate(grid, elevation_m, land_mask, p, decl_deg=d,
-                               mean_insol=mean_insol) for d in decls]
+                               mean_insol=mean_insol, anchor=False) for d in decls]
 
     t = np.mean([s.temperature_c for s in seasons], axis=0).astype(np.float32)
     precip = np.mean([s.precipitation_mm for s in seasons], axis=0)
     stack_p = np.stack([s.precipitation_mm for s in seasons]).astype(np.float64)
 
-    # Re-anchor on the ANNUAL field. Each solve normalises its own median, and the median
-    # is not linear, so averaging four seasons that each read 600 mm does not give a year
-    # that reads 600 -- measured 803 mm, a third high. Rescaling the year and carrying the
-    # same factor into the season stack fixes the anchor without touching the seasonal
-    # SHAPE, which is what Koppen reads.
-    ref = _area_median(precip, grid.area, land_mask)
-    if ref > 0:
-        scale = p.target_median_precip_mm / ref
-        precip = precip * scale
-        stack_p = stack_p * scale
+    # THE anchor, and now the only one: the four solves above are unnormalised, so this
+    # single factor is what puts the year in millimetres. Carrying it into the season stack
+    # unchanged is what preserves the seasonal SHAPE, which is what Koppen reads -- and now
+    # the seasonal AMPLITUDE too, which self-normalising seasons destroyed.
+    scale = _annual_anchor_scale(precip, grid.area, land_mask, p.target_median_precip_mm)
+    precip = precip * scale
+    stack_p = stack_p * scale
     precip = precip.astype(np.float32)
     stack_p = stack_p.astype(np.float32)
     stack_t = np.stack([s.temperature_c for s in seasons])
