@@ -814,6 +814,8 @@ Measured on the full coupled pipeline, seed 1, three passes, off against on:
 | n=785 off | 13.30% | 2.146 | 64.1% | 0.1907 | 0.258 | 0.557 | 2014 m | 1811 |
 | n=785 on | **0.02%** | **0.681** | 53.1% | 0.2506 | 0.313 | 0.565 | 1866 m | 1916 |
 
+**Read the θ column as a comparison and not as a value.** These were measured on coupled-only terrain against the *stage 1* ocean mask, where the pipeline measures after glacial erosion and the reflood. Ground that erosion cut below the datum therefore stayed "land", and the priority fill ramped over it at exactly the high drainage areas the slope–area regression is most sensitive to. Re-measuring the same n=512 field against a reflooded mask moves θ 0.299 → 0.346 and r² **0.72 → 0.96**, and the error grows with radius because bigger worlds have more relief to cut down (460 cells drowned at n=256, 1,909 at n=512). Both arms above were measured identically, so on-against-off is sound; the absolute numbers are understated and should not be quoted against the SRTM references. `generate_world.py` reports the figure that counts.
+
 Land precipitation median by distance from coast at n=785, mm/yr:
 
 | | 0–1 km | 1–2 | 2–4 | 4–8 | 8–16 | 16+ |

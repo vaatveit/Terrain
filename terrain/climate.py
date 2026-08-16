@@ -181,6 +181,12 @@ class ClimateParams:
     #     n=785  off       13.30%      2.146        64.1%     0.1907   0.258   2014
     #            on         0.02%      0.681        53.1%     0.2506   0.313   1866
     #
+    # The theta column is a comparison, not a value: it was taken on coupled-only terrain
+    # against the Stage 1 ocean mask, where the pipeline measures after glacial erosion and
+    # the reflood. Both arms were measured the same way so on-against-off holds, but the
+    # absolute numbers run low and belong nowhere near the SRTM references. See
+    # terrain-algorithms.md.
+    #
     # AND IT NARROWS THE DISTRIBUTION, which is the part worth noticing. The rainfall
     # spread is the defect recorded in `_advect_step` as the one nothing moved -- six knobs
     # swept, none of them worth the trade. A moisture source that is strongest where the
