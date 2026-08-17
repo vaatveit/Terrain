@@ -74,13 +74,17 @@ metres, which is exactly what the 100 m cell decision traded away. The lapse rat
 physics here denominated in absolute metres, which is why it alone reads the shrink as a
 defect.
 
-So the knob is HERE instead, and it is honestly labelled: `climate_relief_gain` multiplies
-the elevation the lapse rate reads, and nothing else. It is a vertical exaggeration applied to
-one consumer of the elevation field, not a change to 6.5 C/km, which is atmospheric physics
-and does not care how big the planet is. It is defensible on the same grounds the horizontal
-rescale was -- every world-scale length was already redenominated and this one was missed
-because it is emergent rather than a parameter -- but it is not physics. See ClimateParams.
-(These
+A knob for it exists HERE instead -- `climate_relief_gain`, which multiplies the elevation
+the lapse rate reads and nothing else -- and it SHIPS DISABLED at 1.0, because at the value
+that would close the shortfall it breaks the moisture model outright. Cold air holds little
+water, the capacity term floors at -34.9 C, and a gain large enough to matter puts every
+mountain past that and kills the river evaporation the continents depend on to stay wet. It
+ran at n=128 and raised at n=785. See ClimateParams for the arithmetic and for what would
+have to change to make it usable.
+
+So the shortfall is real, understood, and currently unfixed, which is a better place than it
+was: it used to be recorded as x13 measured on the wrong world, and the first attempt at a
+remedy at least established where the wall is. (These
 figures read 61 m and 0.28 C until they were measured at n=785: the originals came off a
 prototype 3x smaller in radius AND were taken over land including cells below the datum,
 which inverted the sign of the scaling law. See terrain-algorithms.md.)
@@ -112,15 +116,40 @@ class ClimateParams:
     # in this model denominated in absolute metres, which is why it alone reads the shrink as
     # a defect; 7.7 is the measured shortfall. See plan1.md item 3.
     #
-    # 1.0 disables it and reproduces every figure recorded before it existed.
+    # SHIPPED AT 1.0, I.E. OFF, AND THE REASON IS THE INTERESTING PART.
     #
-    # IT IS NOT GEOMORPHICALLY FREE, and plan1.md claimed it would be. Temperature feeds
-    # `capacity` in `precipitation`, capacity feeds the river-evaporation source, and
-    # precipitation feeds discharge weight and therefore erosion. Ocean cells are untouched
-    # -- their lapse term is zero at any gain, since elevation is clamped at 0 -- so the
-    # ocean moisture source does not move, but land does. Measured cost at n=128, seed 42:
-    # see the table in plan1.md. Raise this and re-measure; do not assume Stage 2 is inert.
-    climate_relief_gain: float = 7.7
+    # It shipped at 7.7 for exactly one commit. At n=128 that measured well: drowning
+    # unmoved at 17.4%, the lapse term's contribution up from 0.26 to 2.07 C, one marginal
+    # rain-shadow regression. At n=785 it does not run at all -- `_annual_anchor_scale`
+    # raises, with the land median precipitation at 7.4e-6 of the land mean.
+    #
+    # The arithmetic, which should have been done before any of the measuring. `capacity`
+    # in `precipitation` is clip(exp(saturation_gain * (T - 15)), 0.05, 4.0) and so floors
+    # at T < -34.9 C. A gain of 7.7 makes the lapse term 6.5 * 7.7 = 50 C per km of
+    # elevation, so land near 700 m floors and the n=785 peak at 2,289 m is cooled by 115 C.
+    # Capacity multiplies the RIVER EVAPORATION source, which is this model's only land
+    # moisture recycling, so it collapses and the continents cannot carry water inland --
+    # precisely the degenerate state that guard exists to catch.
+    #
+    # WHY n=128 COULD NOT HAVE CAUGHT IT: its peak is 504 m, so the worst cooling was 25 C
+    # and nothing floored. The damage scales with the world's ABSOLUTE relief, and relief
+    # grows steeply with n -- the peak's local exponent runs R^0.57 to R^1.13. A
+    # relief-dependent parameter was validated on the one resolution with no mountains.
+    # Anything that reads elevation in metres has to be tested at n=785 or not at all.
+    #
+    # The mechanism is kept because it is correct in what it does, and because the
+    # bookkeeping argument for it stands: the 100 m rescale redenominated every world-scale
+    # LENGTH and missed elevation, which is an emergent field rather than a parameter and
+    # shrank as roughly R^0.5, leaving land elevation sd at 104 m against Earth's ~800 and
+    # the lapse rate contributing 0.68 C where Earth gives ~5.
+    #
+    # Raising this is a real option, but not as it stands. The failure is entirely in the
+    # path temperature -> capacity -> river evaporation -> precipitation; every other
+    # consumer (Koppen, biomes, the glacial ELA, the export) took the gain without
+    # complaint. Decoupling that one path would make a large gain viable, at the cost of two
+    # temperature fields in the model. Do not simply raise the number and hope: it is not
+    # geomorphically free, whatever plan1.md says, and it must be measured at n=785.
+    climate_relief_gain: float = 1.0
     # Seasons. Tilt drives declination; the lag is real physics but it is NOT what keeps
     # the four samples distinct -- the sample dates are.
     #

@@ -1,8 +1,14 @@
 # The relief shortfall: measured at production scale, and what it actually forbids
 
-> **Status: all three items are DONE.** Kept in the repo for the reasoning, not as a task
-> list. Item 3 shipped at `climate_relief_gain = 7.7`; its measured result, including the
-> one claim below that turned out to be false, is at the end of this file.
+> **Status: items 1 and 2 are DONE. Item 3 was built, shipped, and reverted.** Kept in the
+> repo for the reasoning, not as a task list.
+>
+> **Item 3 does not work.** `climate_relief_gain` exists and ships at **1.0, disabled**: at
+> the 7.7 this plan proposes, the pipeline raises at n=785 because moisture capacity floors
+> at −34.9 °C and a 50 °C/km lapse term puts every mountain past it, collapsing the river
+> evaporation the continents need. It measured clean at n=128 — whose peak is 504 m against
+> production's 2,289 — so **a relief-dependent parameter was validated at the one resolution
+> with no mountains.** Full account at the end of this file and in `terrain-algorithms.md`.
 >
 > **Item 2's production run changed the answer, and the extrapolation this plan is built on
 > did not survive it.** Measured at n=785 rather than fitted from three smaller worlds:
@@ -177,7 +183,7 @@ law in radius at all (local exponent 0.574 → 0.918 → 1.130 per doubling), so
 fitted exponent could have extrapolated it. The land mean, whose exponent *is* flat at 0.47,
 came in at +1.4%. **This is the argument for having run it rather than shipping the fit.**
 
-### 3. ~~DEFERRED~~ — **DONE, shipped at 7.7**
+### 3. ~~DEFERRED~~ — **BUILT, SHIPPED, REVERTED. The proposal below does not work.**
 
 If the climatic relief is wanted, buy it in the climate, not the terrain — **S to build, M to
 re-verify**.
@@ -187,12 +193,13 @@ The cheapest honest route is a single gain on the elevation the **lapse rate** r
 because that genuinely is atmospheric physics and does not care how big the planet is.
 
 ```
-climate_relief_gain: float = 7.7   # elevation is an emergent field and shrank as R^0.5
+climate_relief_gain: float = 7.7   # PROPOSED. Ships at 1.0 -- raises at n=785, see below.
 ```
 
 **7.7, not the 9.0 this originally proposed** — the gain is the measured shortfall, and the
 production run put that at ×7.7 (0.68 °C against Earth's ~5). Anything downstream of this
-that says "×9 relief gain" means ×7.7.
+that says "×9 relief gain" means ×7.7. **The parameter exists at exactly this name and call
+site; only the value differs, because 7.7 does not run at production resolution.**
 
 One parameter, one call site, ~~**zero geomorphic cost** — Stage 2 and Stage 5 are untouched,
 so θ, Hack's h, drainage density and the freshly-calibrated glacial `K` all keep their
@@ -234,9 +241,42 @@ docstring all say it in those words.
 | Köppen ET tundra | 4.4% | 5.5% |
 | raw windward/leeward | above 1.5 | **1.48** |
 
-**The gate held.** Drowning did not move, so the `K` sweep did not need re-running — the
-knock-on this plan insisted on checking turned out not to exist. The mechanism does its job:
-relief contributes 2.07 °C of temperature structure instead of 0.26.
+**The gate held — and the gate was watching the wrong thing.** Drowning did not move, so the
+`K` sweep did not need re-running; the knock-on this plan insisted on checking turned out not
+to exist. The one that did exist was not on the list.
+
+#### n=785, and the reason this is reverted
+
+The production comparison ran gain 1.0 to completion (2,268 s) and **raised on gain 7.7**:
+`_annual_anchor_scale` with land median precipitation at 7.4×10⁻⁶ of the land mean.
+
+Moisture capacity is `clip(exp(0.06·(T − 15)), 0.05, 4.0)`, which floors at **T < −34.9 °C**.
+A gain of 7.7 makes the lapse term **50 °C per km**, so land near 700 m floors and the n=785
+peak at 2,289 m is cooled by 115 °C. Capacity multiplies the river-evaporation source — the
+model's only land moisture recycling — so it collapses and the continents cannot carry water
+inland. The guard caught exactly the state it was written for.
+
+**n=128 could not have detected this.** Its peak is 504 m, so the worst cooling was 25 °C and
+nothing floored. The damage scales with *absolute* relief, and relief grows steeply with world
+size — this plan's own item 2 measured the peak's local exponent running R^0.57 to R^1.13.
+**A relief-dependent parameter was validated at the one resolution with no mountains**, and
+the plan's own scaling table contained the reason that was a mistake.
+
+The one warning that did appear at n=128 was the raw windward/leeward ratio slipping from
+above 1.5 to 1.48, which was read as a tolerable cost because the isolated orographic test
+still passed. It was the visible end of the coupling that later proved fatal.
+
+**What survives.** The bookkeeping argument is untouched. Every consumer except precipitation
+took the gain without complaint — Köppen, biomes, the glacial ELA and the export were fine at
+both resolutions. The failure is confined to one path: temperature → capacity → river
+evaporation → precipitation. Decoupling it would make a large gain viable at the cost of two
+temperature fields, which is a design change and is not taken. **Do not simply raise the
+number**, and measure anything that reads elevation in metres at n=785.
+
+The gain-1.0 production run is worth keeping on its own: per-basin θ **0.2932** over 31
+basins, Hack *h* **0.5571**, drainage density 0.201, drowned 2.5%, glaciated 20.7%, peak
+2,289 m, land 29.9% — reproducing the shipped figures, which confirms the harness was
+measuring the right world.
 
 **Both of the benefits predicted above are wrong.** Zonality was expected at ~0.94 and reached
 0.966 — and that prediction contradicted something already documented in `climate.py`, namely

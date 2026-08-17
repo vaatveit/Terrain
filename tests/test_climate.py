@@ -52,23 +52,29 @@ def test_temperature_falls_from_equator_to_pole(world):
 def test_lapse_rate_is_applied_exactly(world):
     """The lapse term is lapse_rate * climate_relief_gain * km, and nothing else.
 
-    Both halves matter. A gain of 1.0 has to reproduce the bare lapse rate exactly, because
-    every figure recorded before the gain existed was measured at that setting.
+    The gain is asserted at an EXPLICIT 3.0 rather than at whatever the default happens to
+    be. The default is currently 1.0, which would make this test tautological if it read the
+    default -- it would assert the bare lapse rate twice and pass even if the gain were
+    dropped from the expression entirely.
     """
     g, z, _, cl = world
     sea = np.zeros(g.cell_count)
     high = np.full(g.cell_count, 2000.0)
 
-    plain = climate.ClimateParams(climate_relief_gain=1.0)
-    t_sea, _ = climate.temperature(g, sea, cl.coast_distance_km, plain)
-    t_high, _ = climate.temperature(g, high, cl.coast_distance_km, plain)
-    assert np.allclose(t_sea - t_high, 2.0 * plain.lapse_rate_c_per_km, atol=1e-4)
+    def drop(gain):
+        p = climate.ClimateParams(climate_relief_gain=gain)
+        t_sea, _ = climate.temperature(g, sea, cl.coast_distance_km, p)
+        t_high, _ = climate.temperature(g, high, cl.coast_distance_km, p)
+        return t_sea - t_high, p
 
-    p = climate.ClimateParams()
-    t_sea, _ = climate.temperature(g, sea, cl.coast_distance_km, p)
-    t_high, _ = climate.temperature(g, high, cl.coast_distance_km, p)
-    assert np.allclose(t_sea - t_high,
-                       2.0 * p.lapse_rate_c_per_km * p.climate_relief_gain, atol=1e-4)
+    # 1.0 has to reproduce the bare lapse rate exactly: every figure recorded before the
+    # gain existed was measured at that setting, and the shipped default is that setting.
+    d, p = drop(1.0)
+    assert np.allclose(d, 2.0 * p.lapse_rate_c_per_km, atol=1e-4)
+    assert climate.ClimateParams().climate_relief_gain == 1.0
+
+    d, p = drop(3.0)
+    assert np.allclose(d, 2.0 * p.lapse_rate_c_per_km * 3.0, atol=1e-4)
 
 
 def test_relief_gain_leaves_the_sea_alone(world):
@@ -649,23 +655,21 @@ def test_windward_slopes_are_wetter_than_leeward(world):
 
     This is the RAW ratio and it is not purely orographic -- see the next test.
 
-    THE BAR WAS 1.5 AND IS NOW 1.45, and that is a real degradation rather than a flaky
-    threshold. `climate_relief_gain` shipped at 7.7, which makes high ground much colder;
-    colder air holds less water (`capacity` in `precipitation`), so ridges generate less
-    orographic rain and this ratio fell to 1.48. It was measured, not guessed.
+    THE BAR WENT 1.5 -> 1.45 -> 1.5 AGAIN, which is worth a sentence so nobody repeats it.
+    `climate_relief_gain` shipped at 7.7 for one commit; colder high ground holds less water
+    (`capacity` in `precipitation`), ridges made less orographic rain, and this ratio fell to
+    1.48. The bar was lowered to accommodate that. The gain then turned out to break the
+    moisture model entirely at n=785 and was defaulted back to 1.0, so the bar came back too.
 
-    The bar moved rather than the gain being abandoned because THIS statistic is the weak
-    one and the next test is the strong one. The control below shows flat ground scores
-    ~1.9x on its own, so most of this number is the coast-to-interior gradient rather than
-    the mountain; `test_the_shadow_is_actually_orographic` isolates the mountain's own
-    contribution and still passes at 7.7. If that one ever goes, the rain shadow really has
-    been lost and the gain is what to suspect first.
+    The lesson is about the first move rather than the second: this ratio dropping was the
+    earliest visible symptom of a coupling that later proved fatal, and it was read as a
+    tolerable cost because the strong test beside it still passed. It was a real signal.
     """
     g, z, land, cl = world
     ridges = np.flatnonzero(land & (z > np.percentile(z[land], 92)))
     ridges = np.random.default_rng(0).choice(ridges, min(400, ridges.size), replace=False)
     ratio = _shadow_ratio(g, land, cl, ridges)
-    assert ratio > 1.45, f"windward/leeward only {ratio:.2f}x"
+    assert ratio > 1.5, f"windward/leeward only {ratio:.2f}x"
 
 
 def _shadow_ratio(g, land, cl, ridges, steps=4):
