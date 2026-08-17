@@ -223,12 +223,18 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
 <div class="wrap">
 
 <header class="masthead">
-  <p class="eyebrow">Code review · C:\Projects\Terrain · main @ 428e607</p>
+  <p class="eyebrow">Code review · C:\Projects\Terrain · code as of main @ a53698e</p>
   <h1>Terrain Pipeline Review</h1>
-  <p class="standfirst">Ten stages, from a geodesic grid to an exported world, with every tuned
-  constant listed where it acts. Then seven findings — <strong>all now closed</strong>. One was
-  a real correctness bug, one was wrong in the review and corrected by measurement, and one
-  turned out to overturn a claim the project had been relying on.</p>
+  <p class="standfirst">Ten stages — counting the grid as stage 0, which is why the README says
+  nine and this says ten — from a geodesic grid to an exported world, with every tuned constant
+  listed where it acts. Then seven findings, <strong>all now closed</strong>: six needed an
+  action and one did not. One was a real correctness bug, one was wrong in the review and
+  corrected by measurement, and one turned out to overturn a claim the project had been
+  relying on.</p>
+  <p class="standfirst"><strong>The stamp above is the code this describes, not the last time
+  this file was touched.</strong> It read <code>428e607</code> long after the code had moved
+  on. Findings measured against a superseded commit are worse than no findings, so re-stamp
+  this whenever a correction lands in it.</p>
 
   <dl class="facts">
     <div class="fact"><dt>Cells</dt><dd>6,162,252</dd></div>
@@ -236,7 +242,7 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
     <div class="fact"><dt>World radius</dt><dd>64.9 <span>km</span></dd></div>
     <div class="fact"><dt>Land</dt><dd>29.5 <span>%</span></dd></div>
     <div class="fact"><dt>Peak</dt><dd>2,428 <span>m</span></dd></div>
-    <div class="fact"><dt>Runtime</dt><dd>~18 <span>min</span></dd></div>
+    <div class="fact"><dt>Runtime</dt><dd>~38 <span>min</span></dd></div>
   </dl>
 </header>
 
@@ -249,6 +255,15 @@ hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0 0; }
   else is derived from <code>--n</code> and <code>--seed</code>.</p>
 
   <pre><code>.venv\Scripts\python.exe scripts\generate_world.py --n 785 --seed 1 --out data/world01</code></pre>
+
+  <p class="note"><strong>Runtime is ~38 minutes at the shipped defaults</strong>
+  (<code>--steps 600 --passes 3</code>, so three coupled passes of 200 steps each), measured on
+  a cached grid at n=785 seed 42: 2,268 s through the coupled loop, glacial erosion, reflood,
+  the post-reflood climate solve and the mesh metrics. The masthead said <strong>~18 min</strong>
+  until it was timed, and the provenance of that figure is not recorded — the likeliest
+  candidate is the seasonal four-point climate solve, which costs about 4.5× a single equinox
+  solve and runs once per pass, but that is a guess and it is worth timing rather than
+  believing either number on trust.</p>
 
   <p>The organising decision — and the one that explains most of the parameter values below —
   is that <strong>the world is specified by its cell size, not its radius</strong>. Holding
@@ -909,9 +924,28 @@ offset  5,000 m:  spurious self-receivers    537</code></pre>
 
 <section>
   <h2>What was done</h2>
-  <p class="lede">All six applied and verified. 214 tests pass, and the pipeline runs end to
-  end at n=128 with θ 0.488, Hack h 0.475 and Horton Rb 4.80 — all inside their published
-  bands.</p>
+  <p class="lede">All six applied and verified. <strong>221 tests pass</strong>, and the
+  pipeline runs end to end at n=785 seed 42 in ~38 min with per-basin θ <strong>0.2932</strong>
+  over 31 basins, Hack <em>h</em> <strong>0.5571</strong> and drainage density 0.201 — against
+  a nine-tile SRTM per-basin median of 0.290 and <em>h</em> of 0.513. The seed is quoted
+  because θ is seed-sensitive planet-wide (CV 21.7%) even though the per-basin figure is
+  not (3.6%).</p>
+
+  <p>This paragraph read “214 tests pass, and the pipeline runs end to end at n=128 with
+  θ 0.488, Hack h 0.475 and Horton Rb 4.80 — all inside their published bands.” Three things
+  were wrong with that as a closing verdict, and each has its own entry above:</p>
+  <ul>
+    <li><strong>It quoted n=128.</strong> That resolution cannot measure the statistic the
+    project actually reports — no basin there is large enough for the 40-cell threshold, so
+    per-basin θ comes back undefined. The figures above are from a production run.</li>
+    <li><strong>“Inside their published bands” is the wrong test.</strong> Measured across nine
+    SRTM tiles, the published θ band of 0.4–0.6 excludes five of nine pieces of real Earth and
+    the Rb band of 3–5 excludes seven of nine. Landing inside them is not evidence of realism;
+    compare against the measured nine-tile distribution instead.</li>
+    <li><strong>n=785 is not optional for anything that reads elevation in metres.</strong>
+    That lesson came from a parameter that measured clean at n=128 and could not run at all at
+    n=785 — see <code>climate_relief_gain</code> under Stage 3.</li>
+  </ul>
 
   <div class="scroller"><table>
     <thead><tr><th>#</th><th>Action</th><th>Effort</th><th>Status</th></tr></thead>
