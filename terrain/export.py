@@ -70,6 +70,7 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  river_width_m=None, margin_class=None,
                  lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
                  endorheic=None, lakes=None,
+                 temperature_monthly_c=None, precipitation_monthly_mm=None, months=None,
                  params=None, metrics_summary=None) -> ExportResult:
     """Write the native archive and the manifest."""
     out_dir = pathlib.Path(out_dir)
@@ -106,7 +107,14 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                       ("lake_level_m", lake_level_m),
                       ("lake_depth_m", lake_depth_m),
                       ("lake_id", lake_id),
-                      ("endorheic", as_flag(endorheic))):
+                      ("endorheic", as_flag(endorheic)),
+                      # The year, not just its mean: (12, N), month-major. float32 on
+                      # purpose -- these do not compress, and at n=785 they are the bulk
+                      # of the archive. Which month is which is in the manifest.
+                      ("temperature_monthly_c", None if temperature_monthly_c is None
+                       else np.asarray(temperature_monthly_c, dtype=np.float32)),
+                      ("precipitation_monthly_mm", None if precipitation_monthly_mm is None
+                       else np.asarray(precipitation_monthly_mm, dtype=np.float32))):
         if arr is not None:
             fields[name] = arr
     files["native"] = str(save_native(out_dir / "world.npz", grid, fields, seed, params))
@@ -127,6 +135,10 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
         # field_lake_id indexes this table. Without it the ids are bare labels and the
         # per-lake quantities -- spill point, inflow, whether it is terminal -- are lost.
         manifest["lakes"] = list(lakes)
+    if months is not None:
+        # Row k of the monthly fields. Without the dates they are twelve unlabelled numbers,
+        # and nothing in them says which hemisphere's summer is which.
+        manifest["months"] = months
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     files["manifest"] = str(out_dir / "manifest.json")
     return ExportResult(out_dir, files, manifest)

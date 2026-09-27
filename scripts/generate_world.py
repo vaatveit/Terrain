@@ -148,8 +148,19 @@ def main():
     shares = biomes.summary(biome, grid.area, land)
     print("    " + ", ".join(f"{n} {s:.0%}" for n, s in shares[:4]))
 
-    kop = None
+    kop = t_month = p_month = months = None
     if clim.temperature_season is not None:
+        t_month = koppen.monthly_from_seasons(clim.temperature_season)
+        p_month = koppen.monthly_precipitation(clim.precipitation_season,
+                                               clim.precipitation_mm)
+        # Month k sits at k/12 of the year, on the same clock as SEASON_PHASE. The
+        # declination is the lagged one the climate was solved with, so its sign is which
+        # hemisphere is having summer in that row.
+        cp = climate.ClimateParams()
+        frac = np.arange(12) / 12.0
+        months = {"year_fraction": frac.tolist(),
+                  "declination_deg": [float(climate.declination_deg(f * cp.days_per_year, cp))
+                                      for f in frac]}
         kop = koppen.classify(clim.temperature_season, clim.precipitation_season, land,
                               grid.lat, annual_precip_mm=clim.precipitation_mm)
         print("    koppen: " + ", ".join(
@@ -223,6 +234,7 @@ def main():
         lake_mask=hyd.lake_mask,
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
+        temperature_monthly_c=t_month, precipitation_monthly_mm=p_month, months=months,
         params=params, metrics_summary=summary)
     for name, path in res.files.items():
         size = pathlib.Path(path).stat().st_size / 1e6

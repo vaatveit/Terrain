@@ -87,21 +87,29 @@ def monthly_from_seasons(season_stack, months=12):
             + np.cos(2 * t)[:, None] * a2[None, :])
 
 
-def classify(temperature_season, precipitation_season, land_mask, lat_deg,
-             annual_precip_mm=None):
-    """Koppen-Geiger from Stage 3's seasonal stacks. Ocean is left as -1.
+def monthly_precipitation(precipitation_season, annual_precip_mm=None):
+    """Twelve monthly totals in mm, summing to the annual total. Returns (12, N).
 
     `precipitation_season` carries a per-season RATE in the same units the annual field
     uses, so a season's share of the year is its value divided by the sum over seasons.
+    Shared by `classify` and the export, so the months that ship are the months Koppen read.
     """
-    t_m = monthly_from_seasons(temperature_season)
     p_m = np.maximum(monthly_from_seasons(precipitation_season), 0.0)
 
     # Scale the reconstructed months so they sum to the annual total the pipeline reports.
     annual = (np.asarray(annual_precip_mm, dtype=np.float64) if annual_precip_mm is not None
               else np.asarray(precipitation_season, dtype=np.float64).mean(axis=0))
     total = p_m.sum(axis=0)
-    p_m = p_m * np.divide(annual, total, out=np.zeros_like(total), where=total > 0)[None, :]
+    return p_m * np.divide(annual, total, out=np.zeros_like(total), where=total > 0)[None, :]
+
+
+def classify(temperature_season, precipitation_season, land_mask, lat_deg,
+             annual_precip_mm=None):
+    """Koppen-Geiger from Stage 3's seasonal stacks. Ocean is left as -1."""
+    t_m = monthly_from_seasons(temperature_season)
+    p_m = monthly_precipitation(precipitation_season, annual_precip_mm)
+    annual = (np.asarray(annual_precip_mm, dtype=np.float64) if annual_precip_mm is not None
+              else np.asarray(precipitation_season, dtype=np.float64).mean(axis=0))
 
     t_cold, t_hot = t_m.min(axis=0), t_m.max(axis=0)
     t_mean = t_m.mean(axis=0)

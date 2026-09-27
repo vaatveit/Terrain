@@ -94,7 +94,9 @@ same `n` and a 98× larger sphere, and would otherwise be loaded silently.
 ### `world.npz` — the native archive
 
 Field arrays over the mesh, plus the little needed to rebuild it. **The grid is not stored**
-— it regenerates from `n`, which is why the archive is 79 MB rather than 730 MB at n=785.
+— it regenerates from `n`, which is why the archive is 79 MB rather than 730 MB at n=785. The twelve months of
+temperature and rainfall do not share that economy: 24 float32 rows that barely compress,
+about 85% of the archive, which at n=785 puts it near 600 MB (estimated, not yet measured).
 
 ```python
 from terrain.export import load_native
@@ -110,6 +112,8 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_land_mask` | uint8 | — | 1 = land, 0 = ocean. Ocean is the largest **connected** body of water, so an inland basin is land even where its floor is below sea level |
 | `field_temperature_c` | float32 | °C | mean annual surface temperature |
 | `field_precipitation_mm` | float32 | mm/yr | mean annual precipitation |
+| `field_temperature_monthly_c` | float32 | °C | **(12, N)**, one row per month; averages to `field_temperature_c` |
+| `field_precipitation_monthly_mm` | float32 | mm | **(12, N)**, rainfall *in* each month; sums to `field_precipitation_mm`. The same months Köppen classifies on |
 | `field_biome` | uint8 | code | Whittaker; see the biome table below |
 | `field_koppen` | int8 | code | Köppen–Geiger; −1 at sea. Alongside `field_biome`, not instead of it |
 | `field_slope` | float32 | m/m | gradient toward the flow receiver |
@@ -128,7 +132,14 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `_seed` | int64 | — | world seed |
 | `_params_json` | str | — | every parameter dataclass, as JSON |
 
-All field arrays are length `10n²+2` and share cell indexing with `grid`.
+All field arrays are length `10n²+2` and share cell indexing with `grid`; the two monthly
+fields are `(12, 10n²+2)`, month-major, so `field[k]` is month `k` everywhere.
+
+The months are rebuilt from Stage 3's four solves through the year by a two-harmonic fit
+(`koppen.monthly_from_seasons`), which four evenly spaced samples determine exactly — they
+are an interpolation, not twelve independent solves. `manifest.json` → `months` dates each
+row: `year_fraction` is where it sits in the year, and `declination_deg` is the (lagged)
+sun it was solved under, so a positive value is northern summer.
 
 ### Which edge does the water cross?
 
@@ -153,7 +164,8 @@ shore.
 ### `manifest.json`
 
 Grid, seed, land fraction, elevation range, every parameter dataclass, the measured
-metrics, and the lake table that `field_lake_id` indexes into.
+metrics, the lake table that `field_lake_id` indexes into, and the dates of the twelve
+monthly rows.
 
 ### No rasters
 

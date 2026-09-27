@@ -164,6 +164,41 @@ def test_lake_ids_index_the_manifest_table(world):
         assert row["endorheic"] == bool(fields["endorheic"][cells].all())
 
 
+def test_the_seasonal_cycle_reaches_the_archive(world, tmp_path):
+    """The annual mean alone throws away the year. Twelve months of both fields ship, and
+    they are the months Koppen classified on, not a second reconstruction of them.
+
+    Exported separately from the fixture: 24 float32 rows per cell do not compress, and
+    would push the fixture past the bytes-per-cell bound that guards against storing
+    geometry."""
+    from terrain import koppen
+    g, crust, res, b, ex, hyd = world
+    c = res.climate
+    t_m = koppen.monthly_from_seasons(c.temperature_season)
+    p_m = koppen.monthly_precipitation(c.precipitation_season, c.precipitation_mm)
+    months = {"year_fraction": (np.arange(12) / 12).tolist()}
+    ex2 = export.export_world(tmp_path, g, res.elevation, crust.land_mask, seed=1,
+                              temperature_monthly_c=t_m, precipitation_monthly_mm=p_m,
+                              months=months)
+    _, fields, _ = export.load_native(ex2.files["native"])
+    manifest = json.loads(pathlib.Path(ex2.files["manifest"]).read_text())
+
+    for key in ("temperature_monthly_c", "precipitation_monthly_mm"):
+        assert fields[key].shape == (12, g.cell_count)
+        assert fields[key].dtype == np.float32
+    assert np.array_equal(fields["temperature_monthly_c"], t_m.astype(np.float32))
+    assert manifest["months"] == months
+
+    # The months are the year, not a different year: they average back to the annual
+    # temperature and sum back to the annual rainfall.
+    assert np.allclose(fields["temperature_monthly_c"].mean(axis=0), c.temperature_c,
+                       atol=1e-3)
+    assert (fields["precipitation_monthly_mm"] >= 0).all()
+    wet = c.precipitation_mm > 0
+    assert np.allclose(fields["precipitation_monthly_mm"].sum(axis=0)[wet],
+                       c.precipitation_mm[wet], rtol=1e-4)
+
+
 def test_native_archive_rebuilds_the_grid_rather_than_storing_it(world):
     """Geometry is regenerable from n, so it must not be paying to store it: the cached
     grid at n=785 alone is 650 MB."""
