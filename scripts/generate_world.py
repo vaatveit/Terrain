@@ -63,13 +63,18 @@ def main():
                     default=crust_defaults.continental_fraction,
                     help="share of SURFACE that is continental crust; the excess drowns as "
                          "shelf (default %(default)s)")
+    ap.add_argument("--crust-frequency", type=float,
+                    default=crust_defaults.crust_frequency,
+                    help="continent size: higher breaks land into more, smaller continents "
+                         "(default %(default)s)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-glacial", action="store_true")
     args = ap.parse_args()
 
     crust_params = stage1.CrustParams(
         target_land_fraction=args.target_land_fraction,
-        continental_fraction=args.continental_fraction)
+        continental_fraction=args.continental_fraction,
+        crust_frequency=args.crust_frequency)
 
     out_dir = pathlib.Path(args.out or (ROOT / "data" / f"world_n{args.n}_s{args.seed}"))
     t_start = time.perf_counter()

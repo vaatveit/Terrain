@@ -223,9 +223,10 @@ result = coupled.run(
     passes=3, steps_per_pass=200)
 ```
 
-`scripts/generate_world.py` exposes only `--target-land-fraction` and
-`--continental-fraction` and takes defaults for the rest, so **edit the dataclass defaults or
-call the modules directly** to change anything not exposed as a CLI flag.
+`scripts/generate_world.py` exposes only `--target-land-fraction`,
+`--continental-fraction` and `--crust-frequency` and takes defaults for the rest, so **edit
+the dataclass defaults or call the modules directly** to change anything not exposed as a
+CLI flag.
 
 ### Stage 1 — crust · `stage1.CrustParams`
 
@@ -262,6 +263,14 @@ rather than emitting a scaled-noise world — see `climate._annual_anchor_scale`
 n=128: 0.40/0.50 (43% land) runs; 0.45/0.55 (62% land) is refused. The limit is about the
 width of the continents rather than the flags as such, so a higher `crust_frequency` buys
 back room by breaking them up.
+
+It does so unevenly, not past a threshold. At n=128, seed 42, 0.50/0.60, steps 1200, passes
+6: `--crust-frequency` 0.7 and 0.8 are refused, 0.9, 1.0, 1.1, 1.4 and 1.6 run, and 1.2 is
+refused again. What tracked the outcome was the land fraction Stage 1 reported: every run
+above ~63% was refused and every run at or below 62% ran, so the frequency matters through
+how much of the outline lands as inland sea. The worlds that ran end at 42–48% land after
+the reflood. A pass at n=128 does not carry to n=785: at 0.7 the median/mean ratio there was
+1.3e-5 against 0.0095 at n=128.
 
 Passing that check is not a certificate, but the thing it used to warn about is now largely
 fixed. The dead continental interior turned out to be two problems stacked, and neither was
