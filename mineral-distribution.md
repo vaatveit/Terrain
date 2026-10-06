@@ -61,7 +61,7 @@ of them are exported.
 | Deposit | Where and why | Signal in this pipeline |
 |---|---|---|
 | Porphyry Cu-Mo-Au, epithermal Au-Ag, skarn | Subduction arcs. Intrusions emplaced at roughly 1 to 7 km [7], typically 2 to 5 km [10]. Crust thicker than 40 km favours giant Cu deposits; thinner crust favours Au-rich ones [7]. Formation coincides with fast exhumation, hundreds to thousands of m/Myr [8] | Convergent boundary with continental crust on the overriding side and oceanic on the other, in the `arc_offset_km` band; `crust_thickness` |
-| Orogenic gold | Collisional and accretionary belts, on lithosphere-scale faults [2]. Best-preserved gold deposit type [5] | Convergent boundary with continental crust on both sides; transform boundaries as the fault proxy; deeper exhumation |
+| Orogenic gold | Accretionary and collisional belts alike, on lithosphere-scale faults [2][74]. Best-preserved gold deposit type [5]. See [Gold](#gold) | Any convergent boundary with continental crust on at least one side; transform boundaries and boundary bends as the fault proxy; deeper exhumation |
 | Sn-W granites, Li pegmatites | Peraluminous granites in post-collisional settings [11]; Li pegmatites in post-orogenic extension [12]. Both sources are regional (China) | Core of collision belts with thick crust |
 | Volcanic-hosted massive sulphide Cu-Zn | Extensional arcs and back-arcs; formation peaks during supercontinent assembly, not breakup [6] | Oceanic divergent boundaries and ocean-ocean convergence. Mostly offshore, so low value on a land map |
 | Sediment-hosted stratiform Cu (with Co, Ag) | Failed rifts that became intracratonic basins [42]. See [Copper](#copper) | Divergent boundary in continental crust where uplift is negative, arid, with a lake in the graben |
@@ -152,6 +152,37 @@ Three things follow.
   an upwelling model, and one ironstone studied is itself phosphatic [63]. If the upwelling
   score is built for either, the other costs little.
 
+### Gold
+
+Gold is the commodity this model fits best. Its main sources all hang off three things the
+pipeline has or can cheaply get: convergent boundaries, how deeply the ground has been eroded,
+and the drainage network.
+
+| Type | Importance | Controls | What the pipeline can do |
+|---|---|---|---|
+| Orogenic gold | The main source of gold for humanity [75]. About 23,000 to 25,000 t in Precambrian shields and 22,000 t in younger Cordilleran-style belts [73] | Subduction-related accretionary to collisional belts, late in the orogen, as compression turns to transpression [74]. Beside first-order crustal faults hundreds of km long, with ore in second- and third-order structures at jogs and changes of strike [73]; world-class deposits sit at bends of 10 to 25 degrees [74]. Forms across 2 to 20 km depth, mostly in greenschist-facies rock [73], and deeper than 4 km [75]. Major provinces are often marginal to cratons [76] | **Placeable.** Band along convergent boundaries, raised at bends in the boundary trace, weighted to deeper exhumation |
+| Placer gold | 15,500 t from the younger belts, against 22,000 t of lode gold in the same belts [73] | See the erosion table: downstream of lode sources, near the transport threshold [37] | **Placeable** from the flow tree. Not a footnote: placers are about 40% of the gold in those belts |
+| Epithermal, high-sulfidation | The large Andean examples together hold more than 130 Moz [78] | Shallow, and so short-lived: nearly all are middle Miocene or younger, and older ones survive only in the Atacama Desert [78]. Contractional arc segments, alongside porphyries [78][80]. In the Andes the ore sits 200 to 500 m below high, low-relief surfaces, at the heads of valleys cutting into them; incision itself helped deposit the ore [78] | **Placeable**, and partly from terrain: arc band × very low exhumation × arid × valley heads incising a high, low-relief surface |
+| Epithermal, low- and intermediate-sulfidation | Large silver endowment in the extensional subtype [77] | About 0.3 to 1 km depth or a little more; most are Cenozoic [77]. Extensional arcs, back-arc rifts with bimodal volcanism, and post-subduction settings [79][80]; older and lower-lying than the high-sulfidation type [78] | **Placeable** as arc and back-arc segments with weak or oblique convergence, and continental rifts |
+| Porphyry gold | Co-product of copper | Thinner crust, below 40 km, favours gold-rich porphyries [7] | **Placeable** with the porphyry score, weighted to thinner `crust_thickness` |
+| Carlin type | About 5% of world annual production from Nevada alone [81]; the second-largest gold concentration on Earth [82] | Four shared regional controls: the rifted margin of a craton, the carbonate slope of a passive margin, the lower plate of a regional thrust, and a brief window when contraction switched to extension [81]. Sits on deep structures inherited from the rifting [83][84]. Forms shallower than 2 to 3 km [81]. Known in very few provinces [83][84] | **Not placeable.** Needs a craton margin, rock types and an older thrust event, none of which exist |
+| Witwatersrand | The largest gold concentration on Earth [82] | Archean basin preserved over buoyant cratonic lithosphere [5]. Its placer origin is disputed [86] | **Not placeable** |
+
+Three things follow.
+
+- **The exhumation proxy does the most work here.** The types sort by depth: epithermal within
+  about 1 km of the surface [77], Carlin within 2 to 3 km [81], porphyry at 1 to 7 km [7],
+  orogenic at 2 to 20 km [73]. Along one eroding belt that gives a sequence from epithermal
+  where little has been removed to orogenic where a lot has.
+- **Two cheap additions to the boundary work pay for themselves.** Bends in the boundary
+  trace are computable, since the plate boundaries are already warped, and mark where orogenic
+  gold concentrates [74]. Keeping the tangential component of plate motion separates
+  transpression (orogenic gold [74]) from extension (low-sulfidation epithermal [80], iron
+  oxide copper-gold [50]) from head-on contraction (porphyry, high-sulfidation [78]).
+- **An earlier row was too narrow.** Orogenic gold forms on accretionary margins as well as in
+  continent-continent collisions [74], so it belongs on arc margins too. The tectonic table
+  now says so.
+
 ---
 
 ## What the pipeline lacks
@@ -170,7 +201,9 @@ Found by reading the code, not by running it.
 - **Boundary obliquity is discarded.** `plates._classify_boundaries` keeps only the normal
   component of relative motion in `boundary_stress`; the tangential component is used to label
   transforms and then dropped. Extending or oblique arc segments, where iron oxide copper-gold
-  forms instead of porphyry [50], can only be approximated by weak convergence.
+  forms instead of porphyry [50], can only be approximated by weak convergence. The same
+  component separates the transpression that triggers orogenic gold [74] from head-on
+  contraction, so it is worth keeping.
 - **There is no deposition.** `LemParams.G` is 0, so Stage 2 is purely detachment-limited and
   `accumulate_sediment` never runs. Sedimentary basins can only be inferred from low slope,
   lakes and subsidence. This also means the placer threshold in [37] cannot be read from the
@@ -236,7 +269,8 @@ Ranked by value for cost. Effort is S, M or L.
    wet, flat, low-lying term for coal. No pipeline changes.
 3. **Sub-classify boundaries and score the tectonic deposits (S–M).** Split arc, collision,
    rift and transform by crust type on each side, then score by distance band with the
-   existing rescaled lengths. This also switches on the foreland terms for coal and Pb-Zn, the
+   existing rescaled lengths. Keep the tangential component of boundary motion and compute
+   bends in the boundary trace while there; both are small and gold needs them. This also switches on the foreland terms for coal and Pb-Zn, the
    ophiolite parent for Ni laterite, and suture basins for marine evaporites.
 4. **Exhumation proxy (S).** Uplift × run time, which equals erosion at steady state, to
    separate shallow, mid and deep deposits and to score preservation. A true cumulative-erosion
@@ -287,6 +321,9 @@ above do not.
 - Two iron questions are open in the sources. Whether weathering alone can turn iron
   formation into high-grade ore is contested [57] against [54][56]. Whether ironstone iron
   comes from the land or from upwelled deep water is contested [61] against [62].
+- Two gold questions are open as well. The source of the gold in Carlin-type deposits is
+  argued as magmatic [82] and as sedimentary [85]. Whether the Witwatersrand is a placer at
+  all is challenged [86]. Neither changes the placement, since the model can place neither.
 - Several citations are single-region studies used as examples of a general pattern: [11] and
   [12] (China), [20] (Karoo), [26] (Namibia), [46] (Iran), [49] and [50] (Andes). [25] is a conference abstract with one citation
   and is the only source for the claim that subsidence rate did not matter.
@@ -386,3 +423,20 @@ Iron
 70. Zeng et al. (2024). [The role of iron-rich hydrosaline liquids in the formation of Kiruna-type iron oxide–apatite deposits](https://consensus.app/papers/details/5dd7620e6c1d5422b2d16af2946aa365/?utm_source=claude_desktop). *Science Advances.*
 71. Hitzman et al. (1992). [Geological characteristics and tectonic setting of proterozoic iron oxide (CuUAuREE) deposits](https://consensus.app/papers/details/2eed7d5f91ac5f1d85873714e5b9e749/?utm_source=claude_desktop). *Precambrian Research.*
 72. Smith et al. (2025). [Trace element geochemistry of magnetite from iron oxide-apatite (Kiruna type) and magnetite skarn deposits: A discriminant of deposit type and genesis?](https://consensus.app/papers/details/363f1b83d6105ad1b6f7753eb2733f14/?utm_source=claude_desktop). *Mineralogical Magazine.*
+
+Gold
+
+73. Goldfarb et al. (2005). [Distribution, character and genesis of gold deposits in metamorphic terranes](https://consensus.app/papers/details/a5ee53faf42d5fffbea960f18758824c/?utm_source=claude_desktop).
+74. Groves et al. (2018). [Structural geometry of orogenic gold deposits: Implications for exploration of world-class and giant deposits](https://consensus.app/papers/details/dc9a857362dc5052ba1a57a13e156442/?utm_source=claude_desktop). *Geoscience Frontiers.*
+75. Gaboury (2019). [Parameters for the formation of orogenic gold deposits](https://consensus.app/papers/details/f10b5f723c9351679dda9715b101d011/?utm_source=claude_desktop). *Applied Earth Science.*
+76. Wang et al. (2021). [Towards a universal model for orogenic gold systems: A perspective based on Chinese examples with geodynamic, temporal, and deposit-scale structural and geochemical diversity](https://consensus.app/papers/details/945be0b5051355a2af4fc324e22ac51e/?utm_source=claude_desktop). *Earth-Science Reviews.*
+77. Wang et al. (2019). [A review of intermediate sulfidation epithermal deposits and subclassification](https://consensus.app/papers/details/c6fb0f1805f85c53a0582bf702a8c847/?utm_source=claude_desktop). *Ore Geology Reviews.*
+78. Bissig et al. (2015). [Physiographic and tectonic settings of high-sulfidation epithermal gold–silver deposits of the Andes and their controls on mineralizing processes](https://consensus.app/papers/details/9831234d934b5473b1f900bbc49083dd/?utm_source=claude_desktop). *Ore Geology Reviews.*
+79. Prihatmoko et al. (2020). [Low-sulfidation epithermal gold deposits in Java, Indonesia: Characteristics and linkage to the volcano-tectonic setting](https://consensus.app/papers/details/ee66b85c7c1e5c10a4a1eec42904a1d5/?utm_source=claude_desktop). *Ore Geology Reviews.*
+80. Rhys et al. (2020). [Chapter 3: Structural Controls on Ore Localization in Epithermal Gold-Silver Deposits: A Mineral Systems Approach](https://consensus.app/papers/details/59988951565758e3bbaa70b23a535cfc/?utm_source=claude_desktop).
+81. Muntean (2020). [Chapter 36: Carlin-Type Gold Deposits in Nevada: Geologic Characteristics, Critical Processes, and Exploration](https://consensus.app/papers/details/8ea6f3b9dc2e5820ab1af18ac89d256e/?utm_source=claude_desktop). *Geology of the World's Major Gold Deposits and Provinces.*
+82. Muntean et al. (2011). [Magmatic–hydrothermal origin of Nevada's Carlin-type gold deposits](https://consensus.app/papers/details/6f0fa11398c351c08a9bbf47803a88f0/?utm_source=claude_desktop). *Nature Geoscience.*
+83. Hofstra et al. (2000). [Characteristics and models for carlin-type gold deposits](https://consensus.app/papers/details/29d1d1a090685bd88756adf6979ec16b/?utm_source=claude_desktop).
+84. Su et al. (2018). [Carlin-Type Gold Deposits in the Dian-Qian-Gui "Golden Triangle" of Southwest China](https://consensus.app/papers/details/20a1057a5f685f2b82ce6ba9ff5149ff/?utm_source=claude_desktop).
+85. Chai et al. (2026). [The source of the gold in Carlin-type gold deposits](https://consensus.app/papers/details/ea16f9d561795c2fa86dec2f3843b594/?utm_source=claude_desktop). *Communications Earth & Environment.*
+86. Phillips et al. (2024). [The Temporal Distribution of the Host Rocks to Gold, the Archean Witwatersrand Basin, South Africa](https://consensus.app/papers/details/c7a24e55b2bf5c5abdfc5807407409f9/?utm_source=claude_desktop). *Minerals.*
