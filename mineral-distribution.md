@@ -1,6 +1,7 @@
 # Mineral distribution: what the geology says, and what this pipeline can place
 
-**Status: research and proposal, with items 1 and 2 of the build order implemented.** Written
+**Status: research and proposal, with items 1 to 4 of the build order implemented.** Copper
+and gold are scored; iron has only its minor source until item 5. Written
 2026-10-05 from a literature search plus a read of the code as it stood at commit `3231ff2`;
 [What the pipeline lacks](#what-the-pipeline-lacks) describes that commit, and the build
 order marks what has changed since.
@@ -295,22 +296,48 @@ anything was measured; where an item below reports a measurement, the item is ri
      degrees, which is a few cells at this world's scale. Boundaries here are smooth warped
      arcs plus cell-scale jaggedness, and the jaggedness is discretisation, not structure.
      There is nothing at the right scale to measure.
-3. **Exhumation proxy (S).** Uplift × run time, which equals erosion at steady state, to
-   separate shallow, mid and deep deposits and to score preservation. A true cumulative-erosion
-   accumulator in `stage2.evolve` is M and can wait until the proxy proves inadequate.
-4. **Score and export the derived deposit types (M).** A new `terrain/minerals.py`, run as a
-   post-process: porphyry, both epithermal types, orogenic gold, arc-type iron oxide
-   copper-gold, Kiruna-type iron, and the rift part of sediment-hosted copper. Distance bands
-   use the existing rescaled lengths. Combines the scores into the three resource fields and
-   exports them.
+3. **Exhumation proxy (S). Done.** Uplift over its ceiling, as a 0 to 1 rank, split into
+   shallow, mid and deep windows that sum to one. Run time is the same everywhere in a world,
+   so uplift × time ranks cells exactly as uplift does. Two things to know about it. It is
+   built from the same inputs as distance and boundary stress, so it reshapes a belt across
+   strike and adds no independent information; real cumulative erosion would, by telling
+   valleys from ridges. And most land is outside it: measured at n=128 over three seeds, 86
+   to 87% of land sits below a rank of 0.1.
+4. **Score and export the derived deposit types (M). Done.** `terrain/minerals.py`, run as a
+   post-process, scores seven types and combines them into `field_resource_copper`,
+   `field_resource_iron` and `field_resource_gold`. An arc band is split by obliquity and by
+   depth of erosion into six types, with no parameters beyond the existing plate lengths:
+
+   | Erosion | Head-on arc | Oblique arc |
+   |---|---|---|
+   | Shallow | High-sulfidation epithermal | Low-sulfidation epithermal |
+   | Mid | Porphyry | Iron oxide copper-gold |
+   | Deep | (stripped) | Kiruna-type iron |
+
+   Orogenic gold takes the belt axis where erosion is deep and the plates both close and
+   slip. Sediment-hosted copper takes continental rifts. Measured at n=128 over three seeds:
+   each type scores above 0.1 on 1 to 5% of land; copper peaks at 0.26 to 0.28, gold at 0.45
+   and iron at 0.10 to 0.12. Re-scoring a saved world from its archive alone reproduces the shipped
+   fields exactly.
+
+   Left out on purpose, to be picked up later:
+
+   - Sediment-hosted copper has no climate terms yet, so every continental rift carries it.
+     The arid, low-latitude and lake controls [42] belong with item 6.
+   - Crust thickness is not used. It would shift porphyries between copper-rich and
+     gold-rich [7], and it is exported if that is wanted.
+   - Fields do not reach 1. Copper tops out near 0.28 because the mid window peaks at one
+     half and porphyry carries 0.60 of copper. That costs resolution in a byte, not
+     correctness, since the sim samples in proportion.
 5. **Invented cratons and iron-formation provinces (S).** A smooth noise field thresholded
    over continental interiors, away from active boundaries, with a second threshold inside it
    for iron formation. Supplies banded-iron-formation iron, the craton-edge term for
    sediment-hosted copper [44], and the giant type of iron oxide copper-gold [48]. It is
    invented, not derived, and the manifest should say so.
-6. **Weathering overlay (S).** From the shipped climate fields: supergene upgrading of
-   porphyry copper in semi-arid, slowly eroding ground [8][9], and the upgrade of iron
-   formation to ore under a seasonally humid climate [58].
+6. **Climate overlay (S).** From the shipped climate fields: supergene upgrading of
+   porphyry copper in semi-arid, slowly eroding ground [8][9], the upgrade of iron
+   formation to ore under a seasonally humid climate [58], and the arid, low-latitude and
+   lake terms for sediment-hosted copper [42] that item 4 left out.
 7. **Flow-tree routing (M).** Push source scores down `flow_receiver` for distal placer gold
    and for channel iron; estimate the transport threshold from stream power against upstream
    erosion supply. Proximal placers fall inside the lode's own cell at this scale.

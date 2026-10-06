@@ -135,6 +135,9 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_crust_thickness` | float32 | km | Stage 1 crust, after tectonic thickening and thinning |
 | `field_uplift` | float32 | m/Myr | the uplift erosion ran on; negative in rift grabens, 0 over the Stage 1 ocean |
 | `field_is_continental` | uint8 | — | 1 = continental crust, 0 = oceanic. Not the land mask: continental crust is 40% of the surface and the excess drowns as shelf |
+| `field_resource_copper` | uint8 | 0–255 | prospectivity for copper, 255 = 1.0. See [Mineral prospectivity](#mineral-prospectivity) |
+| `field_resource_iron` | uint8 | 0–255 | the same for iron. Peaks near 0.1 for now: only one of its three sources is built |
+| `field_resource_gold` | uint8 | 0–255 | the same for gold |
 | `field_lake_mask` | uint8 | — | 1 where a lake stands |
 | `field_lake_level_m` | float32 | m | water surface elevation; NaN off-lake |
 | `field_lake_depth_m` | float32 | m | surface minus bed; 0 off-lake |
@@ -173,6 +176,33 @@ Voronoi edge lies on the perpendicular bisector of the centre-to-centre arc, so 
 midpoint is on the edge by construction. Note the tree is built on the depression-**filled**
 surface, so flow directions stay defined across lake interiors rather than stopping at the
 shore.
+
+### Mineral prospectivity
+
+The three `field_resource_*` fields say where a sim should look for copper, iron and gold.
+Each is a **score, not a deposit**: it marks a belt or a district, and a single deposit is far
+smaller than one cell. To place resources, sample cells in proportion to the field times cell
+area, with the sim's own seed:
+
+```python
+w = fields["resource_gold"] / 255.0 * grid.area
+cells = rng.choice(grid.cell_count, size=20, replace=False, p=w / w.sum())
+```
+
+Scores are absolute, not rescaled per world, so a field can be zero everywhere: a world with
+no continental rift has no rift copper. Check `w.sum() > 0` before sampling.
+
+They are a post-process on the tectonic fields above, so a saved world can be re-scored
+without regenerating it. `terrain/minerals.py` explains how each belt is scored, and
+[mineral-distribution.md](mineral-distribution.md) holds the research and what is still to
+build. `manifest.json` → `params.minerals` records the weights that were used.
+
+```python
+from terrain import minerals
+keys = ("land_mask", "is_continental", "boundary_stress", "boundary_speed", "boundary_slip",
+        "boundary_dist_km", "nearest_boundary", "uplift")
+ore = minerals.resources(radius_km=grid.radius_km, **{k: fields[k] for k in keys})
+```
 
 ### `manifest.json`
 

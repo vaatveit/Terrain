@@ -18,8 +18,8 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from terrain import (  # noqa: E402
-    biomes, climate, coupled, export, flow, glacial, hydrology, koppen, metrics, plates,
-    stage1, stage2,
+    biomes, climate, coupled, export, flow, glacial, hydrology, koppen, metrics, minerals,
+    plates, stage1, stage2,
 )
 from terrain.grid import Grid, build_goldberg, radius_for_cell_km  # noqa: E402
 
@@ -171,6 +171,20 @@ def main():
         print("    koppen: " + ", ".join(
             f"{n.split()[0]} {s:.0%}" for n, s in koppen.summary(kop, grid.area, land)[:5]))
 
+    # A post-process on what Stage 1 knew and the coastline that ships. Nothing reads it
+    # back: it is here so the archive says where a sim should look for each resource.
+    print("[7b] mineral prospectivity")
+    ore = minerals.resources(
+        land_mask=land, is_continental=crust.is_continental,
+        boundary_stress=crust.boundary_stress, boundary_speed=crust.plates.boundary_speed,
+        boundary_slip=crust.plates.boundary_slip,
+        boundary_dist_km=crust.plates.boundary_dist_km,
+        nearest_boundary=crust.plates.nearest_boundary, uplift=crust.uplift,
+        radius_km=grid.radius_km)
+    print("    " + ", ".join(
+        f"{name} on {grid.area[land & (score > 0.1)].sum() / grid.area[land].sum():.1%} "
+        f"of land (peak {score.max():.2f})" for name, score in ore.items()))
+
     print("[9] metrics on the mesh")
     fr = flow.route(z, grid.neighbours, grid.arc_dist, grid.area, is_ocean)
     # 40 cells of drainage, not 6. The threshold has to sit ABOVE the channel head or the
@@ -229,6 +243,7 @@ def main():
         "lem": stage2.LemParams().__dict__, "climate": climate.ClimateParams().__dict__,
         "glacial": None if args.no_glacial else glacial.GlacialParams().__dict__,
         "hydrology": hydrology.HydrologyParams().__dict__,
+        "minerals": minerals.MineralParams().__dict__,
         "steps": args.steps, "passes": args.passes,
     }
     res = export.export_world(
@@ -252,6 +267,8 @@ def main():
         nearest_boundary=crust.plates.nearest_boundary,
         crust_thickness=crust.crust_thickness, uplift=crust.uplift,
         is_continental=crust.is_continental,
+        resource_copper=ore["copper"], resource_iron=ore["iron"],
+        resource_gold=ore["gold"],
         params=params, metrics_summary=summary)
     for name, path in res.files.items():
         size = pathlib.Path(path).stat().st_size / 1e6

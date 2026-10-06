@@ -75,6 +75,7 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  boundary_speed=None, boundary_slip=None,
                  boundary_dist_km=None, nearest_boundary=None,
                  crust_thickness=None, uplift=None, is_continental=None,
+                 resource_copper=None, resource_iron=None, resource_gold=None,
                  params=None, metrics_summary=None) -> ExportResult:
     """Write the native archive and the manifest."""
     out_dir = pathlib.Path(out_dir)
@@ -85,6 +86,11 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
         # Masks travel as uint8, matching land_mask, so the archive carries one boolean
         # convention rather than two.
         return None if arr is None else np.asarray(arr).astype(np.uint8)
+
+    def as_byte(score):
+        # A 0..1 score at 1/255 resolution. A prospectivity score has no more precision
+        # than that to lose, and three float32 fields would be 74 MB at n=785 against 18.
+        return None if score is None else np.round(np.asarray(score) * 255.0).astype(np.uint8)
 
     fields = {"elevation": elevation, "land_mask": land_mask.astype(np.uint8)}
     for name, arr in (("temperature_c", temperature_c),
@@ -122,6 +128,11 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                       ("crust_thickness", crust_thickness),
                       ("uplift", uplift),
                       ("is_continental", as_flag(is_continental)),
+                      # Where a sim should look for each resource: `minerals.resources`,
+                      # 0..255 for 0..1. A score, not a deposit; see terrain/minerals.py.
+                      ("resource_copper", as_byte(resource_copper)),
+                      ("resource_iron", as_byte(resource_iron)),
+                      ("resource_gold", as_byte(resource_gold)),
                       ("lake_mask", as_flag(lake_mask)),
                       ("lake_level_m", lake_level_m),
                       ("lake_depth_m", lake_depth_m),
