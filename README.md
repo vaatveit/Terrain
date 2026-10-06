@@ -96,10 +96,9 @@ same `n` and a 98× larger sphere, and would otherwise be loaded silently.
 Field arrays over the mesh, plus the little needed to rebuild it. **The grid is not stored**
 — it regenerates from `n`, which is why the archive is 79 MB rather than 730 MB at n=785. The twelve months of
 temperature and rainfall do not share that economy: 24 float32 rows that barely compress,
-about 85% of the archive, which at n=785 puts it near 600 MB (estimated, not yet measured).
-The tectonic fields are cheap by comparison: 6.2 bytes per cell compressed for the first nine,
-measured at n=64 before `boundary_slip` was added, which is about 38 MB at n=785 and likely
-less, since boundary cells thin out as `n` grows.
+about 85% of the archive. **Measured at n=785, seed 42: 646 MB.** That figure read "near
+600 MB (estimated, not yet measured)" until a production world was run with everything in it.
+The ten tectonic fields are 31.0 MB of that and the three resource fields 0.37 MB.
 
 ```python
 from terrain.export import load_native
@@ -208,8 +207,10 @@ build. `manifest.json` → `params.minerals` records the weights that were used.
 from terrain import minerals
 cratons = minerals.invent_cratons(grid, meta["seed"], fields["is_continental"])
 keys = ("land_mask", "is_continental", "boundary_stress", "boundary_speed", "boundary_slip",
-        "boundary_dist_km", "nearest_boundary", "uplift", "precipitation_mm", "temperature_c")
+        "boundary_dist_km", "nearest_boundary", "uplift", "precipitation_mm", "temperature_c",
+        "flow_receiver", "slope", "river_width_m")
 ore = minerals.resources(radius_km=grid.radius_km,
+                         cell_km=float(grid.arc_dist[grid.neighbours >= 0].mean()),
                          craton_margin_km=cratons["craton_margin_km"],
                          iron_formation=cratons["iron_formation"],
                          **{k: fields[k] for k in keys})

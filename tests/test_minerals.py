@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from terrain import export, minerals, plates, stage1  # noqa: E402
+from terrain import export, flow, minerals, plates, stage1  # noqa: E402
 from terrain.grid import R_WORLD_KM, build_goldberg  # noqa: E402
 
 # The authored lengths, which is what a production-radius world sees.
@@ -21,12 +21,15 @@ FAR_KM = 6.0  # several arc widths and decay lengths out
 
 def belt(dist_km, *, speed=40.0, slip=0.0, closing=True, uplift=50.0,
          continental=True, land=True, reached=True, craton_margin_km=1e3,
-         iron_formation=False, precipitation_mm=200.0, temperature_c=25.0):
+         iron_formation=False, precipitation_mm=200.0, temperature_c=25.0,
+         downstream=False, slope=0.1, river=False):
     """Cells at the given distances from ONE boundary cell, which is cell 0.
 
     Every cell takes its plate motion from that boundary cell, exactly as a world's cells
     take theirs through `nearest_boundary`. Defaults: closing head-on at 40 mm/yr, which is
-    full rate, with uplift at half its ceiling, far from any craton, in a hot dry climate.
+    full rate, with uplift at half its ceiling, far from any craton, in a hot dry climate,
+    with no water flowing between the cells. `downstream=True` strings them into one river
+    course, each cell draining to the next and the last to nowhere.
     """
     d = np.asarray(dist_km, dtype=np.float32)
     n = d.size
@@ -42,7 +45,72 @@ def belt(dist_km, *, speed=40.0, slip=0.0, closing=True, uplift=50.0,
         craton_margin_km=np.broadcast_to(np.float32(craton_margin_km), (n,)).copy(),
         iron_formation=np.full(n, iron_formation),
         precipitation_mm=np.full(n, precipitation_mm, dtype=np.float32),
-        temperature_c=np.full(n, temperature_c, dtype=np.float32), radius_km=R_WORLD_KM)
+        temperature_c=np.full(n, temperature_c, dtype=np.float32),
+        flow_receiver=(np.minimum(np.arange(n) + 1, n - 1) if downstream
+                       else np.arange(n)).astype(np.int32),
+        slope=np.broadcast_to(np.float32(slope), (n,)).copy(),
+        river_width_m=np.broadcast_to(np.float32(river), (n,)) * np.float32(5.0),
+        cell_km=0.1, radius_km=R_WORLD_KM)
+
+
+# A lode at the head of a river: orogenic gold on a transpressive, deeply eroded belt axis,
+# and nothing in the country downstream of it, which lies well clear of the belt.
+LODE = dict(uplift=95.0, speed=60.0, slip=60.0 * np.sqrt(0.5), downstream=True, river=True)
+# What one cell passes to the next: the routed load fades over 100 km on Earth.
+KEEP = np.exp(-0.1 / (100.0 / (6371.0 / R_WORLD_KM)))
+COUNTRY_KM = 20.0
+
+
+def test_a_placer_forms_where_the_river_below_a_lode_slackens():
+    s = minerals.deposit_scores(**belt([0.0, COUNTRY_KM], slope=[0.2, 0.0], **LODE))
+    lode = s["orogenic_gold"][0]
+    assert lode > 0.9 and s["orogenic_gold"][1] < 1e-3
+    # The flat cell holds its own barren ground and what the lode cell passed down.
+    assert s["placer_gold"][1] == pytest.approx(KEEP * lode / (1.0 + KEEP), rel=1e-3)
+    # Not at the head: nothing upstream is steeper than the lode's own reach.
+    assert s["placer_gold"][0] == 0.0
+
+
+def test_no_placer_on_a_reach_as_steep_as_the_river_above_it():
+    """A river that keeps its gradient keeps its load. The gold has to be dropped."""
+    s = minerals.deposit_scores(**belt([0.0, COUNTRY_KM, COUNTRY_KM], slope=0.2, **LODE))
+    assert np.all(s["placer_gold"] == pytest.approx(0.0, abs=1e-6))
+
+
+def test_placer_gold_fades_with_distance_below_the_lode():
+    """Fine gold travels about 100 km on Earth, which is ten cells here."""
+    near = [0.0] + [COUNTRY_KM] * 2
+    far = [0.0] + [COUNTRY_KM] * 31
+    flat_at_the_end = lambda n: [0.2] * (n - 1) + [0.0]
+    just_below = minerals.deposit_scores(**belt(near, slope=flat_at_the_end(3), **LODE))
+    far_below = minerals.deposit_scores(**belt(far, slope=flat_at_the_end(32), **LODE))
+    assert just_below["placer_gold"][-1] > 0.1
+    assert far_below["placer_gold"][-1] < 0.1 * just_below["placer_gold"][-1]
+
+
+def test_no_placer_without_a_river_or_without_a_lode_upstream():
+    off_river = minerals.deposit_scores(
+        **belt([0.0, COUNTRY_KM], slope=[0.2, 0.0], **{**LODE, "river": False}))
+    barren = minerals.deposit_scores(
+        **belt([COUNTRY_KM, COUNTRY_KM], slope=[0.2, 0.0], **LODE))
+    assert np.all(off_river["placer_gold"] == 0.0)
+    assert np.all(barren["placer_gold"] < 1e-3)
+
+
+def test_channel_iron_is_washed_off_enriched_iron_formation_into_a_slack_valley():
+    """The detritus comes off a lateritised surface, so it needs the enrichment upstream:
+    iron formation that the climate never weathered sheds none."""
+    province = dict(uplift=2.0, reached=False, downstream=True, river=True,
+                    slope=[0.2, 0.0], iron_formation=[True, False])
+    tropical = minerals.deposit_scores(
+        **belt([0.0, 0.0], precipitation_mm=1500.0, temperature_c=25.0, **province))
+    arid = minerals.deposit_scores(
+        **belt([0.0, 0.0], precipitation_mm=200.0, temperature_c=25.0, **province))
+    source = tropical["enriched_iron"][0]
+    assert source > 0.9
+    assert tropical["channel_iron"][1] == pytest.approx(KEEP * source / (1.0 + KEEP), rel=1e-3)
+    assert np.all(arid["channel_iron"] == 0.0)
+
 
 
 def test_porphyry_sits_in_the_arc_band_not_on_the_boundary():
@@ -219,11 +287,16 @@ def world():
 
 def scored(world, fn):
     """`fn` over a Stage 1 world, under one mild climate everywhere: 300 mm and 20 C.
-    Stage 1 has no climate of its own, and these tests are about the plates and cratons."""
+    Stage 1 has no climate of its own, and these tests are about the plates and cratons.
+    Rivers are routed on its uneroded surface and drawn wherever 20 cells drain."""
     g, c = world
     pl = c.plates
     inv = minerals.invent_cratons(g, 1, c.is_continental)
+    fr = flow.route(c.elevation, g.neighbours, g.arc_dist, g.area, ~c.land_mask)
+    river = c.land_mask & (fr.acc > 20 * np.median(g.area))
     return fn(
+        flow_receiver=fr.rec, slope=fr.slope, river_width_m=river.astype(np.float32),
+        cell_km=float(np.mean(g.arc_dist[g.neighbours >= 0])),
         land_mask=c.land_mask, is_continental=c.is_continental,
         boundary_stress=pl.boundary_stress, boundary_speed=pl.boundary_speed,
         boundary_slip=pl.boundary_slip, boundary_dist_km=pl.boundary_dist_km,

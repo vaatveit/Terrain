@@ -171,27 +171,6 @@ def main():
         print("    koppen: " + ", ".join(
             f"{n.split()[0]} {s:.0%}" for n, s in koppen.summary(kop, grid.area, land)[:5]))
 
-    # A post-process on what Stage 1 knew and the coastline that ships. Nothing reads it
-    # back: it is here so the archive says where a sim should look for each resource.
-    print("[7b] mineral prospectivity")
-    # The cratons are invented, from noise on sub-seeds of the world seed: the model has
-    # no crustal age and no mantle to derive them from. See terrain/minerals.py.
-    cratons = minerals.invent_cratons(grid, args.seed, crust.is_continental)
-    ore = minerals.resources(
-        craton_margin_km=cratons["craton_margin_km"],
-        iron_formation=cratons["iron_formation"],
-        land_mask=land, is_continental=crust.is_continental,
-        boundary_stress=crust.boundary_stress, boundary_speed=crust.plates.boundary_speed,
-        boundary_slip=crust.plates.boundary_slip,
-        boundary_dist_km=crust.plates.boundary_dist_km,
-        nearest_boundary=crust.plates.nearest_boundary, uplift=crust.uplift,
-        # The climate that ships, solved on the reflooded coastline.
-        precipitation_mm=clim.precipitation_mm, temperature_c=clim.temperature_c,
-        radius_km=grid.radius_km)
-    print("    " + ", ".join(
-        f"{name} on {grid.area[land & (score > 0.1)].sum() / grid.area[land].sum():.1%} "
-        f"of land (peak {score.max():.2f})" for name, score in ore.items()))
-
     print("[9] metrics on the mesh")
     fr = flow.route(z, grid.neighbours, grid.arc_dist, grid.area, is_ocean)
     # 40 cells of drainage, not 6. The threshold has to sit ABOVE the channel head or the
@@ -241,6 +220,30 @@ def main():
     print(f"    per-basin theta {m['basin_theta_median']:.3f} "
           f"(SRTM 9-tile {SRTM['basin_theta_median']}), "
           f"Hack h {m['hack_h']:.3f} (SRTM 9-tile {SRTM['hack_h']})")
+
+    # A post-process on what Stage 1 knew and the coastline that ships. Nothing reads it
+    # back: it is here so the archive says where a sim should look for each resource.
+    print("[7b] mineral prospectivity")
+    # The cratons are invented, from noise on sub-seeds of the world seed: the model has
+    # no crustal age and no mantle to derive them from. See terrain/minerals.py.
+    cratons = minerals.invent_cratons(grid, args.seed, crust.is_continental)
+    ore = minerals.resources(
+        craton_margin_km=cratons["craton_margin_km"],
+        iron_formation=cratons["iron_formation"],
+        land_mask=land, is_continental=crust.is_continental,
+        boundary_stress=crust.boundary_stress, boundary_speed=crust.plates.boundary_speed,
+        boundary_slip=crust.plates.boundary_slip,
+        boundary_dist_km=crust.plates.boundary_dist_km,
+        nearest_boundary=crust.plates.nearest_boundary, uplift=crust.uplift,
+        # The climate that ships, solved on the reflooded coastline.
+        precipitation_mm=clim.precipitation_mm, temperature_c=clim.temperature_c,
+        # The rivers that ship, for what they carry off a lode and drop downstream.
+        flow_receiver=fr.rec, slope=fr.slope, river_width_m=hyd.river_width_m,
+        cell_km=float(np.mean(grid.arc_dist[grid.neighbours >= 0])),
+        radius_km=grid.radius_km)
+    print("    " + ", ".join(
+        f"{name} on {grid.area[land & (score > 0.1)].sum() / grid.area[land].sum():.1%} "
+        f"of land (peak {score.max():.2f})" for name, score in ore.items()))
 
     print(f"[9] export -> {out_dir}")
     params = {

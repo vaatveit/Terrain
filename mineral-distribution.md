@@ -1,7 +1,8 @@
 # Mineral distribution: what the geology says, and what this pipeline can place
 
-**Status: research and proposal, with items 1 to 6 of the build order implemented.** Copper,
-iron and gold are all scored; only flow-tree routing remains. Written
+**Status: the build order is implemented, all seven items.** `world.npz` carries
+`field_resource_copper`, `field_resource_iron` and `field_resource_gold`. What follows is the
+research they rest on and a record of what was measured, dropped and left to tune. Written
 2026-10-05 from a literature search plus a read of the code as it stood at commit `3231ff2`;
 [What the pipeline lacks](#what-the-pipeline-lacks) describes that commit, and the build
 order marks what has changed since.
@@ -380,9 +381,53 @@ anything was measured; where an item below reports a measurement, the item is ri
      outweighs rift copper. This is the first thing to look at when the weights are tuned.
    - **"Seasonally" humid is not tested.** The enrichment term reads annual rain and mean
      temperature. The monthly fields are exported if a dry season should be required.
-7. **Flow-tree routing (M).** Push source scores down `flow_receiver` for distal placer gold
-   and for channel iron; estimate the transport threshold from stream power against upstream
-   erosion supply. Proximal placers fall inside the lode's own cell at this scale.
+7. **Flow-tree routing (M). Done.** `placer_gold` is orogenic gold, and `channel_iron` is
+   enriched iron formation, carried down `flow_receiver` and dropped where the river
+   slackens. Each cell passes its load to its receiver and loses a little per cell, fading
+   over 100 km on Earth [39], so what arrives is a mean of the sources upstream that favours
+   the near ones. The drop is how much gentler a reach is than the river above it, and only
+   river cells score. Proximal placers fall inside the lode's own cell at this scale.
+
+   This had to be judged on a production world, and was: n=785, seed 42, generated end to
+   end in 2,408 s. The reach is a world-scale length and a river is a cell-scale thing, so
+   on an n=128 fixture the reach is 1.7 cells against 10.2 at production, and the routed
+   types all but vanish there (placer gold 0.0 to 0.2% of the gold). At n=785:
+
+   | | cells above 0.05 | above 0.2 | peak | share of its resource by area |
+   |---|---|---|---|---|
+   | `placer_gold` | 10,315 | 1,335 | 0.67 | 1.2% of gold, at a weight of 0.10 |
+   | `channel_iron` | 6,756 | 2,901 | 0.90 | 0.6% of iron, at a weight of 0.15 |
+
+   Three things to know:
+
+   - **The transport threshold of [37] is not what was built.** That needs sediment supply
+     against capacity, and the model is detachment-limited with no sediment at all. A reach
+     gentler than the river above it is the stand-in.
+   - **Placers are real features and a small share.** Thousands of river reaches score, and
+     together they carry 1.2% of the gold, where placers are about 40% of the gold in real
+     belts of this kind [73]. A river reach is little ground, and the sim samples by area.
+     Raising the weight is the lever, and it is a judgement about how rich a placer reach is
+     beside the lode, not something the sources settle.
+   - **Rivers here are not always lines.** In places the shipped river field forms patches
+     a kilometre or two across, and placers inherit them.
+
+**What the production world showed about the whole thing.** Scoring a world takes 6.7 s at
+n=785 (4.0 s for the cratons, 2.7 s for the scores) and re-scoring from the archive reproduces
+the shipped fields exactly. By area copper is 70% porphyry, 9% supergene, 8% sediment-hosted
+and 13% iron oxide copper-gold; gold is 54% orogenic, 16% each epithermal type, 11% porphyry,
+2% iron oxide copper-gold and 1% placer; iron is 79% iron formation, 17% enriched, 3% Kiruna
+and 1% channel. The fields peak at 0.27, 0.48 and 0.81.
+
+**The belts are blocky, and that is inherited.** Close up at production size, a gold belt is
+broken into hard-edged diagonal blocks a kilometre or two across. The uplift field has the
+same blocks and so do the mountains. `plates._classify_boundaries` labels a boundary cell by
+the direction to one neighbour, so a boundary that is almost pure strike-slip (obliquity 0.85
+to 1.0 in the window examined) comes out as alternating "convergent" and "transform"
+segments, and `derive_uplift` gives the first full-strength orogens and the second none.
+World-wide, on land within 1 km of a boundary, uplift has a median of 45 m/Myr in the
+first kind of segment and 2 in the second. The mineral scores read uplift as depth of erosion, so they
+follow the terrain there, which is the right thing for them to do. The cause is upstream of
+this work and fixing it would move every orogen in the world.
 
 **Dropped by the commodity decision:** coal, bauxite, nickel laterite, evaporites and brines,
 lead-zinc, phosphate, ironstone, tin-tungsten, lithium and beach sands. The research on them

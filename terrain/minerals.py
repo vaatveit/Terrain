@@ -63,7 +63,17 @@ erode it away; `enriched_iron` is iron formation weathered to ore where it is wa
 and a rift keeps only a share of its `sediment_copper` unless it is dry enough for
 evaporites.
 
-Not here yet: placers and channel iron, which need routing down the flow tree.
+RIVERS CARRY TWO TYPES DOWNSTREAM. `placer_gold` is orogenic gold, and `channel_iron` is
+enriched iron formation, picked up by the river below it and dropped where the river
+slackens. Each cell passes its load to its receiver and loses a little per cell, so what
+arrives is a mean of the sources upstream that favours the near ones; the drop is how much
+gentler this reach is than the river above it. Only river cells score. The placer in a
+lode's own cell is not a separate thing at this scale -- coarse gold travels ~5 km on
+Earth, which is half a cell here -- so this is the distal, fine-gold class only.
+
+The reach is a WORLD-SCALE length and a river is a CELL-SCALE thing, so the routed types
+cannot be judged on a small fixture: at n=128 the reach is 1.7 cells and at n=785 it is
+10. Like anything that reads elevation in metres, they are measured at production size.
 """
 
 from __future__ import annotations
@@ -71,8 +81,9 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
+from numba import njit
 
-from terrain import noise, plates
+from terrain import flow, noise, plates
 from terrain.stage1 import area_quantile
 
 
@@ -94,9 +105,15 @@ class MineralParams:
         "porphyry": 0.40, "supergene_copper": 0.20, "sediment_copper": 0.23, "iocg": 0.17})
     gold: dict = dataclasses.field(default_factory=lambda: {
         "orogenic_gold": 0.45, "epithermal_hs": 0.15, "epithermal_ls": 0.15,
-        "porphyry": 0.10, "iocg": 0.05})
+        "porphyry": 0.10, "placer_gold": 0.10, "iocg": 0.05})
     iron: dict = dataclasses.field(default_factory=lambda: {
-        "bif_iron": 0.40, "enriched_iron": 0.30, "kiruna_iron": 0.15})
+        "bif_iron": 0.40, "enriched_iron": 0.30, "kiruna_iron": 0.15,
+        "channel_iron": 0.15})
+
+    # How far a river carries what it picks up, as a fraction of the sphere's radius:
+    # 100 km on Earth, the distance fine gold is known to travel. The load a cell passes
+    # to its receiver falls by 1/e over this length.
+    placer_reach_r: float = 100.0 / 6371.0
 
     # Climate. Each pair is a ramp from 0 at the first value to 1 at the second, in mm/yr
     # of rain or degrees C of mean annual temperature. Only the 120 mm is sourced; the rest
@@ -170,6 +187,22 @@ def invent_cratons(grid, seed, is_continental, params: MineralParams = None):
     return {"craton": craton, "iron_formation": iron, "craton_margin_km": dist}
 
 
+@njit(cache=True)
+def _carry_downstream(order, rec, keep, load):
+    """Pass each cell's load, scaled by `keep`, to its receiver, donors before receivers.
+
+    `load` is (N, K) and is accumulated in place, so K quantities ride one traversal.
+    `order` is `flow.build_order`'s, receivers first, so it is walked backwards.
+    """
+    for k in range(order.shape[0] - 1, -1, -1):
+        c = order[k]
+        r = rec[c]
+        if r != c:
+            for q in range(load.shape[1]):
+                load[r, q] += keep * load[c, q]
+    return load
+
+
 def _ramp(x, lo_hi):
     """0 at `lo`, 1 at `hi`, linear between; `lo` may be the larger, for a falling ramp."""
     lo, hi = lo_hi
@@ -178,8 +211,8 @@ def _ramp(x, lo_hi):
 
 def deposit_scores(*, land_mask, is_continental, boundary_stress, boundary_speed,
                    boundary_slip, boundary_dist_km, nearest_boundary, uplift,
-                   precipitation_mm, temperature_c, craton_margin_km, iron_formation,
-                   radius_km,
+                   precipitation_mm, temperature_c, flow_receiver, slope, river_width_m,
+                   craton_margin_km, iron_formation, cell_km, radius_km,
                    params: MineralParams = None, plate_params: plates.PlateParams = None):
     """Score per deposit type, each (N,) float32 in 0..1. See the module docstring.
 
@@ -250,6 +283,27 @@ def deposit_scores(*, land_mask, is_continental, boundary_stress, boundary_speed
         "bif_iron": bif_iron,
         "enriched_iron": bif_iron * warm_wet,
     }
+
+    # Routed types: what a river carries off a source and drops where it slackens. Each
+    # cell passes its load to its receiver, losing a little per cell, so what reaches a
+    # cell is a mean of the sources upstream that favours the near ones. Carrying a 1 the
+    # same way gives the weight to divide by, and carrying the slope gives the gradient of
+    # the river above, against which this reach is slack or not.
+    n = near.shape[0]
+    rec = np.ascontiguousarray(flow_receiver, dtype=np.int32)
+    order = np.empty(n, dtype=np.int32)
+    flow.build_order(rec, np.empty(n, dtype=np.int32), np.empty(n + 1, dtype=np.int64),
+                     np.empty(n, dtype=np.int32), order)
+    here = np.asarray(slope, dtype=np.float64)
+    load = np.stack([np.ones(n), here, scores["orogenic_gold"], scores["enriched_iron"]],
+                    axis=1)
+    _carry_downstream(order, rec, np.exp(-cell_km / (p.placer_reach_r * radius_km)), load)
+    weight, above = load[:, 0], load[:, 1] / load[:, 0]
+    slack = np.where(above > 0.0, np.clip(1.0 - here / np.where(above > 0.0, above, 1.0),
+                                          0.0, 1.0), 0.0)
+    trap = slack * (np.asarray(river_width_m) > 0.0)
+    scores["placer_gold"] = trap * load[:, 2] / weight
+    scores["channel_iron"] = trap * load[:, 3] / weight
     return {name: s.astype(np.float32) for name, s in scores.items()}
 
 
