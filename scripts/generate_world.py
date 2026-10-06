@@ -174,7 +174,12 @@ def main():
     # A post-process on what Stage 1 knew and the coastline that ships. Nothing reads it
     # back: it is here so the archive says where a sim should look for each resource.
     print("[7b] mineral prospectivity")
+    # The cratons are invented, from noise on sub-seeds of the world seed: the model has
+    # no crustal age and no mantle to derive them from. See terrain/minerals.py.
+    cratons = minerals.invent_cratons(grid, args.seed, crust.is_continental)
     ore = minerals.resources(
+        craton_margin_km=cratons["craton_margin_km"],
+        iron_formation=cratons["iron_formation"],
         land_mask=land, is_continental=crust.is_continental,
         boundary_stress=crust.boundary_stress, boundary_speed=crust.plates.boundary_speed,
         boundary_slip=crust.plates.boundary_slip,
@@ -244,6 +249,10 @@ def main():
         "glacial": None if args.no_glacial else glacial.GlacialParams().__dict__,
         "hydrology": hydrology.HydrologyParams().__dict__,
         "minerals": minerals.MineralParams().__dict__,
+        "minerals_invented": (
+            "field_resource_iron, and the craton-margin term of field_resource_copper, rest "
+            "on cratons drawn from noise by minerals.invent_cratons. The model has none of "
+            "its own."),
         "steps": args.steps, "passes": args.passes,
     }
     res = export.export_world(

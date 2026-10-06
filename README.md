@@ -136,7 +136,7 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_uplift` | float32 | m/Myr | the uplift erosion ran on; negative in rift grabens, 0 over the Stage 1 ocean |
 | `field_is_continental` | uint8 | — | 1 = continental crust, 0 = oceanic. Not the land mask: continental crust is 40% of the surface and the excess drowns as shelf |
 | `field_resource_copper` | uint8 | 0–255 | prospectivity for copper, 255 = 1.0. See [Mineral prospectivity](#mineral-prospectivity) |
-| `field_resource_iron` | uint8 | 0–255 | the same for iron. Peaks near 0.1 for now: only one of its three sources is built |
+| `field_resource_iron` | uint8 | 0–255 | the same for iron. Rests on **invented** cratons; see below |
 | `field_resource_gold` | uint8 | 0–255 | the same for gold |
 | `field_lake_mask` | uint8 | — | 1 where a lake stands |
 | `field_lake_level_m` | float32 | m | water surface elevation; NaN off-lake |
@@ -192,6 +192,13 @@ cells = rng.choice(grid.cell_count, size=20, replace=False, p=w / w.sum())
 Scores are absolute, not rescaled per world, so a field can be zero everywhere: a world with
 no continental rift has no rift copper. Check `w.sum() > 0` before sampling.
 
+**The iron field is mostly invented, and so is part of the copper.** Most of the world's iron
+sits in old cratons, and this model has no crustal age and no mantle to derive a craton
+from. `minerals.invent_cratons` draws them from noise instead: 30% of continental crust, with
+iron formation in 15% of that. Because those are fixed shares, iron covers about the same
+4% of land on every world, where copper and gold vary with the plates. A rift also scores
+most of its copper only near a craton margin. Gold owes nothing to them.
+
 They are a post-process on the tectonic fields above, so a saved world can be re-scored
 without regenerating it. `terrain/minerals.py` explains how each belt is scored, and
 [mineral-distribution.md](mineral-distribution.md) holds the research and what is still to
@@ -199,9 +206,13 @@ build. `manifest.json` → `params.minerals` records the weights that were used.
 
 ```python
 from terrain import minerals
+cratons = minerals.invent_cratons(grid, meta["seed"], fields["is_continental"])
 keys = ("land_mask", "is_continental", "boundary_stress", "boundary_speed", "boundary_slip",
         "boundary_dist_km", "nearest_boundary", "uplift")
-ore = minerals.resources(radius_km=grid.radius_km, **{k: fields[k] for k in keys})
+ore = minerals.resources(radius_km=grid.radius_km,
+                         craton_margin_km=cratons["craton_margin_km"],
+                         iron_formation=cratons["iron_formation"],
+                         **{k: fields[k] for k in keys})
 ```
 
 ### `manifest.json`

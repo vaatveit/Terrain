@@ -1,7 +1,7 @@
 # Mineral distribution: what the geology says, and what this pipeline can place
 
-**Status: research and proposal, with items 1 to 4 of the build order implemented.** Copper
-and gold are scored; iron has only its minor source until item 5. Written
+**Status: research and proposal, with items 1 to 5 of the build order implemented.** Copper,
+iron and gold are all scored; the climate overlay and flow-tree routing remain. Written
 2026-10-05 from a literature search plus a read of the code as it stood at commit `3231ff2`;
 [What the pipeline lacks](#what-the-pipeline-lacks) describes that commit, and the build
 order marks what has changed since.
@@ -329,11 +329,28 @@ anything was measured; where an item below reports a measurement, the item is ri
    - Fields do not reach 1. Copper tops out near 0.28 because the mid window peaks at one
      half and porphyry carries 0.60 of copper. That costs resolution in a byte, not
      correctness, since the sim samples in proportion.
-5. **Invented cratons and iron-formation provinces (S).** A smooth noise field thresholded
-   over continental interiors, away from active boundaries, with a second threshold inside it
-   for iron formation. Supplies banded-iron-formation iron, the craton-edge term for
-   sediment-hosted copper [44], and the giant type of iron oxide copper-gold [48]. It is
-   invented, not derived, and the manifest should say so.
+5. **Invented cratons and iron-formation provinces (S). Done.** `minerals.invent_cratons`
+   draws both from noise on sub-seeds of the world seed: cratons take 30% of continental
+   crust by area, and iron formation takes 15% of craton. Iron formation scores wherever the
+   ground is still quiet, and a rift now earns most of its copper only within 200 km (Earth)
+   of a craton margin [44], keeping 15% elsewhere. The manifest says which fields rest on
+   this. Measured at n=128 over three seeds, the iron field peaks at 0.70 and iron formation
+   carries 96 to 98% of it.
+
+   Two things measurement showed:
+
+   - **The giant iron oxide copper-gold type was built and removed.** Those bodies sit within
+     about 100 km of craton margins [48], so a ring was scored along every margin. At a weight
+     of only 0.07 that ring carried 67 to 72% of all the copper and about 30% of the gold. The
+     sim samples in proportion to score times area, so **a weight is not a share**: the belt
+     types multiply three factors that each cut the ground down, and a ring multiplies none.
+     Without it copper splits 64 to 84% porphyry, 7 to 25% sediment-hosted and 8 to 11% iron
+     oxide copper-gold, against weights of 60, 23 and 17. A test now requires the type the
+     weights put first to come first by area as well.
+   - **Iron is nearly the same on every world.** The two shares are fixed fractions of area,
+     so iron formation covers 4.3 to 4.5% of land regardless of seed, while copper and gold
+     move with the plates. Making it vary would mean drawing the shares themselves from the
+     seed.
 6. **Climate overlay (S).** From the shipped climate fields: supergene upgrading of
    porphyry copper in semi-arid, slowly eroding ground [8][9], the upgrade of iron
    formation to ore under a seasonally humid climate [58], and the arid, low-latitude and
