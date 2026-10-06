@@ -203,6 +203,12 @@ without regenerating it. `terrain/minerals.py` explains how each belt is scored,
 [mineral-distribution.md](mineral-distribution.md) holds the research and what is still to
 build. `manifest.json` → `params.minerals` records the weights that were used.
 
+Those weights are tuned, not chosen: `scripts/tune_mineral_weights.py` measures how much
+ground each deposit type covers on production worlds and sets each weight so the type is
+sampled as often as intended. A weight is therefore not a share. Placer gold is weighted 0.60
+to be picked 15% of the time, because it covers so little ground. Re-run the script on
+production worlds only; the result does not transfer from small ones.
+
 ```python
 from terrain import minerals
 cratons = minerals.invent_cratons(grid, meta["seed"], fields["is_continental"])

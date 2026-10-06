@@ -92,23 +92,41 @@ class MineralParams:
     # Closing or opening rate at which a boundary counts as fully active, mm/yr. Below it
     # the score falls linearly to zero: no motion, no arc and no rift.
     full_rate_mm_per_yr: float = 40.0
-    # Share of each resource carried by each deposit type. Copper's are sourced: porphyry
-    # is ~60% of world production and sediment-hosted ~23%, with the iron oxide family
-    # taking the rest here. Gold's and iron's are a judgement -- the sources give an
-    # ordering (orogenic gold first, iron formation first) and no shares -- and are meant to
-    # be tuned against generated worlds. Each sums to at most 1 so a field cannot exceed 1;
-    # gold and iron leave room for the types not built yet.
-    # The two climatic upgrades split a share with the type they upgrade: porphyry's 0.60
-    # is 0.40 as it stands and 0.20 more where weathering has enriched it, and iron
-    # formation's 0.70 is 0.40 and 0.30. Those two splits are a judgement as well.
+    # Weight of each deposit type in each resource field. THESE ARE NOT SHARES. A sim
+    # samples in proportion to score times area, so a type that covers provinces outweighs
+    # one confined to river reaches whatever the two are weighted. They are the output of
+    # scripts/tune_mineral_weights.py, which sets each weight to the type's intended share
+    # over the ground it covers; the shares, and which of them are sourced, are in that
+    # script. Each dict sums to at most 1, so a field cannot exceed 1.
+    #
+    # Tuned on three production worlds, n=785, seeds 42 / 1 / 149. Share each type then
+    # carries, against its target:
+    #
+    #     copper   porphyry      40%   37 / 51 / 34      gold   orogenic      40%   39 / 38 / 44
+    #              supergene     20%   18 / 20 / 22             placer        15%   15 / 17 / 13
+    #              sediment      23%   29 / 12 / 27             epithermal_hs 15%   15 / 16 / 14
+    #              iocg          17%   17 / 18 / 17             epithermal_ls 15%   17 / 14 / 14
+    #     iron     enriched      50%   46 / 49 / 54             porphyry      10%   10 / 10 / 10
+    #              formation     35%   40 / 34 / 32             iocg           5%    5 /  4 /  6
+    #              kiruna        10%   10 / 10 / 10
+    #              channel        5%    4 /  6 /  4
+    #
+    # Before tuning the weights WERE the shares, and the worlds did not agree: porphyry
+    # carried 67-78% of the copper, placers 1.0-1.4% of the gold and iron formation 72-79%
+    # of the iron. What moved most is what covers least ground. Placer gold needs 0.60 to
+    # be picked 15% of the time, so a placer reach now outscores the lode beside it.
+    #
+    # Do not re-tune on a small world. The routed and the climatic types do not transfer:
+    # see the script.
     copper: dict = dataclasses.field(default_factory=lambda: {
-        "porphyry": 0.40, "supergene_copper": 0.20, "sediment_copper": 0.23, "iocg": 0.17})
+        "porphyry": 0.1272, "supergene_copper": 0.2435, "sediment_copper": 0.5011,
+        "iocg": 0.1279})
     gold: dict = dataclasses.field(default_factory=lambda: {
-        "orogenic_gold": 0.45, "epithermal_hs": 0.15, "epithermal_ls": 0.15,
-        "porphyry": 0.10, "placer_gold": 0.10, "iocg": 0.05})
+        "orogenic_gold": 0.1545, "placer_gold": 0.6039, "epithermal_hs": 0.0689,
+        "epithermal_ls": 0.0750, "porphyry": 0.0446, "iocg": 0.0528})
     iron: dict = dataclasses.field(default_factory=lambda: {
-        "bif_iron": 0.40, "enriched_iron": 0.30, "kiruna_iron": 0.15,
-        "channel_iron": 0.15})
+        "enriched_iron": 0.3224, "bif_iron": 0.0819, "kiruna_iron": 0.1871,
+        "channel_iron": 0.4084})
 
     # How far a river carries what it picks up, as a fraction of the sphere's radius:
     # 100 km on Earth, the distance fine gold is known to travel. The load a cell passes
@@ -305,6 +323,23 @@ def deposit_scores(*, land_mask, is_continental, boundary_stress, boundary_speed
     scores["placer_gold"] = trap * load[:, 2] / weight
     scores["channel_iron"] = trap * load[:, 3] / weight
     return {name: s.astype(np.float32) for name, s in scores.items()}
+
+
+def weights_for_shares(mass, shares):
+    """Weights under which each deposit type carries its share of a resource, by area.
+
+    `mass` is each type's score summed over area, and `shares` is what each should carry.
+    A sim samples in proportion to score times area, so a type's weight has to be its share
+    divided by the ground it covers: a type confined to a few river reaches needs a far
+    larger weight than one spread over whole provinces to be picked as often. The result
+    sums to 1, so the field built from it cannot exceed 1.
+
+    Used by scripts/tune_mineral_weights.py, which is where `MineralParams`' weights come
+    from.
+    """
+    raw = {t: shares[t] / mass[t] for t in shares}
+    total = sum(raw.values())
+    return {t: w / total for t, w in raw.items()}
 
 
 def resources(*, params: MineralParams = None, **fields):

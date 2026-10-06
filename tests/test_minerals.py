@@ -352,23 +352,28 @@ def test_a_generated_world_has_all_three_resources(world):
         assert field.shape == (g.cell_count,)
         assert np.isfinite(field).all() and field.min() >= 0.0 and field.max() <= 1.0
         assert np.all(field[~c.land_mask] == 0.0), f"{name} scored at sea"
-    assert r["copper"].max() > 0.2 and r["gold"].max() > 0.1
-    # Iron formation is what gives iron a real field; Kiruna alone tops out at its share.
-    assert r["iron"].max() > 0.3
+        # Present, not merely non-zero. How high a field peaks is set by the tuned weights
+        # and by which types this fixture's flat 300 mm climate lets score, so the bar is
+        # deliberately low: it is here to catch a resource going missing.
+        assert field.max() > 0.05, f"no {name} anywhere"
 
 
-def test_the_leading_type_of_each_resource_also_leads_by_area(world):
+def test_weights_for_shares_make_each_type_carry_its_share_by_area():
     """A sim samples in proportion to score times AREA, so a weight is not a share. A type
-    that scores modestly over a great deal of ground outweighs one that scores highly on a
-    belt. A copper-gold ring drawn along every craton margin did exactly that: at a weight
-    of 0.07 it carried 67 to 72% of the copper, and it was removed for it. The type the
-    weights put first has to come first when the ground is counted too."""
-    g, c = world
-    s = scored(world, minerals.deposit_scores)
-    p = minerals.MineralParams()
-    for weights in (p.copper, p.gold, p.iron):
-        mass = {t: w * float((g.area * s[t]).sum()) for t, w in weights.items()}
-        assert max(mass, key=mass.get) == max(weights, key=weights.get), mass
+    that scores over a great deal of ground outweighs one that scores on a few river
+    reaches, whatever the two are weighted. A copper-gold ring drawn along every craton
+    margin carried 67 to 72% of the copper at a weight of 0.07, and was removed for it.
+    The weights that give each type its share are its share over the ground it covers."""
+    mass = {"broad": 100.0, "belt": 10.0, "reach": 0.5}  # score summed over area
+    shares = {"broad": 0.5, "belt": 0.3, "reach": 0.2}
+    w = minerals.weights_for_shares(mass, shares)
+    assert sum(w.values()) == pytest.approx(1.0)
+    carried = {t: w[t] * mass[t] for t in w}
+    total = sum(carried.values())
+    for t in shares:
+        assert carried[t] / total == pytest.approx(shares[t])
+    # The thinnest type needs by far the largest weight to carry its share.
+    assert w["reach"] > w["belt"] > w["broad"]
 
 
 def test_resource_fields_ship_as_bytes(tmp_path):

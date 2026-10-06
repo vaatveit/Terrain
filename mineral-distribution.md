@@ -418,6 +418,48 @@ and 13% iron oxide copper-gold; gold is 54% orogenic, 16% each epithermal type, 
 2% iron oxide copper-gold and 1% placer; iron is 79% iron formation, 17% enriched, 3% Kiruna
 and 1% channel. The fields peak at 0.27, 0.48 and 0.81.
 
+**The weights were then tuned, and they are no longer shares.** Everything above this
+paragraph quotes shares under the first weights, which were simply the intended shares. A sim
+samples in proportion to score times area, so those weights did not deliver them: across
+three production worlds (n=785, seeds 42, 1 and 149) porphyry carried 67 to 78% of the copper
+against an intended 40, placers 1.0 to 1.4% of the gold against 10, and iron formation 72 to
+79% of the iron against 40. `scripts/tune_mineral_weights.py` now sets each weight to the
+type's share divided by the ground it covers, averaged over those worlds. The target shares
+live in that script: copper's are sourced, the rest are a judgement.
+
+| Resource | Type | Target | Carried, three worlds | Weight before | Weight now |
+|---|---|---|---|---|---|
+| Copper | porphyry | 40% | 37 / 51 / 34 | 0.40 | 0.127 |
+| | supergene | 20% | 18 / 20 / 22 | 0.20 | 0.244 |
+| | sediment-hosted | 23% | 29 / 12 / 27 | 0.23 | 0.501 |
+| | iron oxide copper-gold | 17% | 17 / 18 / 17 | 0.17 | 0.128 |
+| Gold | orogenic | 40% | 39 / 38 / 44 | 0.45 | 0.155 |
+| | placer | 15% | 15 / 17 / 13 | 0.10 | 0.604 |
+| | epithermal, high-sulfidation | 15% | 15 / 16 / 14 | 0.15 | 0.069 |
+| | epithermal, low-sulfidation | 15% | 17 / 14 / 14 | 0.15 | 0.075 |
+| | porphyry | 10% | 10 / 10 / 10 | 0.10 | 0.045 |
+| | iron oxide copper-gold | 5% | 5 / 4 / 6 | 0.05 | 0.053 |
+| Iron | enriched | 50% | 46 / 49 / 54 | 0.30 | 0.322 |
+| | iron formation | 35% | 40 / 34 / 32 | 0.40 | 0.082 |
+| | Kiruna | 10% | 10 / 10 / 10 | 0.15 | 0.187 |
+| | channel | 5% | 4 / 6 / 4 | 0.15 | 0.408 |
+
+Four things to know about the tuned weights:
+
+- **What covers least ground moved most.** Placer gold needs 0.60 to be picked 15% of the
+  time, so a placer reach now outscores the lode beside it. That is the sampling coming out
+  right, and it makes a map look unlike the earlier ones.
+- **Worlds still differ, as intended.** Sediment-hosted copper carries 29, 12 and 27% on the
+  three worlds because seed 1 has little rift ground. The weights fit the mean and not each
+  world.
+- **Nothing was lost in the byte.** The share of land with a non-zero byte moved from 13.8 to
+  13.2% for copper, 16.7 to 15.5% for gold and 8.6 to 9.0% for iron on seed 42. Peaks are
+  now 0.37 to 0.50 for copper, 0.54 to 0.64 for gold and 0.75 to 0.77 for iron.
+- **Only production worlds can be used.** On the same seed an n=128 world gives the plate
+  and craton types within about 30% of n=785, but supergene copper 2× too high and placer
+  gold 20× too low. Three more production worlds would tighten the mean; a small one would
+  spoil it.
+
 **The belts are blocky, and that is inherited.** Close up at production size, a gold belt is
 broken into hard-edged diagonal blocks a kilometre or two across. The uplift field has the
 same blocks and so do the mountains. `plates._classify_boundaries` labels a boundary cell by
@@ -540,8 +582,9 @@ on later if the maps show belts that are too alike.
 
 ### Open
 
-Nothing. The weights that combine deposit types into each resource field are the main thing
-left to tune, and that is done against generated worlds, not decided in advance.
+Nothing. The weights that combine deposit types into each resource field have been tuned
+against three production worlds; see the build order. What stays a judgement is the target
+shares they were tuned to, outside copper's.
 
 ---
 
