@@ -68,7 +68,8 @@ of them are exported.
 | Iron oxide copper-gold | Extending continental arcs, and craton margins [47][48]. See [Copper](#copper) | Arc band on weakly convergent segments; craton-margin type has no signal |
 | Carbonatite rare earths | Craton and thick-lithosphere margins [53][12] | **None** without cratons |
 | Diamonds, Ni-Cu-PGE, many others | Within about 100 km of craton and thick-lithosphere margins [2][53]. Deep faults there are the conduits for the mafic intrusions that host Ni-Cu-PGE [53] | **None.** The model has no cratons, crustal age or plumes |
-| Banded iron formation | Restricted to the early Precambrian; does not recur in younger basins [4] | **None.** Cannot be derived from process |
+| Banded iron formation | Restricted to the early Precambrian; does not recur in younger basins [4]. See [Iron](#iron) | **None** for the host rock. The upgrade to ore is a weathering overlay |
+| Iron oxide-apatite (Kiruna type) | Back-arc and extending continental-arc settings [66][67]. See [Iron](#iron) | Arc band on weakly convergent segments, at a deeper level than iron oxide copper-gold |
 
 ### Sedimentary and basin
 
@@ -122,6 +123,34 @@ Two things follow for this project.
   sediment-hosted deposit with no evaporites, fed by copper-rich basaltic detritus instead
   [45]. In Iran the same deposit type occurs in post-collisional extension and back-arc basins
   as well as rifts [46].
+
+### Iron
+
+Iron is the hardest major commodity for this model, because its dominant source needs invented
+geology twice over. It is also the one where the *upgrading* step, which is what makes ore out
+of iron-rich rock, is something the pipeline models well.
+
+| Type | Importance | Controls | What the pipeline can do |
+|---|---|---|---|
+| High-grade ore hosted in banded iron formation | The bulk of world production and reserves [55]; the largest and highest-grade districts [54] | The host rock is Archean to Proterozoic [54] and does not recur [4]. It becomes ore by losing its silica: along km-scale normal and strike-slip faults, to deep-sourced fluids, and then to weathering that reaches 200 m down [54]. In most districts a geologically recent deep-weathering overprint is what turned moderate bodies into giants [56]. The Hamersley endowment is put down to three things coinciding: an iron-rich source, sustained gentle uplift and a seasonally humid climate [58] | **Host not placeable.** It needs an invented craton and, inside it, an invented iron-formation province. **Upgrade placeable** as an overlay: weathering score × fault proximity × low, steady uplift |
+| Channel iron deposits | Large in the Hamersley, rare elsewhere [58] | Iron-rich detritus from a lateritised iron-formation surface, washed into incised valleys and cemented there [58][35] | Downstream of an iron-formation province along the flow tree, in low-gradient valleys. Same machinery as placers |
+| Iron oxide-apatite (Kiruna type) | A key iron source for modern industry [69]; Kiruna supplies a significant share of European iron ore [66] | Emplaced in intracontinental back-arc basins under extension, later inverted [66][67]. Tied to andesitic and dioritic subvolcanic intrusions [70]. Sits on deep crustal faults, and grades upward and outward into iron oxide copper-gold [68]. The largest examples are Proterozoic, 1.1 to 1.8 Ga [71] | **Placeable.** The same score as Andean-type iron oxide copper-gold, at a deeper exhumation level. This is the one major iron source the tectonics can derive |
+| Ooidal ironstone | Historically important ores [65]; common through the Phanerozoic, with no clear modern analogue [61] | Low-energy shallow sea: tidal flats, embayments, broad coastal plains [61]. Needs a break in clastic supply, a continuing iron supply and physical reworking; a transgression flooding lateritic soils provides all three [59]. Found in foreland basins, cratonic margins and intracratonic basins during high sea level [60]. The iron source is disputed: humid tropical weathering on land [61][59], or upwelling of iron-rich deep water onto favourably oriented margins [62][63][64] | **Partly placeable.** Quiet shallow coast with low `discharge`, next to laterite-scored lowland or an upwelling coast. Shares phosphate's problem: no sea-level history, so no emerged shelf |
+| Iron skarn | Regionally important | Hot saline fluids from intrusions reacting with limestone and volcanic rocks [72] | Arc band only. The model has no rock types, so the limestone control has no signal |
+| Magmatic Fe-Ti-V; bog iron | General knowledge, not sourced. Ilmenite in anorthosite is tied to craton margins [53] | Layered intrusions and plumes; cool, wet lowland mires | None for the first. Bog iron could reuse the coal wetness term |
+
+Three things follow.
+
+- **The invented craton needs a second invented layer.** A craton edge places copper and
+  Pb-Zn; iron ore needs an iron-formation province *inside* the craton. That is one more noise
+  threshold, and it should be labelled as invented.
+- **The upgrade step is honest work.** Deep weathering under a seasonally humid climate, on
+  faulted ground with slow steady uplift, is the same overlay as bauxite and laterite. The
+  supergene model is contested for the deepest deposits [57], so treat it as an upgrade to a
+  host that already exists, not as a source.
+- **Ironstone and phosphate are the same build.** Both sit on quiet shallow margins, both have
+  an upwelling model, and one ironstone studied is itself phosphatic [63]. If the upwelling
+  score is built for either, the other costs little.
 
 ---
 
@@ -214,12 +243,14 @@ Ranked by value for cost. Effort is S, M or L.
    accumulator in `stage2.evolve` is M and can wait until the proxy proves inadequate.
 5. **Fake cratons with one noise field (S).** A smooth field thresholded over continental
    interiors, away from active boundaries; the score is distance to its edge. It is invented,
-   not derived, and should be labelled so. It is the only way to place sediment-hosted copper and Pb-Zn properly [44], and the only way to
-   place giant iron oxide copper-gold, Ni-Cu-PGE, iron formation and diamonds at all.
+   not derived, and should be labelled so. It is the only way to place sediment-hosted copper
+   and Pb-Zn properly [44], and the only way to place giant iron oxide copper-gold, Ni-Cu-PGE,
+   iron formation and diamonds at all. Iron ore needs a second invented field inside it,
+   marking iron-formation provinces.
 6. **Placers (M).** Push primary-source scores down the flow tree; estimate the transport
    threshold from stream power against upstream erosion supply.
-7. **Phosphate (S–M, optional).** An upwelling score from wind and coast geometry. The result
-   is mostly offshore.
+7. **Phosphate and ooidal ironstone (S–M, optional).** An upwelling score from wind and coast
+   geometry serves both. The result is mostly offshore.
 
 **Leave alone:** turning on deposition (`G > 0`) and simulating plate history. Both are L,
 both would disturb calibrated stages, and neither buys much mineral realism that the proxies
@@ -237,7 +268,9 @@ above do not.
   are absolute, proximal placers trail 50 cells downstream and a 1 km porphyry spans 10 cells.
   The two choices give visibly different maps.
 - **Commodities.** Which ones matter decides whether items 5 and 7 are needed. Iron is the
-  case to settle first, since its main source cannot be derived. Copper is next: porphyry
+  case to settle first. The choice is between inventing iron-formation provinces, which is
+  where most real iron comes from, and accepting only the iron the model can derive:
+  Kiruna-type bodies in extending arcs, and ironstone on quiet coasts. Copper is next: porphyry
   copper needs no cratons, but roughly a quarter of the world's copper does.
 
 ---
@@ -247,10 +280,13 @@ above do not.
 - Sources are the abstracts returned by a Consensus literature search. Full texts were not
   read. Thresholds quoted here should be re-checked against the paper before they are
   hard-coded.
-- One row is marked "general knowledge, not sourced" and has no citation: heavy-mineral beach
-  sands.
+- Two rows are marked "general knowledge, not sourced" and have no citation: heavy-mineral
+  beach sands, and magmatic Fe-Ti-V with bog iron.
 - The tectonic setting of iron oxide copper-gold deposits is disputed in the literature
   itself [52]; the three-setting scheme used here is one review's classification [47].
+- Two iron questions are open in the sources. Whether weathering alone can turn iron
+  formation into high-grade ore is contested [57] against [54][56]. Whether ironstone iron
+  comes from the land or from upwelled deep water is contested [61] against [62].
 - Several citations are single-region studies used as examples of a general pattern: [11] and
   [12] (China), [20] (Karoo), [26] (Namibia), [46] (Iran), [49] and [50] (Andes). [25] is a conference abstract with one citation
   and is the only source for the claim that subsidence rate did not matter.
@@ -328,3 +364,25 @@ Copper and craton margins
 51. Richards et al. (2013). [Magmatic-hydrothermal processes within an evolving Earth: Iron oxide-copper-gold and porphyry Cu ± Mo ± Au deposits](https://consensus.app/papers/details/0d4b4c6a9e555a63aee3aa0257921602/?utm_source=claude_desktop). *Geology.*
 52. Williams et al. (2005). [Iron oxide copper-gold deposits: geology, space-time distribution, and possible modes of origin](https://consensus.app/papers/details/c130d02a7a1252febbfa381c9b0b228b/?utm_source=claude_desktop).
 53. Groves et al. (2020). [Craton and thick lithosphere margins: The sites of giant mineral deposits and mineral provinces](https://consensus.app/papers/details/791d29f7c158545383adff2862089ec1/?utm_source=claude_desktop). *Gondwana Research.*
+
+Iron
+
+54. Hagemann et al. (2016). [BIF-hosted iron mineral system: A review](https://consensus.app/papers/details/6c5a8f1099ff510daef36eec134580a1/?utm_source=claude_desktop). *Ore Geology Reviews.*
+55. Smith et al. (2016). [Palaeoproterozoic Banded Iron formationhosted High-Grade Hematite Iron Ore Deposits of the Transvaal Supergroup, South Africa](https://consensus.app/papers/details/0b306323d78156cb89f37849586a7fb0/?utm_source=claude_desktop). *Episodes.*
+56. Hagemann et al. (2008). [Banded Iron Formation-Related High-Grade Iron Ore](https://consensus.app/papers/details/30c4929a37795338ac2944cce7cab743/?utm_source=claude_desktop).
+57. Lascelles (2012). [Banded iron formation to high-grade iron ore: a critical review of supergene enrichment models](https://consensus.app/papers/details/f966d8a5c7305f249203d3add13087e4/?utm_source=claude_desktop). *Australian Journal of Earth Sciences.*
+58. Perring et al. (2022). [Phanerozoic history of the Pilbara region: implications for iron mineralisation](https://consensus.app/papers/details/056c6632b828584eaf260a730b1f45b7/?utm_source=claude_desktop). *Australian Journal of Earth Sciences.*
+59. Young (1989). [Phanerozoic ironstones: an introduction and review](https://consensus.app/papers/details/5743d3fcdc05557daf24617923e5c33d/?utm_source=claude_desktop). *Geological Society, London, Special Publications.*
+60. Arthur (1989). [Temporal patterns among Phanerozoic oolitic ironstones and oceanic anoxia](https://consensus.app/papers/details/75a758ca236b556ea51e0bf785187a82/?utm_source=claude_desktop). *Geological Society, London, Special Publications.*
+61. Lechte et al. (2024). [Oolitic ironstones, continental iron flux and reverse weathering in the Proterozoic Eon: Insights from the Tonian Katherine Group, Yukon](https://consensus.app/papers/details/99125eae624b58c9b796aacfffbc0300/?utm_source=claude_desktop). *Earth-Science Reviews.*
+62. Matheson et al. (2022). [Ironstone as a proxy of Paleozoic ocean oxygenation](https://consensus.app/papers/details/c0d38c25bf0d58b8ade76652216ce2a5/?utm_source=claude_desktop). *Earth and Planetary Science Letters.*
+63. Matheson et al. (2024). [Late Ordovician ironstone and its relation to ocean redox instability, climate and glaciation](https://consensus.app/papers/details/2ad2649cb2305f24a1111f3dc8017f34/?utm_source=claude_desktop). *Sedimentology.*
+64. Luan et al. (2025). [Upwelling-related ferruginous ooids, microbialites, and the Darriwilian tipping point of Ordovician climate](https://consensus.app/papers/details/a01aaec520d35ddebd816cbc3c6ef574/?utm_source=claude_desktop). *Geology.*
+65. Bhattacharyya (1982). [Phanerozoic Oolitic Ironstones--Geologic Record and Facies Model](https://consensus.app/papers/details/58241592d93156a5a7d7027f4b23acfa/?utm_source=claude_desktop). *Annual Review of Earth and Planetary Sciences.*
+66. Andersson et al. (2021). [Structural Evolution of the Central Kiruna Area, Northern Norrbotten, Sweden: Implications on the Geologic Setting Generating Iron Oxide-Apatite and Epigenetic Iron and Copper Sulfides](https://consensus.app/papers/details/8d3aae51a84b525e84d6b20a7601fb1b/?utm_source=claude_desktop). *Economic Geology.*
+67. Sarlus et al. (2020). [Timing and origin of the host rocks to the Malmberget iron oxide-apatite deposit, Sweden](https://consensus.app/papers/details/bd9e0a00f3c754c1b32046356380ac66/?utm_source=claude_desktop). *Precambrian Research.*
+68. Simon et al. (2018). [Kiruna-Type Iron Oxide-Apatite (IOA) and Iron Oxide Copper-Gold (IOCG) Deposits Form by a Combination of Igneous and Magmatic-Hydrothermal Processes: Evidence from the Chilean Iron Belt](https://consensus.app/papers/details/d57baa1005995526b86b02b8f57ebf76/?utm_source=claude_desktop).
+69. Troll et al. (2019). [Global Fe–O isotope correlation reveals magmatic origin of Kiruna-type apatite-iron-oxide ores](https://consensus.app/papers/details/c55e0149ca125cdcb55a40ddea19bf0c/?utm_source=claude_desktop). *Nature Communications.*
+70. Zeng et al. (2024). [The role of iron-rich hydrosaline liquids in the formation of Kiruna-type iron oxide–apatite deposits](https://consensus.app/papers/details/5dd7620e6c1d5422b2d16af2946aa365/?utm_source=claude_desktop). *Science Advances.*
+71. Hitzman et al. (1992). [Geological characteristics and tectonic setting of proterozoic iron oxide (CuUAuREE) deposits](https://consensus.app/papers/details/2eed7d5f91ac5f1d85873714e5b9e749/?utm_source=claude_desktop). *Precambrian Research.*
+72. Smith et al. (2025). [Trace element geochemistry of magnetite from iron oxide-apatite (Kiruna type) and magnetite skarn deposits: A discriminant of deposit type and genesis?](https://consensus.app/papers/details/363f1b83d6105ad1b6f7753eb2733f14/?utm_source=claude_desktop). *Mineralogical Magazine.*
