@@ -8,8 +8,8 @@ the same processes that already shape the world: plate tectonics, erosion and we
 sedimentation.
 
 **Short answer:** most of it can be a post-process on fields the pipeline already computes.
-The output should be a *prospectivity* score per cell and per deposit group, not a claim that
-a deposit exists. Three things cannot come out of the current model at all, because it has one
+The output is a *prospectivity* score per cell for each of copper, iron and gold, not a claim
+that a deposit exists; see [Decisions](#decisions). Three things cannot come out of the current model at all, because it has one
 plate snapshot and no history: old sutures, cratons, and deposits restricted to one period of
 Earth history. Iron is the awkward member of that last group.
 
@@ -260,31 +260,38 @@ invents them. Deriving them properly would mean simulating plate history.
 
 ## Proposed build order
 
-Ranked by value for cost. Effort is S, M or L.
+Scoped to copper, iron and gold, per [Decisions](#decisions). Ranked by value for cost; effort
+is S, M or L. Items 1 to 3 are prerequisites, item 4 delivers most of the copper and gold, and
+item 5 delivers most of the iron.
 
-1. **Export the Stage 1 tectonic fields (S).** Everything below depends on it. Add
-   `Climate.wind` only if phosphate is wanted.
-2. **Climate and basin deposits as a post-process (S).** A new `terrain/minerals.py` reading
-   shipped fields: evaporites and brines, bauxite, the Ni-laterite climate window, and the
-   wet, flat, low-lying term for coal. No pipeline changes.
-3. **Sub-classify boundaries and score the tectonic deposits (S–M).** Split arc, collision,
-   rift and transform by crust type on each side, then score by distance band with the
-   existing rescaled lengths. Keep the tangential component of boundary motion and compute
-   bends in the boundary trace while there; both are small and gold needs them. This also switches on the foreland terms for coal and Pb-Zn, the
-   ophiolite parent for Ni laterite, and suture basins for marine evaporites.
-4. **Exhumation proxy (S).** Uplift × run time, which equals erosion at steady state, to
+1. **Export the Stage 1 tectonic fields (S).** `boundary_type`, `boundary_stress`,
+   `boundary_dist_km`, `crust_thickness`, `uplift` and continental versus oceanic crust.
+   Keep the tangential component of boundary motion, which is currently discarded.
+2. **Sub-classify boundaries (S–M).** Split arc, collision, rift and transform by crust type
+   on each side, and compute bends in the boundary trace.
+3. **Exhumation proxy (S).** Uplift × run time, which equals erosion at steady state, to
    separate shallow, mid and deep deposits and to score preservation. A true cumulative-erosion
    accumulator in `stage2.evolve` is M and can wait until the proxy proves inadequate.
-5. **Fake cratons with one noise field (S).** A smooth field thresholded over continental
-   interiors, away from active boundaries; the score is distance to its edge. It is invented,
-   not derived, and should be labelled so. It is the only way to place sediment-hosted copper
-   and Pb-Zn properly [44], and the only way to place giant iron oxide copper-gold, Ni-Cu-PGE,
-   iron formation and diamonds at all. Iron ore needs a second invented field inside it,
-   marking iron-formation provinces.
-6. **Placers (M).** Push primary-source scores down the flow tree; estimate the transport
-   threshold from stream power against upstream erosion supply.
-7. **Phosphate and ooidal ironstone (S–M, optional).** An upwelling score from wind and coast
-   geometry serves both. The result is mostly offshore.
+4. **Score and export the derived deposit types (M).** A new `terrain/minerals.py`, run as a
+   post-process: porphyry, both epithermal types, orogenic gold, arc-type iron oxide
+   copper-gold, Kiruna-type iron, and the rift part of sediment-hosted copper. Distance bands
+   use the existing rescaled lengths. Combines the scores into the three resource fields and
+   exports them.
+5. **Invented cratons and iron-formation provinces (S).** A smooth noise field thresholded
+   over continental interiors, away from active boundaries, with a second threshold inside it
+   for iron formation. Supplies banded-iron-formation iron, the craton-edge term for
+   sediment-hosted copper [44], and the giant type of iron oxide copper-gold [48]. It is
+   invented, not derived, and the manifest should say so.
+6. **Weathering overlay (S).** From the shipped climate fields: supergene upgrading of
+   porphyry copper in semi-arid, slowly eroding ground [8][9], and the upgrade of iron
+   formation to ore under a seasonally humid climate [58].
+7. **Flow-tree routing (M).** Push source scores down `flow_receiver` for distal placer gold
+   and for channel iron; estimate the transport threshold from stream power against upstream
+   erosion supply. Proximal placers fall inside the lode's own cell at this scale.
+
+**Dropped by the commodity decision:** coal, bauxite, nickel laterite, evaporites and brines,
+lead-zinc, phosphate, ironstone, tin-tungsten, lithium and beach sands. The research on them
+stays above; none is scheduled. `Climate.wind` no longer needs exporting.
 
 **Leave alone:** turning on deposition (`G > 0`) and simulating plate history. Both are L,
 both would disturb calibrated stages, and neither buys much mineral realism that the proxies
@@ -292,20 +299,94 @@ above do not.
 
 ---
 
-## Open decisions
+## Decisions
 
-- **Output form.** A 0 to 1 prospectivity field per deposit group is the proposal. Discrete
-  deposits with tonnages could be sampled from those fields afterwards.
-- **Scale.** This world is 1/98.125 of Earth's radius with 100 m cells. If deposit distances
-  shrink with the world, as the plate parameters do, then 100 km becomes about 10 cells and
-  the 5 km proximal-placer distance [38] becomes 51 m, inside the source cell. If distances
-  are absolute, proximal placers trail 50 cells downstream and a 1 km porphyry spans 10 cells.
-  The two choices give visibly different maps.
-- **Commodities.** Which ones matter decides whether items 5 and 7 are needed. Iron is the
-  case to settle first. The choice is between inventing iron-formation provinces, which is
-  where most real iron comes from, and accepting only the iron the model can derive:
-  Kiruna-type bodies in extending arcs, and ironstone on quiet coasts. Copper is next: porphyry
-  copper needs no cratons, but roughly a quarter of the world's copper does.
+### Decided: the generator exports fields, the sim places resources
+
+The sim that consumes the terrain decides where resources actually go, so the generator stops
+at fields and does not sample deposits. The export is three fields, one per resource:
+
+- **`field_resource_copper`, `field_resource_iron`, `field_resource_gold`**, indexed by cell
+  like every other field in `world.npz`, stored as uint8 (0 to 255). At n=785 that is about
+  6 MB each before compression.
+- **How each is built.** The generator scores the deposit types listed below internally, then
+  combines them per resource as a weighted sum. The weights are parameters. Copper has
+  sourced starting values (porphyry about 60% [8], sediment-hosted about 23% [41]); gold and
+  iron have only orderings from the sources (orogenic gold first [75], iron formation first
+  [55]), so their weights are a judgement to tune.
+- **What the manifest records.** The weights used, under `params` with every other
+  parameter, and a note that the iron field and part of the copper field rest on invented
+  cratons.
+- **How the sim uses it.** Multiply the resource's field by cell area and sample cells in
+  proportion, with its own seed.
+
+Keying by deposit type was considered and set aside. It would have kept distinctions such as
+placer gold at the surface against orogenic gold at depth, at the cost of ten fields and a
+lookup table on the sim side.
+
+### Decided: distances shrink with the world
+
+This world is 1/98.125 of Earth's radius with 100 m cells. Every horizontal distance in this
+document is an Earth value and is divided by 98.125 before use, the same way
+`PlateParams.for_radius` treats the uplift geometry. In the README's terms they are
+world-scale lengths, not cell-scale ones, and must be rescaled again on a fixture at a
+different `n`.
+
+What that does to the numbers quoted above:
+
+| Earth distance | Used for | On this world |
+|---|---|---|
+| 200 km | Sediment-hosted metals from the lithosphere edge [44] | 2.04 km, about 20 cells |
+| 100 km | Most deposit types from a craton margin [2][53]; fine placer gold transport [39] | 1.02 km, about 10 cells |
+| 5 km | Proximal, coarse placer gold [38] | 51 m, inside the source cell |
+| 1 to 2 km | Footprint of a single large deposit | 10 to 20 m, far below one cell |
+
+Two consequences. A single deposit is always smaller than a cell, so a field marks a belt or
+a district and the sim places point resources inside it. And proximal placers coincide with
+their lode source at this resolution: only the distal, fine-gold class travels far enough
+down the flow tree to appear as its own pattern.
+
+Vertical quantities are not covered by this. Depth windows stay relative ranks, as noted
+under [What the pipeline lacks](#what-the-pipeline-lacks).
+
+### Decided: copper, iron and gold
+
+These are the commodities that matter. They are built from ten internal deposit-type scores,
+which are not exported:
+
+| Score | Yields | Basis |
+|---|---|---|
+| `porphyry` | Copper, gold | Derived; weathering upgrade for copper |
+| `sediment_copper` | Copper | Rift and climate derived; craton-edge term invented |
+| `iocg` | Copper, gold | Arc type derived; craton-margin type invented |
+| `orogenic_gold` | Gold | Derived |
+| `epithermal_hs` | Gold | Derived |
+| `epithermal_ls` | Gold | Derived |
+| `placer_gold` | Gold | Derived, from the gold fields above |
+| `kiruna_iron` | Iron | Derived |
+| `bif_iron` | Iron | Host invented; upgrade to ore derived |
+| `channel_iron` | Iron | Source invented; routing derived |
+
+Gold and most copper come out of the model. Iron mostly does not: the only derived iron is
+the Kiruna type, a small share of real supply, so the two iron-formation scores carry it.
+
+### Decided: cratons are invented
+
+Item 5 of the build order goes ahead. Iron cannot be common without it, and it supplies the
+craton terms for copper. See [Why there are no cratons](#why-there-are-no-cratons) for why
+they cannot be derived.
+
+### Decided: a resource need not exist on every world
+
+Scores are absolute, not rank-normalised per world. A world with no continental rift has no
+sediment-hosted copper, and a world whose noise puts no iron-formation province on land has
+little iron. Worlds therefore differ in what they are rich in, and the sim has to tolerate a
+field that is zero everywhere.
+
+### Open
+
+Nothing. The weights that combine deposit types into each resource field are the main thing
+left to tune, and that is done against generated worlds, not decided in advance.
 
 ---
 
