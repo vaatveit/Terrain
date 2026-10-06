@@ -460,16 +460,28 @@ Four things to know about the tuned weights:
   gold 20× too low. Three more production worlds would tighten the mean; a small one would
   spoil it.
 
-**The belts are blocky, and that is inherited.** Close up at production size, a gold belt is
-broken into hard-edged diagonal blocks a kilometre or two across. The uplift field has the
-same blocks and so do the mountains. `plates._classify_boundaries` labels a boundary cell by
-the direction to one neighbour, so a boundary that is almost pure strike-slip (obliquity 0.85
-to 1.0 in the window examined) comes out as alternating "convergent" and "transform"
-segments, and `derive_uplift` gives the first full-strength orogens and the second none.
-World-wide, on land within 1 km of a boundary, uplift has a median of 45 m/Myr in the
-first kind of segment and 2 in the second. The mineral scores read uplift as depth of erosion, so they
-follow the terrain there, which is the right thing for them to do. The cause is upstream of
-this work and fixing it would move every orogen in the world.
+**The belts were blocky, and that was inherited.** Close up at production size, a gold belt
+was broken into hard-edged diagonal blocks a kilometre or two across. The uplift field had
+the same blocks and so did the mountains. `plates._classify_boundaries` labelled a boundary
+cell by the direction to one neighbour, so a boundary that is almost pure strike-slip
+(obliquity 0.85 to 1.0 in the window examined) came out as alternating "convergent" and
+"transform" segments, and `derive_uplift` gave the first full-strength orogens and the second
+none. The mineral scores read uplift as depth of erosion, so they followed the terrain there,
+which was the right thing for them to do.
+
+It is fixed upstream of this work: `plates.boundary_types` reads the type off the boundary's
+own normal, the one `boundary_slip` already used. At n=785, seed 42, neighbouring boundary
+cells disagreed on type across 21.7% of pairs and now across 2.4%; the uplift step between
+them fell from a mean of 6.8 m/Myr to 1.3, and the step in eroded elevation from 54 m to 19.
+The difference between the two kinds of belt is still there and is meant to be: on land
+within 1 km of a boundary, uplift has a median of 44 m/Myr beside a convergent cell (it was
+45) and 2 beside a transform one. What went is the alternation along a single boundary.
+
+The mineral figures in this document were measured before the fix and have not been
+re-measured. On the scoring as it stood at commit 70bca6a, the share of land scoring above
+0.1 went from 1.38% to 1.38% for copper, 4.32% to 4.33% for iron and 2.09% to 2.17% for gold.
+`boundary_stress` still takes its normal from one neighbour, so the sign the scores read from
+it did not move; `boundary_types` says why it was left.
 
 **Dropped by the commodity decision:** coal, bauxite, nickel laterite, evaporites and brines,
 lead-zinc, phosphate, ironstone, tin-tungsten, lithium and beach sands. The research on them
