@@ -185,6 +185,8 @@ def main():
         boundary_slip=crust.plates.boundary_slip,
         boundary_dist_km=crust.plates.boundary_dist_km,
         nearest_boundary=crust.plates.nearest_boundary, uplift=crust.uplift,
+        # The climate that ships, solved on the reflooded coastline.
+        precipitation_mm=clim.precipitation_mm, temperature_c=clim.temperature_c,
         radius_km=grid.radius_km)
     print("    " + ", ".join(
         f"{name} on {grid.area[land & (score > 0.1)].sum() / grid.area[land].sum():.1%} "

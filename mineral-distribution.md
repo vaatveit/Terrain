@@ -1,7 +1,7 @@
 # Mineral distribution: what the geology says, and what this pipeline can place
 
-**Status: research and proposal, with items 1 to 5 of the build order implemented.** Copper,
-iron and gold are all scored; the climate overlay and flow-tree routing remain. Written
+**Status: research and proposal, with items 1 to 6 of the build order implemented.** Copper,
+iron and gold are all scored; only flow-tree routing remains. Written
 2026-10-05 from a literature search plus a read of the code as it stood at commit `3231ff2`;
 [What the pipeline lacks](#what-the-pipeline-lacks) describes that commit, and the build
 order marks what has changed since.
@@ -351,10 +351,35 @@ anything was measured; where an item below reports a measurement, the item is ri
      so iron formation covers 4.3 to 4.5% of land regardless of seed, while copper and gold
      move with the plates. Making it vary would mean drawing the shares themselves from the
      seed.
-6. **Climate overlay (S).** From the shipped climate fields: supergene upgrading of
-   porphyry copper in semi-arid, slowly eroding ground [8][9], the upgrade of iron
-   formation to ore under a seasonally humid climate [58], and the arid, low-latitude and
-   lake terms for sediment-hosted copper [42] that item 4 left out.
+6. **Climate overlay (S). Done.** Three types now read the shipped rainfall and temperature,
+   and each only scales a type the plates or the cratons already put there:
+
+   - `supergene_copper` is a porphyry with rain enough to leach it and not enough to erode
+     it: full from 120 mm/yr [8], fading out between 500 and 1000.
+   - `enriched_iron` is iron formation weathered to ore where it is warm and wet [58]: above
+     1000 mm/yr and 20 °C mean, fading out below 500 mm and 15 °C.
+   - `sediment_copper` keeps only a quarter of its score unless the rift is dry enough for
+     evaporites [42]: full below 250 mm/yr, the quarter above 750.
+
+   Only the 120 mm is sourced; the other thresholds are a judgement. Each upgrade splits a
+   weight with its host: porphyry's 0.60 became 0.40 plus 0.20, iron formation's 0.70 became
+   0.40 plus 0.30. Measured on three n=128 worlds run through the whole pipeline, supergene
+   enrichment reaches 28 to 46% of porphyry ground and iron enrichment 30 to 43% of
+   iron-formation ground.
+
+   Three things to know:
+
+   - **Rift copper is keyed to dryness alone,** not to warmth, latitude or lakes, which the
+     research also names. This model has almost no hot dry land (4% at n=128, having no
+     subtropical desert belt) and few lakes, so asking for either would remove the type for
+     a known defect of the climate model and not for a geological reason.
+   - **Rift copper came out small.** It carries 4 to 9% of the area-weighted copper against
+     a weight of 0.23, and the climate is the main reason: on the same three worlds 38 to 70%
+     of rift ground gets more than 750 mm/yr and only 9 to 18% less than 250. The craton term
+     costs less, with 39 to 48% of rift ground inside its reach. Iron oxide copper-gold now
+     outweighs rift copper. This is the first thing to look at when the weights are tuned.
+   - **"Seasonally" humid is not tested.** The enrichment term reads annual rain and mean
+     temperature. The monthly fields are exported if a dry season should be required.
 7. **Flow-tree routing (M).** Push source scores down `flow_receiver` for distal placer gold
    and for channel iron; estimate the transport threshold from stream power against upstream
    erosion supply. Proximal placers fall inside the lode's own cell at this scale.

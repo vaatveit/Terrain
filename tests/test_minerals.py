@@ -21,12 +21,12 @@ FAR_KM = 6.0  # several arc widths and decay lengths out
 
 def belt(dist_km, *, speed=40.0, slip=0.0, closing=True, uplift=50.0,
          continental=True, land=True, reached=True, craton_margin_km=1e3,
-         iron_formation=False):
+         iron_formation=False, precipitation_mm=200.0, temperature_c=25.0):
     """Cells at the given distances from ONE boundary cell, which is cell 0.
 
     Every cell takes its plate motion from that boundary cell, exactly as a world's cells
     take theirs through `nearest_boundary`. Defaults: closing head-on at 40 mm/yr, which is
-    full rate, with uplift at half its ceiling, far from any craton.
+    full rate, with uplift at half its ceiling, far from any craton, in a hot dry climate.
     """
     d = np.asarray(dist_km, dtype=np.float32)
     n = d.size
@@ -40,7 +40,9 @@ def belt(dist_km, *, speed=40.0, slip=0.0, closing=True, uplift=50.0,
         nearest_boundary=np.full(n, 0 if reached else -1, dtype=np.int32),
         uplift=np.broadcast_to(np.float32(uplift), (n,)).copy(),
         craton_margin_km=np.broadcast_to(np.float32(craton_margin_km), (n,)).copy(),
-        iron_formation=np.full(n, iron_formation), radius_km=R_WORLD_KM)
+        iron_formation=np.full(n, iron_formation),
+        precipitation_mm=np.full(n, precipitation_mm, dtype=np.float32),
+        temperature_c=np.full(n, temperature_c, dtype=np.float32), radius_km=R_WORLD_KM)
 
 
 def test_porphyry_sits_in_the_arc_band_not_on_the_boundary():
@@ -126,6 +128,49 @@ def test_iron_formation_scores_in_quiet_ground_whether_or_not_a_boundary_is_near
     assert np.all(minerals.deposit_scores(**belt([0.0, FAR_KM]))["bif_iron"] == 0.0)
 
 
+def test_supergene_copper_needs_some_rain_and_not_much():
+    """Weathering enriches a porphyry where there is water to leach the copper downward and
+    not so much that the ground erodes out from under it. Below 120 mm/yr there is too
+    little; it is an upgrade to a porphyry, never a source of its own."""
+    at_arc = lambda mm: {k: v[1] for k, v in minerals.deposit_scores(
+        **belt([0.0, ARC_KM], precipitation_mm=mm)).items()}
+    semi_arid, hyper_arid, wet = at_arc(300.0), at_arc(60.0), at_arc(2000.0)
+    assert semi_arid["supergene_copper"] == pytest.approx(semi_arid["porphyry"])
+    assert hyper_arid["supergene_copper"] == pytest.approx(0.5 * hyper_arid["porphyry"])
+    assert wet["supergene_copper"] == 0.0
+    # The porphyry itself does not care what the weather is.
+    assert semi_arid["porphyry"] == hyper_arid["porphyry"] == wet["porphyry"] > 0
+    no_arc = minerals.deposit_scores(**belt([FAR_KM], precipitation_mm=300.0))
+    assert no_arc["supergene_copper"][0] < 0.01
+
+
+def test_iron_formation_is_enriched_to_ore_only_where_it_is_warm_and_wet():
+    province = dict(uplift=2.0, iron_formation=True, reached=False)
+    score = lambda mm, c: {k: v[0] for k, v in minerals.deposit_scores(
+        **belt([0.0], precipitation_mm=mm, temperature_c=c, **province)).items()}
+    tropical, dry, cold = score(1500.0, 25.0), score(300.0, 25.0), score(1500.0, 5.0)
+    assert tropical["enriched_iron"] == pytest.approx(tropical["bif_iron"])
+    assert dry["enriched_iron"] == 0.0 and cold["enriched_iron"] == 0.0
+    # The formation is there whatever the weather; only the upgrade is climatic.
+    assert tropical["bif_iron"] == dry["bif_iron"] == cold["bif_iron"] > 0.9
+    off = minerals.deposit_scores(**belt([0.0], precipitation_mm=1500.0, uplift=2.0))
+    assert off["enriched_iron"][0] == 0.0
+
+
+def test_a_wet_rift_keeps_only_a_share_of_its_copper():
+    """The ore needs an oxidised brine and the sulphur of evaporites, which is a dry
+    climate. It is not a hard gate: one giant deposit has no evaporites at all."""
+    rift = dict(closing=False, craton_margin_km=0.0)
+    dry = minerals.deposit_scores(**belt([0.0], precipitation_mm=200.0, **rift))
+    wet = minerals.deposit_scores(**belt([0.0], precipitation_mm=2000.0, **rift))
+    cold_dry = minerals.deposit_scores(
+        **belt([0.0], precipitation_mm=200.0, temperature_c=-5.0, **rift))
+    assert dry["sediment_copper"][0] == pytest.approx(1.0)
+    assert wet["sediment_copper"][0] == pytest.approx(0.25)
+    # Dryness alone: a cold desert makes evaporites too.
+    assert cold_dry["sediment_copper"][0] == pytest.approx(1.0)
+
+
 def test_the_craton_term_fades_over_twice_the_margin_length():
     """200 km on Earth, which is 2.04 km on this world."""
     reach_km = 200.0 / (6371.0 / R_WORLD_KM)
@@ -172,6 +217,22 @@ def world():
     return g, stage1.generate_crust_tectonic(g, seed=1)
 
 
+def scored(world, fn):
+    """`fn` over a Stage 1 world, under one mild climate everywhere: 300 mm and 20 C.
+    Stage 1 has no climate of its own, and these tests are about the plates and cratons."""
+    g, c = world
+    pl = c.plates
+    inv = minerals.invent_cratons(g, 1, c.is_continental)
+    return fn(
+        land_mask=c.land_mask, is_continental=c.is_continental,
+        boundary_stress=pl.boundary_stress, boundary_speed=pl.boundary_speed,
+        boundary_slip=pl.boundary_slip, boundary_dist_km=pl.boundary_dist_km,
+        nearest_boundary=pl.nearest_boundary, uplift=c.uplift, radius_km=g.radius_km,
+        craton_margin_km=inv["craton_margin_km"], iron_formation=inv["iron_formation"],
+        precipitation_mm=np.full(g.cell_count, 300.0, dtype=np.float32),
+        temperature_c=np.full(g.cell_count, 20.0, dtype=np.float32))
+
+
 def test_invented_cratons_take_their_set_share_of_continental_crust(world):
     g, c = world
     p = minerals.MineralParams()
@@ -213,21 +274,14 @@ def test_cratons_are_fixed_by_the_seed_and_drawn_apart_from_the_crust(world):
 
 def test_a_generated_world_has_all_three_resources(world):
     g, c = world
-    pl = c.plates
-    inv = minerals.invent_cratons(g, 1, c.is_continental)
-    r = minerals.resources(
-        land_mask=c.land_mask, is_continental=c.is_continental,
-        boundary_stress=pl.boundary_stress, boundary_speed=pl.boundary_speed,
-        boundary_slip=pl.boundary_slip, boundary_dist_km=pl.boundary_dist_km,
-        nearest_boundary=pl.nearest_boundary, uplift=c.uplift, radius_km=g.radius_km,
-        craton_margin_km=inv["craton_margin_km"], iron_formation=inv["iron_formation"])
+    r = scored(world, minerals.resources)
     for name, field in r.items():
         assert field.shape == (g.cell_count,)
         assert np.isfinite(field).all() and field.min() >= 0.0 and field.max() <= 1.0
         assert np.all(field[~c.land_mask] == 0.0), f"{name} scored at sea"
     assert r["copper"].max() > 0.2 and r["gold"].max() > 0.1
     # Iron formation is what gives iron a real field; Kiruna alone tops out at its share.
-    assert r["iron"].max() > 0.5
+    assert r["iron"].max() > 0.3
 
 
 def test_the_leading_type_of_each_resource_also_leads_by_area(world):
@@ -237,14 +291,7 @@ def test_the_leading_type_of_each_resource_also_leads_by_area(world):
     of 0.07 it carried 67 to 72% of the copper, and it was removed for it. The type the
     weights put first has to come first when the ground is counted too."""
     g, c = world
-    pl = c.plates
-    inv = minerals.invent_cratons(g, 1, c.is_continental)
-    s = minerals.deposit_scores(
-        land_mask=c.land_mask, is_continental=c.is_continental,
-        boundary_stress=pl.boundary_stress, boundary_speed=pl.boundary_speed,
-        boundary_slip=pl.boundary_slip, boundary_dist_km=pl.boundary_dist_km,
-        nearest_boundary=pl.nearest_boundary, uplift=c.uplift, radius_km=g.radius_km,
-        craton_margin_km=inv["craton_margin_km"], iron_formation=inv["iron_formation"])
+    s = scored(world, minerals.deposit_scores)
     p = minerals.MineralParams()
     for weights in (p.copper, p.gold, p.iron):
         mass = {t: w * float((g.area * s[t]).sum()) for t, w in weights.items()}

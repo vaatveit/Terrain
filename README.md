@@ -208,7 +208,7 @@ build. `manifest.json` → `params.minerals` records the weights that were used.
 from terrain import minerals
 cratons = minerals.invent_cratons(grid, meta["seed"], fields["is_continental"])
 keys = ("land_mask", "is_continental", "boundary_stress", "boundary_speed", "boundary_slip",
-        "boundary_dist_km", "nearest_boundary", "uplift")
+        "boundary_dist_km", "nearest_boundary", "uplift", "precipitation_mm", "temperature_c")
 ore = minerals.resources(radius_km=grid.radius_km,
                          craton_margin_km=cratons["craton_margin_km"],
                          iron_formation=cratons["iron_formation"],

@@ -56,8 +56,14 @@ weight of 0.07 it carried 67-72% of all the copper, measured at n=128 over three
 weight is not a share. The belt types multiply three factors that each cut the ground down;
 anything that does not will swamp them, whatever weight it is given.
 
-Not here yet: placers and channel iron, which need routing down the flow tree, and the
-climate terms that upgrade copper and iron formation to ore.
+CLIMATE UPGRADES AND THROTTLES; IT MAKES NOTHING. Three types read the shipped climate,
+and each only scales a type the plates or the cratons already put there:
+`supergene_copper` is a porphyry where there is rain enough to leach it and not enough to
+erode it away; `enriched_iron` is iron formation weathered to ore where it is warm and wet;
+and a rift keeps only a share of its `sediment_copper` unless it is dry enough for
+evaporites.
+
+Not here yet: placers and channel iron, which need routing down the flow tree.
 """
 
 from __future__ import annotations
@@ -81,13 +87,34 @@ class MineralParams:
     # ordering (orogenic gold first, iron formation first) and no shares -- and are meant to
     # be tuned against generated worlds. Each sums to at most 1 so a field cannot exceed 1;
     # gold and iron leave room for the types not built yet.
+    # The two climatic upgrades split a share with the type they upgrade: porphyry's 0.60
+    # is 0.40 as it stands and 0.20 more where weathering has enriched it, and iron
+    # formation's 0.70 is 0.40 and 0.30. Those two splits are a judgement as well.
     copper: dict = dataclasses.field(default_factory=lambda: {
-        "porphyry": 0.60, "sediment_copper": 0.23, "iocg": 0.17})
+        "porphyry": 0.40, "supergene_copper": 0.20, "sediment_copper": 0.23, "iocg": 0.17})
     gold: dict = dataclasses.field(default_factory=lambda: {
         "orogenic_gold": 0.45, "epithermal_hs": 0.15, "epithermal_ls": 0.15,
         "porphyry": 0.10, "iocg": 0.05})
     iron: dict = dataclasses.field(default_factory=lambda: {
-        "bif_iron": 0.70, "kiruna_iron": 0.15})
+        "bif_iron": 0.40, "enriched_iron": 0.30, "kiruna_iron": 0.15})
+
+    # Climate. Each pair is a ramp from 0 at the first value to 1 at the second, in mm/yr
+    # of rain or degrees C of mean annual temperature. Only the 120 mm is sourced; the rest
+    # are judgement, and they cut a rainfall field the README records as over-dispersed.
+    #
+    # Supergene copper wants enough rain to leach and not enough to erode: it rises to
+    # full by 120 mm, the published minimum, and fades out between 500 and 1000.
+    supergene_rain_mm: tuple = (0.0, 120.0)
+    supergene_too_wet_mm: tuple = (1000.0, 500.0)
+    # Iron formation is enriched to ore by deep weathering where it is warm and wet.
+    enrichment_rain_mm: tuple = (500.0, 1000.0)
+    enrichment_warmth_c: tuple = (15.0, 20.0)
+    # Rift copper wants evaporites, which is a dry climate. Dryness ALONE, not warmth and
+    # not latitude: a cold desert makes evaporites too, and this model has almost no hot
+    # dry land to ask for (4% at n=128), having no subtropical desert belt.
+    evaporite_dry_mm: tuple = (750.0, 250.0)
+    # What a rift keeps without them. Not zero: one giant deposit has no evaporites.
+    rift_share_without_evaporites: float = 0.25
 
     # Invented cratons; see the module docstring. Both shares are of AREA, and both
     # frequencies are in the unit-sphere units the crust noise uses, where continents are
@@ -143,9 +170,16 @@ def invent_cratons(grid, seed, is_continental, params: MineralParams = None):
     return {"craton": craton, "iron_formation": iron, "craton_margin_km": dist}
 
 
+def _ramp(x, lo_hi):
+    """0 at `lo`, 1 at `hi`, linear between; `lo` may be the larger, for a falling ramp."""
+    lo, hi = lo_hi
+    return np.clip((np.asarray(x, dtype=np.float64) - lo) / (hi - lo), 0.0, 1.0)
+
+
 def deposit_scores(*, land_mask, is_continental, boundary_stress, boundary_speed,
                    boundary_slip, boundary_dist_km, nearest_boundary, uplift,
-                   craton_margin_km, iron_formation, radius_km,
+                   precipitation_mm, temperature_c, craton_margin_km, iron_formation,
+                   radius_km,
                    params: MineralParams = None, plate_params: plates.PlateParams = None):
     """Score per deposit type, each (N,) float32 in 0..1. See the module docstring.
 
@@ -191,16 +225,30 @@ def deposit_scores(*, land_mask, is_continental, boundary_stress, boundary_speed
     near_margin = np.exp(-(to_margin / (2.0 * p.craton_margin_r * radius_km)) ** 2)
     quiet = np.where(ground, shallow, 0.0)
 
+    # Climate. It upgrades or throttles a type that is already there and makes none.
+    semi_arid = _ramp(precipitation_mm, p.supergene_rain_mm) * _ramp(
+        precipitation_mm, p.supergene_too_wet_mm)
+    warm_wet = _ramp(precipitation_mm, p.enrichment_rain_mm) * _ramp(
+        temperature_c, p.enrichment_warmth_c)
+    dry = _ramp(precipitation_mm, p.evaporite_dry_mm)
+
+    def share(off, term):
+        return off + (1.0 - off) * term
+
+    porphyry = arc * head_on * mid
+    bif_iron = quiet * np.asarray(iron_formation, dtype=bool)
     scores = {
-        "porphyry": arc * head_on * mid,
+        "porphyry": porphyry,
+        "supergene_copper": porphyry * semi_arid,
         "epithermal_hs": arc * head_on * shallow,
         "epithermal_ls": arc * slip_share * shallow,
         "iocg": arc * slip_share * mid,
         "kiruna_iron": arc * slip_share * deep,
         "orogenic_gold": axis * both * deep,
-        "sediment_copper": rift * (p.rift_share_off_craton
-                                   + (1.0 - p.rift_share_off_craton) * near_margin),
-        "bif_iron": quiet * np.asarray(iron_formation, dtype=bool),
+        "sediment_copper": (rift * share(p.rift_share_off_craton, near_margin)
+                            * share(p.rift_share_without_evaporites, dry)),
+        "bif_iron": bif_iron,
+        "enriched_iron": bif_iron * warm_wet,
     }
     return {name: s.astype(np.float32) for name, s in scores.items()}
 
