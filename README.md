@@ -97,8 +97,9 @@ Field arrays over the mesh, plus the little needed to rebuild it. **The grid is 
 — it regenerates from `n`, which is why the archive is 79 MB rather than 730 MB at n=785. The twelve months of
 temperature and rainfall do not share that economy: 24 float32 rows that barely compress,
 about 85% of the archive, which at n=785 puts it near 600 MB (estimated, not yet measured).
-The nine tectonic fields are cheap by comparison: 6.2 bytes per cell compressed, measured at
-n=64, which is about 38 MB at n=785 and likely less, since boundary cells thin out as `n` grows.
+The tectonic fields are cheap by comparison: 6.2 bytes per cell compressed for the first nine,
+measured at n=64 before `boundary_slip` was added, which is about 38 MB at n=785 and likely
+less, since boundary cells thin out as `n` grows.
 
 ```python
 from terrain.export import load_native
@@ -127,7 +128,8 @@ grid, fields, meta = load_native("data/world01/world.npz")
 | `field_plate_id` | int16 | — | which plate the cell rides on |
 | `field_boundary_type` | uint8 | code | `0` not a boundary, `1` convergent, `2` divergent, `3` transform. Set only on cells that touch another plate |
 | `field_boundary_stress` | float32 | mm/yr | **normal** component of relative plate motion on a boundary cell, smoothed along strike; positive is closing. 0 off-boundary |
-| `field_boundary_speed` | float32 | mm/yr | **total** relative plate speed on a boundary cell; 0 off-boundary. Exact, where `boundary_stress` is an estimate — do not difference the two to get slip; see `plates.boundary_speed` |
+| `field_boundary_speed` | float32 | mm/yr | **total** relative plate speed on a boundary cell; 0 off-boundary. Exact, where `boundary_stress` is an estimate — do not difference the two to get slip; use the next field |
+| `field_boundary_slip` | float32 | mm/yr | the part of that speed **along** the boundary; 0 off-boundary. `slip / speed` is obliquity: 0 head-on, 1 pure strike-slip |
 | `field_boundary_dist_km` | float32 | km | great-circle distance to the nearest boundary cell. Beyond the uplift reach (0.188 R) it is a sentinel of 10× the reach, not a distance |
 | `field_nearest_boundary` | int32 | — | **cell id** of that nearest boundary cell; −1 beyond the reach. Index the three boundary fields with it to carry them inland |
 | `field_crust_thickness` | float32 | km | Stage 1 crust, after tectonic thickening and thinning |

@@ -131,6 +131,46 @@ def test_built_plates_carry_speed_on_boundaries_and_nowhere_else(pl):
     assert np.all(pl.boundary_speed[~is_b] == 0.0)
 
 
+def _two_hemispheres(axis_xyz):
+    """Hemispheres split at x = 0, counter-rotating about `axis_xyz`. Returns the grid, the
+    slip and speed fields, and the boundary cells where the plates move appreciably -- the
+    ratio of the two means nothing next to the rotation axis, where both go to zero."""
+    g = build_goldberg(48)
+    pid = (g.xyz[:, 0] > 0).astype(np.int16)
+    axis = np.array([axis_xyz, axis_xyz], dtype=float)
+    vel = plates.plate_velocity(g.xyz, axis, np.array([0.02, -0.02]), pid, g.radius_km)
+    speed = plates.boundary_speed(g.neighbours, pid, vel)
+    slip = plates.boundary_slip(g.xyz, g.neighbours, pid, vel,
+                                plates.PlateParams().stress_smoothing_passes)
+    return g, slip, speed, speed > 0.5 * speed.max()
+
+
+def test_slip_vanishes_where_plates_meet_head_on():
+    """Rotation about z drives the two hemispheres straight at each other across x = 0.
+    Differencing speed and `boundary_stress` reads 0.68 of the motion as slip here, because
+    that stress takes its normal from one neighbour. The slip field must not."""
+    g, slip, speed, moving = _two_hemispheres([0.0, 0.0, 1.0])
+    ratio = slip[moving] / speed[moving]
+    assert np.median(ratio) < 0.10
+    assert np.percentile(ratio, 90) < 0.20
+
+
+def test_slip_is_the_whole_motion_where_plates_only_slide():
+    """Rotation about x, the pole of the boundary itself: all slip, no closing."""
+    g, slip, speed, moving = _two_hemispheres([1.0, 0.0, 0.0])
+    ratio = slip[moving] / speed[moving]
+    assert np.median(ratio) > 0.98
+    assert np.percentile(ratio, 10) > 0.95
+
+
+def test_built_plates_never_slip_faster_than_they_move(pl):
+    is_b = pl.boundary_type != plates.NONE
+    assert np.all(pl.boundary_slip[is_b] <= pl.boundary_speed[is_b] * (1 + 1e-5))
+    assert np.all(pl.boundary_slip[~is_b] == 0.0)
+    # Random Euler poles make most boundaries oblique: slip is not a rounding error on speed.
+    assert np.median(pl.boundary_slip[is_b] / pl.boundary_speed[is_b]) > 0.2
+
+
 def test_boundary_distance_is_zero_on_boundaries_and_grows_inward(g, pl):
     is_b = pl.boundary_type != plates.NONE
     d = pl.boundary_dist_km

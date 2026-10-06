@@ -1,6 +1,6 @@
 # Mineral distribution: what the geology says, and what this pipeline can place
 
-**Status: research and proposal, with item 1 of the build order implemented.** Written
+**Status: research and proposal, with items 1 and 2 of the build order implemented.** Written
 2026-10-05 from a literature search plus a read of the code as it stood at commit `3231ff2`;
 [What the pipeline lacks](#what-the-pipeline-lacks) describes that commit, and the build
 order marks what has changed since.
@@ -264,21 +264,37 @@ invents them. Deriving them properly would mean simulating plate history.
 
 Scoped to copper, iron and gold, per [Decisions](#decisions). Ranked by value for cost; effort
 is S, M or L. Items 1 to 3 are prerequisites, item 4 delivers most of the copper and gold, and
-item 5 delivers most of the iron.
+item 5 delivers most of the iron. The "signal" columns in the tables above were written before
+anything was measured; where an item below reports a measurement, the item is right.
 
 1. **Export the Stage 1 tectonic fields (S). Done.** `world.npz` now carries `plate_id`,
    `boundary_type`, `boundary_stress`, `boundary_speed`, `boundary_dist_km`,
    `nearest_boundary`, `crust_thickness`, `uplift` and `is_continental`; the README field
    table documents each. `boundary_speed` is new: the total relative plate speed on a
    boundary cell, which is exact where `boundary_stress` is an estimate.
-2. **Sub-classify boundaries (S–M).** Split arc, collision, rift and transform by crust type
-   on each side, and compute bends in the boundary trace. **Obliquity needs its own normal.**
-   The plan was to difference speed and stress to get slip along the boundary. Measured, that
-   does not work: `boundary_stress` takes its normal from the direction to one neighbour, and
-   on two counter-rotating hemispheres at n=48 a purely head-on boundary reads slip/speed 0.68
-   where the answer is 0, against 0.99 on a purely strike-slip one. This item has to estimate
-   the boundary normal properly, and must leave `boundary_stress` alone, since uplift is
-   calibrated on it.
+2. **Boundary obliquity (S). Done, and narrower than planned.** `world.npz` now carries
+   `boundary_slip`, the part of the relative plate speed that runs along the boundary;
+   `slip / speed` is obliquity. It estimates the boundary normal itself. The first plan was to
+   difference speed and `boundary_stress`, and measured, that does not work: on two
+   counter-rotating hemispheres at n=48 a purely head-on boundary read slip/speed 0.68 where
+   the answer is 0. The new field reads a median of 0.018 there and 1.000 on a purely
+   strike-slip boundary. `boundary_stress` is untouched, since uplift is calibrated on it.
+   On built plates half of all convergent boundary cells have slip/speed above 0.7, so
+   obliquity is a strong signal in these worlds, not a correction.
+
+   Two parts of the original item were dropped after measurement:
+
+   - **Splitting arc from collision by crust type on each side.** Measured at n=128 over
+     three seeds, only about 5% of convergent boundary cells have continental crust on one
+     side and oceanic on the other; 42 to 47% are continental on both sides and 47 to 53%
+     oceanic on both. Crust type comes from noise that is independent of the plates, so a
+     boundary follows a continental edge only by chance. The pairing this document calls the
+     most useful split barely occurs. See
+     [Decided: arc and collision share belts](#decided-arc-and-collision-share-belts).
+   - **Bends in the boundary trace.** The control in [74] is a district-scale jog of 10 to 25
+     degrees, which is a few cells at this world's scale. Boundaries here are smooth warped
+     arcs plus cell-scale jaggedness, and the jaggedness is discretisation, not structure.
+     There is nothing at the right scale to measure.
 3. **Exhumation proxy (S).** Uplift × run time, which equals erosion at steady state, to
    separate shallow, mid and deep deposits and to score preservation. A true cumulative-erosion
    accumulator in `stage2.evolve` is M and can wait until the proxy proves inadequate.
@@ -392,6 +408,21 @@ Scores are absolute, not rank-normalised per world. A world with no continental 
 sediment-hosted copper, and a world whose noise puts no iron-formation province on land has
 little iron. Worlds therefore differ in what they are rich in, and the sim has to tolerate a
 field that is zero everywhere.
+
+### Decided: arc and collision share belts
+
+The model has almost no ocean-against-continent convergent boundaries (build order, item 2),
+so arc cannot be split from collision by crust pairing. The scores follow the model's own
+convention instead: `plates.derive_uplift` already gives every convergent boundary in
+continental crust both a collision orogen and a volcanic arc offset inland. Arc deposits and
+collision deposits therefore share belts and separate by distance from the boundary, depth of
+erosion and obliquity. Copper and gold end up in the same mountain belts, a little offset.
+
+The alternative was to split by distance to oceanic crust, reading a convergent belt near a
+continental edge as an arc and one deep inside a continent as a collision. It is invented,
+but it would give belts different characters, some copper-rich and some gold-rich. It needs
+no new export, since that distance is computable from `is_continental`, so it can be layered
+on later if the maps show belts that are too alike.
 
 ### Open
 

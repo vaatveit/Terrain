@@ -247,6 +247,7 @@ def main():
         plate_id=crust.plate_id, boundary_type=crust.boundary_type,
         boundary_stress=crust.boundary_stress,
         boundary_speed=crust.plates.boundary_speed,
+        boundary_slip=crust.plates.boundary_slip,
         boundary_dist_km=crust.plates.boundary_dist_km,
         nearest_boundary=crust.plates.nearest_boundary,
         crust_thickness=crust.crust_thickness, uplift=crust.uplift,

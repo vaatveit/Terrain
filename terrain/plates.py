@@ -175,6 +175,7 @@ class Plates:
     boundary_type: np.ndarray    # (N,) u8
     boundary_stress: np.ndarray  # (N,) f32, signed normal velocity, mm/yr
     boundary_speed: np.ndarray   # (N,) f32, relative plate speed, mm/yr; 0 off-boundary
+    boundary_slip: np.ndarray    # (N,) f32, the part of that along the boundary, mm/yr
     boundary_dist_km: np.ndarray  # (N,) f32, great-circle distance to nearest boundary
     nearest_boundary: np.ndarray  # (N,) i32, index of that boundary cell
     radius_km: float = 0.0       # the sphere these distances were measured on
@@ -344,8 +345,8 @@ def boundary_speed(nbr, plate_id, vel):
     from the direction to ONE neighbour, which on a hexagonal mesh can lie far off the true
     boundary normal. Measured at n=48 on two counter-rotating hemispheres, with the stress
     smoothed as `build_plates` smooths it: a purely head-on boundary gives slip/speed 0.68
-    that way, where the answer is 0, against 0.99 on a purely strike-slip one. Obliquity
-    needs a better normal than that.
+    that way, where the answer is 0, against 0.99 on a purely strike-slip one. Use
+    `boundary_slip`, which estimates the normal properly.
     """
     speed = np.zeros(plate_id.shape[0], dtype=np.float64)
     for s in range(nbr.shape[1]):
@@ -353,6 +354,56 @@ def boundary_speed(nbr, plate_id, vel):
         across = (j >= 0) & (plate_id[j] != plate_id)
         speed = np.maximum(speed, np.where(across, np.linalg.norm(vel - vel[j], axis=1), 0.0))
     return speed.astype(np.float32)
+
+
+def boundary_slip(xyz, nbr, plate_id, vel, passes):
+    """Along-boundary component of relative plate motion, mm/yr; zero off-boundary.
+
+    This is the part of `boundary_speed` that neither closes nor opens the boundary. It
+    needs the boundary's own normal, which `_classify_boundaries` never had: that takes the
+    direction to a single neighbour, and on a hexagonal mesh a jagged boundary leaves that
+    direction tens of degrees off. Here the normal starts as the mean direction to every
+    cell on the other plate and is then averaged along the belt for `passes` sweeps, with
+    the row of cells on the far side counted in reverse, since they face back this way.
+
+    Measured at n=48 on two counter-rotating hemispheres, as slip/speed where the plates
+    move appreciably. Head-on, where the answer is 0: median 0.018, p90 0.053 (p90 0.448
+    without the averaging). Pure strike-slip, where it is 1: p10 0.997.
+
+    `boundary_stress` is deliberately left as it is. Uplift is calibrated on it, and a
+    better normal there would move every orogen in the world.
+    """
+    n = plate_id.shape[0]
+    j = np.maximum(nbr, 0)
+    across = (nbr >= 0) & (plate_id[j] != plate_id[:, None])
+    b = np.flatnonzero(across.any(axis=1))
+    slip = np.zeros(n, dtype=np.float32)
+    if b.size == 0:
+        return slip
+    jb, xb, r = j[b], across[b], xyz[b]
+
+    def tangent_unit(v):
+        v = v - np.einsum("ij,ij->i", v, r)[:, None] * r
+        return v / np.maximum(np.linalg.norm(v, axis=1), 1e-30)[:, None]
+
+    normal = tangent_unit(((xyz[jb] - r[:, None, :]) * xb[:, :, None]).sum(axis=1))
+
+    # Boundary cells among each boundary cell's neighbours, as rows of `normal`. A slot that
+    # is not one indexes row -1 and is zeroed by its weight.
+    row = np.full(n, -1, dtype=np.int64)
+    row[b] = np.arange(b.size)
+    jrow = np.where(nbr[b] >= 0, row[jb], -1)
+    weight = np.where(jrow >= 0, np.where(xb, -1.0, 1.0), 0.0)
+    for _ in range(passes):
+        normal = tangent_unit(normal + (normal[jrow] * weight[:, :, None]).sum(axis=1))
+
+    # Motion relative to the plate across the boundary; the fastest, where there are two.
+    dv = vel[b][:, None, :] - vel[jb]
+    fastest = np.where(xb, np.linalg.norm(dv, axis=2), -1.0).argmax(axis=1)
+    dv = dv[np.arange(b.size), fastest]
+    closing = np.einsum("ij,ij->i", dv, normal)
+    slip[b] = np.linalg.norm(dv - closing[:, None] * normal, axis=1)
+    return slip
 
 
 def boundary_distance(is_boundary, xyz, radius_km, dist, source, max_km):
@@ -457,6 +508,8 @@ def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
     return Plates(plate_id=plate_id, sites=sites, euler_axis=axis, euler_rate=rate,
                   boundary_type=b_type, boundary_stress=b_stress,
                   boundary_speed=boundary_speed(grid.neighbours, plate_id, vel),
+                  boundary_slip=boundary_slip(grid.xyz, grid.neighbours, plate_id, vel,
+                                              p.stress_smoothing_passes),
                   boundary_dist_km=dist, nearest_boundary=source,
                   radius_km=float(grid.radius_km))
 

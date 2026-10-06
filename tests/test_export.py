@@ -210,6 +210,7 @@ def test_the_tectonics_reach_the_archive(world, tmp_path):
     pl = crust.plates
     sent = {"plate_id": pl.plate_id, "boundary_type": pl.boundary_type,
             "boundary_stress": pl.boundary_stress, "boundary_speed": pl.boundary_speed,
+            "boundary_slip": pl.boundary_slip,
             "boundary_dist_km": pl.boundary_dist_km,
             "nearest_boundary": pl.nearest_boundary,
             "crust_thickness": crust.crust_thickness, "uplift": crust.uplift,
