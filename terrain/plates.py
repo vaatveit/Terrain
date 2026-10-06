@@ -51,6 +51,11 @@ class PlateParams:
     # more often than a real plate system, where ridges and trenches organise the motion
     # that creates the plates in the first place. Raising the bar restores a plausible mix
     # without pretending to simulate the organisation.
+    #
+    # Both figures were read off the single-neighbour normal, and the threshold did not
+    # need retuning when `boundary_types` replaced it. On the boundary's own normal 1.0
+    # gives 51-52% transform (n=72 seed 1, n=785 seed 42), so the excess was understated by
+    # the noise rather than invented by it, and 2.5 gives 23-24% where it gave 24-27%.
     transform_ratio: float = 2.5
     # Domain warp applied to the Voronoi lookup, so plate boundaries -- and therefore the
     # orogens that track them -- are not dead-straight great-circle arcs.
@@ -290,7 +295,11 @@ def plate_velocity(xyz, axis, rate, plate_id, radius_km=None):
 
 @njit(cache=True)
 def _classify_boundaries(xyz, nbr, plate_id, vel, transform_ratio, b_type, b_stress):
-    """Per boundary cell, decompose relative plate motion into normal and tangential."""
+    """Per boundary cell, decompose relative plate motion into normal and tangential.
+
+    The normal is the direction to ONE neighbour across the boundary. `build_plates` keeps
+    the stress this gives and takes the type from `boundary_types` instead.
+    """
     n = xyz.shape[0]
     k = nbr.shape[1]
     for i in range(n):
@@ -356,30 +365,24 @@ def boundary_speed(nbr, plate_id, vel):
     return speed.astype(np.float32)
 
 
-def boundary_slip(xyz, nbr, plate_id, vel, passes):
-    """Along-boundary component of relative plate motion, mm/yr; zero off-boundary.
+def _boundary_motion(xyz, nbr, plate_id, vel, passes):
+    """Relative plate motion split along the boundary's OWN normal.
 
-    This is the part of `boundary_speed` that neither closes nor opens the boundary. It
-    needs the boundary's own normal, which `_classify_boundaries` never had: that takes the
-    direction to a single neighbour, and on a hexagonal mesh a jagged boundary leaves that
-    direction tens of degrees off. Here the normal starts as the mean direction to every
-    cell on the other plate and is then averaged along the belt for `passes` sweeps, with
-    the row of cells on the far side counted in reverse, since they face back this way.
+    Returns the boundary cells, and for each the closing rate (positive where the plates
+    converge) and the slip along the boundary, both mm/yr.
 
-    Measured at n=48 on two counter-rotating hemispheres, as slip/speed where the plates
-    move appreciably. Head-on, where the answer is 0: median 0.018, p90 0.053 (p90 0.448
-    without the averaging). Pure strike-slip, where it is 1: p10 0.997.
-
-    `boundary_stress` is deliberately left as it is. Uplift is calibrated on it, and a
-    better normal there would move every orogen in the world.
+    `_classify_boundaries` never had this normal: it takes the direction to a single
+    neighbour, and on a hexagonal mesh a jagged boundary leaves that direction tens of
+    degrees off. Here the normal starts as the mean direction to every cell on the other
+    plate and is then averaged along the belt for `passes` sweeps, with the row of cells on
+    the far side counted in reverse, since they face back this way.
     """
     n = plate_id.shape[0]
     j = np.maximum(nbr, 0)
     across = (nbr >= 0) & (plate_id[j] != plate_id[:, None])
     b = np.flatnonzero(across.any(axis=1))
-    slip = np.zeros(n, dtype=np.float32)
     if b.size == 0:
-        return slip
+        return b, np.zeros(0), np.zeros(0)
     jb, xb, r = j[b], across[b], xyz[b]
 
     def tangent_unit(v):
@@ -402,8 +405,67 @@ def boundary_slip(xyz, nbr, plate_id, vel, passes):
     fastest = np.where(xb, np.linalg.norm(dv, axis=2), -1.0).argmax(axis=1)
     dv = dv[np.arange(b.size), fastest]
     closing = np.einsum("ij,ij->i", dv, normal)
-    slip[b] = np.linalg.norm(dv - closing[:, None] * normal, axis=1)
+    return b, closing, np.linalg.norm(dv - closing[:, None] * normal, axis=1)
+
+
+def boundary_slip(xyz, nbr, plate_id, vel, passes):
+    """Along-boundary component of relative plate motion, mm/yr; zero off-boundary.
+
+    This is the part of `boundary_speed` that neither closes nor opens the boundary,
+    measured against the boundary's own normal: see `_boundary_motion`.
+
+    Measured at n=48 on two counter-rotating hemispheres, as slip/speed where the plates
+    move appreciably. Head-on, where the answer is 0: median 0.018, p90 0.053 (p90 0.448
+    without the averaging). Pure strike-slip, where it is 1: p10 0.997.
+
+    `boundary_stress` is deliberately left as it is. Uplift is calibrated on it, and a
+    better normal there would move every orogen in the world. `boundary_types` does use
+    this normal, and records what that moved.
+    """
+    slip = np.zeros(plate_id.shape[0], dtype=np.float32)
+    b, _, along = _boundary_motion(xyz, nbr, plate_id, vel, passes)
+    slip[b] = along
     return slip
+
+
+def boundary_types(xyz, nbr, plate_id, vel, transform_ratio, passes):
+    """Convergent, divergent or transform per boundary cell; NONE off-boundary.
+
+    The same rule `_classify_boundaries` applies -- transform where slip exceeds
+    `transform_ratio` times the closing rate -- but on the boundary's own normal. From the
+    single-neighbour one the type flickered along a boundary, and `derive_uplift` and the
+    crustal thickening both gate on the type of the nearest boundary cell, so each flicker
+    became a wedge of full orogen beside a wedge of none: mountain belts broken into
+    hard-edged blocks a kilometre or two across.
+
+    Measured at n=785, seed 42. The single-neighbour normal sits a median 27 degrees off
+    this one (p90 62). Neighbouring boundary cells facing the same plate disagreed on type
+    across 21.7% of pairs, a run of 5 cells; now 2.4%, a run of 42. The uplift step between
+    such neighbours on continental land fell from a mean 6.8 m/Myr (p90 21.4) to 1.3 (p90
+    2.2), and in the eroded world the elevation step from a mean 54 m (p99 1,331) to 19
+    (p99 118). On two counter-rotating hemispheres at n=48 a purely strike-slip boundary
+    read 302 transform, 132 convergent and 140 divergent cells, and now reads 574 transform.
+
+    What it moved, same world, whole pipeline: boundary mix 36/37/27 convergent / divergent
+    / transform to 39/38/23; mean land uplift 7.09 to 7.35 m/Myr; shipped land 29.87% to
+    29.95%; peak 2,289 m to 2,278; per-basin theta 0.2932 to 0.2928 and Hack h 0.5571 to
+    0.5554, against seed-to-seed deviations of 0.010 and 0.004. 3.2% of land moved by more
+    than 50 m. One seed: 149 and deadbeef were not re-run.
+
+    The stress does NOT come from here. Taking it from this normal as well corrects a real
+    bias -- on head-on hemispheres `boundary_stress` reads 0.73 of the closing rate -- but
+    does nothing for the blocks, since the stress is already smoothed along strike, and it
+    took theta to 0.3183 on that world and mean land uplift to 8.01. So type and stress
+    rest on different normals and can disagree on the sign of the closing: 2.1% of the
+    cells typed convergent carry a negative stress and 0.7% of those typed divergent a
+    positive one, a median 0.07 of the plate speed in size. `derive_uplift` reads the
+    magnitude only.
+    """
+    b_type = np.zeros(plate_id.shape[0], dtype=np.uint8)
+    b, closing, slip = _boundary_motion(xyz, nbr, plate_id, vel, passes)
+    b_type[b] = np.where(slip > transform_ratio * np.abs(closing), TRANSFORM,
+                         np.where(closing > 0.0, CONVERGENT, DIVERGENT))
+    return b_type
 
 
 def boundary_distance(is_boundary, xyz, radius_km, dist, source, max_km):
@@ -489,6 +551,9 @@ def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
     _classify_boundaries(np.ascontiguousarray(grid.xyz), np.ascontiguousarray(grid.neighbours),
                          np.ascontiguousarray(plate_id), vel, p.transform_ratio,
                          b_type, b_stress)
+
+    b_type = boundary_types(grid.xyz, grid.neighbours, plate_id, vel, p.transform_ratio,
+                            p.stress_smoothing_passes)
 
     is_b = b_type != NONE
     b_stress = smooth_along_boundary(np.ascontiguousarray(is_b), b_stress,

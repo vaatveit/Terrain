@@ -171,6 +171,58 @@ def test_built_plates_never_slip_faster_than_they_move(pl):
     assert np.median(pl.boundary_slip[is_b] / pl.boundary_speed[is_b]) > 0.2
 
 
+def _hemisphere_types(axis_xyz):
+    """`boundary_types` on the hemispheres of `_two_hemispheres`, and where they move."""
+    g = build_goldberg(48)
+    pid = (g.xyz[:, 0] > 0).astype(np.int16)
+    axis = np.array([axis_xyz, axis_xyz], dtype=float)
+    vel = plates.plate_velocity(g.xyz, axis, np.array([0.02, -0.02]), pid, g.radius_km)
+    p = plates.PlateParams()
+    b_type = plates.boundary_types(g.xyz, g.neighbours, pid, vel, p.transform_ratio,
+                                   p.stress_smoothing_passes)
+    speed = plates.boundary_speed(g.neighbours, pid, vel)
+    return b_type, speed > 0.5 * speed.max(), speed > 0.0
+
+
+def test_a_boundary_that_only_slides_is_transform_along_its_whole_length():
+    """Rotation about x, the pole of the boundary: no closing and no parting anywhere.
+
+    `_classify_boundaries` types these 574 cells 302 transform, 132 convergent and 140
+    divergent, because it takes the normal from one neighbour and a jagged boundary leaves
+    that tens of degrees off. `derive_uplift` gates on the type, so that scatter became
+    alternating blocks of full orogen and none along a single belt."""
+    b_type, moving, is_b = _hemisphere_types([1.0, 0.0, 0.0])
+    assert np.all(b_type[is_b] == plates.TRANSFORM)
+    assert np.all(b_type[~is_b] == plates.NONE)
+
+
+def test_a_head_on_boundary_is_never_transform():
+    """Rotation about z: all closing on one half of the great circle, all parting on the
+    other, and no slip to speak of where the plates move appreciably."""
+    b_type, moving, is_b = _hemisphere_types([0.0, 0.0, 1.0])
+    assert not (b_type[moving] == plates.TRANSFORM).any()
+    assert (b_type[moving] == plates.CONVERGENT).any()
+    assert (b_type[moving] == plates.DIVERGENT).any()
+
+
+def test_boundary_type_does_not_flicker_along_strike(g, pl):
+    """Neighbouring boundary cells on one plate should mostly agree on what the boundary is.
+
+    The share of such pairs that disagree, n=72, seeds 1 / 2 / 3 / 5 / 13: 0.293 / 0.320 /
+    0.258 / 0.313 / 0.282 from the single-neighbour normal, 0.075 / 0.069 / 0.067 / 0.075 /
+    0.054 from the boundary's own. What is left is real: obliquity crossing
+    `transform_ratio`, and the ends of a boundary at a triple junction."""
+    t = pl.boundary_type
+    is_b = t != plates.NONE
+    differ = pairs = 0
+    for s in range(g.neighbours.shape[1]):
+        j = g.neighbours[:, s]
+        ok = (j >= 0) & is_b & is_b[j] & (pl.plate_id == pl.plate_id[j])
+        differ += (t[ok] != t[j[ok]]).sum()
+        pairs += ok.sum()
+    assert differ / pairs < 0.12, f"{differ / pairs:.1%} of along-strike pairs disagree"
+
+
 def test_boundary_distance_is_zero_on_boundaries_and_grows_inward(g, pl):
     is_b = pl.boundary_type != plates.NONE
     d = pl.boundary_dist_km
@@ -200,7 +252,8 @@ def test_boundary_mix_is_plausible(g, pl):
 
     The naive threshold (transform whenever tangential exceeds normal) gave 44% transform,
     because random Euler poles produce oblique motion far more often than a real plate
-    system does.
+    system does. That was read off the single-neighbour normal; on the boundary's own it is
+    52% on this fixture, and 24% at the shipped ratio either way.
     """
     b = pl.boundary_type[pl.boundary_type != plates.NONE]
     frac_transform = (b == plates.TRANSFORM).mean()

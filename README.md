@@ -367,7 +367,7 @@ exchange (BWk 18.3% → 13.4%).
 | `min_separation_deg` | 18 | Poisson-disk spacing; without it plate sizes are lottery-distributed |
 | `lloyd_iterations` | 3 | higher = more uniform plates, less natural variety |
 | `max_speed_mm_per_yr` | 80 | plate speed; Earth runs 10–100 |
-| `transform_ratio` | 2.5 | a boundary is transform when tangential motion exceeds this × normal. At 1.0 you get 44% transform against Earth's ~20% |
+| `transform_ratio` | 2.5 | a boundary is transform when tangential motion exceeds this × normal. At 1.0 you get 44% transform against Earth's ~20% — 51% now that the type is read off the boundary's own normal (`plates.boundary_types`), and 23–24% at 2.5 either way |
 | `boundary_warp` / `_frequency` | 0.10 / 2.5 | bends plate boundaries. **Set to 0 and mountain ranges render as dead-straight lines** |
 | `stress_smoothing_passes` | 8 | averages boundary stress along strike before it is propagated inland. **At 0, each boundary cell hands its stress to its own wedge of interior cells and orogens render as hard stripes fanning out from the belt** |
 | `u_max_m_per_myr` | 100 | peak orogenic uplift. Sets relief with `LemParams.K`, and hilltop curvature (`U/D`) with `LemParams.D` |
