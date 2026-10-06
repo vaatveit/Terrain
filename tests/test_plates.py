@@ -102,6 +102,35 @@ def test_convergence_sign_is_right_way_round():
     assert np.all(b_stress[b_type == plates.DIVERGENT] < 0)
 
 
+def test_boundary_speed_is_the_full_slip_rate_where_plates_only_slide():
+    """Two plates counter-rotating about the pole of their own boundary slide past each
+    other and neither close nor part. The normal component alone calls that boundary
+    quiet; the relative speed is what says a fault is moving, and how fast.
+    """
+    g = build_goldberg(48)
+    pid = (g.xyz[:, 0] > 0).astype(np.int16)  # boundary is the great circle x = 0
+    axis = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    rate = np.array([0.02, -0.02])  # counter-rotating about the boundary's pole
+    vel = plates.plate_velocity(g.xyz, axis, rate, pid, g.radius_km)
+
+    speed = plates.boundary_speed(g.neighbours, pid, vel)
+
+    boundary = np.zeros(g.cell_count, dtype=bool)
+    for s in range(g.neighbours.shape[1]):
+        j = g.neighbours[:, s]
+        ok = j >= 0
+        boundary[ok] |= pid[ok] != pid[j[ok]]
+    slip = 2 * 0.02 * g.radius_km  # rad/Myr x km, and km/Myr == mm/yr
+    assert speed[boundary] == pytest.approx(slip, rel=0.01)
+    assert np.all(speed[~boundary] == 0.0)
+
+
+def test_built_plates_carry_speed_on_boundaries_and_nowhere_else(pl):
+    is_b = pl.boundary_type != plates.NONE
+    assert np.all(pl.boundary_speed[is_b] > 0.0)
+    assert np.all(pl.boundary_speed[~is_b] == 0.0)
+
+
 def test_boundary_distance_is_zero_on_boundaries_and_grows_inward(g, pl):
     is_b = pl.boundary_type != plates.NONE
     d = pl.boundary_dist_km
@@ -230,6 +259,17 @@ def test_tectonic_stage1_produces_the_declared_outputs(g):
     # Not `elevation[land_mask] > 0`: inland basins are land with a floor below the datum.
     # See test_noise_stage1.test_elevation_is_referenced_to_sea_level for the real invariant.
     assert np.all(c.elevation[~c.land_mask] <= 0)
+
+
+def test_tectonic_stage1_keeps_which_crust_is_continental(g):
+    """Crust type decides arc from collision from rift, and it is not recoverable from
+    thickness once the orogens have thickened it. It used to be a local that died with
+    the function."""
+    c = stage1.generate_crust_tectonic(g, seed=2)
+    assert c.is_continental.dtype == bool
+    assert c.is_continental.shape[0] == g.cell_count
+    share = g.area[c.is_continental].sum() / g.area.sum()
+    assert share == pytest.approx(stage1.CrustParams().continental_fraction, abs=0.01)
 
 
 def test_tectonic_thickening_builds_crustal_roots(g):

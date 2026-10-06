@@ -285,6 +285,7 @@ class TectonicCrust(Crust):
     boundary_stress: np.ndarray = None
     margin_class: np.ndarray = None
     uplift: np.ndarray = None
+    is_continental: np.ndarray = None
 
 
 def generate_crust_tectonic(grid, params: CrustParams = None,
@@ -418,6 +419,7 @@ def generate_crust_tectonic(grid, params: CrustParams = None,
         boundary_stress=pl.boundary_stress,
         margin_class=margin,
         uplift=uplift,
+        is_continental=is_continental,
     )
 
 

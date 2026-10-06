@@ -71,6 +71,9 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                  lake_mask=None, lake_level_m=None, lake_depth_m=None, lake_id=None,
                  endorheic=None, lakes=None,
                  temperature_monthly_c=None, precipitation_monthly_mm=None, months=None,
+                 plate_id=None, boundary_type=None, boundary_stress=None,
+                 boundary_speed=None, boundary_dist_km=None, nearest_boundary=None,
+                 crust_thickness=None, uplift=None, is_continental=None,
                  params=None, metrics_summary=None) -> ExportResult:
     """Write the native archive and the manifest."""
     out_dir = pathlib.Path(out_dir)
@@ -103,6 +106,20 @@ def export_world(out_dir, grid, elevation, land_mask, seed, *, slope=None,
                       # thing that knows where mountains meet the sea was recomputable only
                       # by regenerating the plates.
                       ("margin_class", margin_class),
+                      # The rest of what Stage 1 knew. Erosion reworks the elevation these
+                      # produced, so none of it can be read back off the finished world, and
+                      # anything scored against plate setting -- arc, collision, rift -- needs
+                      # it. `nearest_boundary` is what carries a boundary cell's type, stress
+                      # and speed inland: index the three with it.
+                      ("plate_id", plate_id),
+                      ("boundary_type", boundary_type),
+                      ("boundary_stress", boundary_stress),
+                      ("boundary_speed", boundary_speed),
+                      ("boundary_dist_km", boundary_dist_km),
+                      ("nearest_boundary", nearest_boundary),
+                      ("crust_thickness", crust_thickness),
+                      ("uplift", uplift),
+                      ("is_continental", as_flag(is_continental)),
                       ("lake_mask", as_flag(lake_mask)),
                       ("lake_level_m", lake_level_m),
                       ("lake_depth_m", lake_depth_m),

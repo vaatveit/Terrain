@@ -1,7 +1,9 @@
 # Mineral distribution: what the geology says, and what this pipeline can place
 
-**Status: research and proposal. Nothing in this file is implemented.** Written 2026-10-05
-from a literature search plus a read of the code as it stood at commit `3231ff2`.
+**Status: research and proposal, with item 1 of the build order implemented.** Written
+2026-10-05 from a literature search plus a read of the code as it stood at commit `3231ff2`;
+[What the pipeline lacks](#what-the-pipeline-lacks) describes that commit, and the build
+order marks what has changed since.
 
 **Goal:** have terrain generation identify where mineral deposits could plausibly occur, from
 the same processes that already shape the world: plate tectonics, erosion and weathering, and
@@ -264,11 +266,19 @@ Scoped to copper, iron and gold, per [Decisions](#decisions). Ranked by value fo
 is S, M or L. Items 1 to 3 are prerequisites, item 4 delivers most of the copper and gold, and
 item 5 delivers most of the iron.
 
-1. **Export the Stage 1 tectonic fields (S).** `boundary_type`, `boundary_stress`,
-   `boundary_dist_km`, `crust_thickness`, `uplift` and continental versus oceanic crust.
-   Keep the tangential component of boundary motion, which is currently discarded.
+1. **Export the Stage 1 tectonic fields (S). Done.** `world.npz` now carries `plate_id`,
+   `boundary_type`, `boundary_stress`, `boundary_speed`, `boundary_dist_km`,
+   `nearest_boundary`, `crust_thickness`, `uplift` and `is_continental`; the README field
+   table documents each. `boundary_speed` is new: the total relative plate speed on a
+   boundary cell, which is exact where `boundary_stress` is an estimate.
 2. **Sub-classify boundaries (S–M).** Split arc, collision, rift and transform by crust type
-   on each side, and compute bends in the boundary trace.
+   on each side, and compute bends in the boundary trace. **Obliquity needs its own normal.**
+   The plan was to difference speed and stress to get slip along the boundary. Measured, that
+   does not work: `boundary_stress` takes its normal from the direction to one neighbour, and
+   on two counter-rotating hemispheres at n=48 a purely head-on boundary reads slip/speed 0.68
+   where the answer is 0, against 0.99 on a purely strike-slip one. This item has to estimate
+   the boundary normal properly, and must leave `boundary_stress` alone, since uplift is
+   calibrated on it.
 3. **Exhumation proxy (S).** Uplift × run time, which equals erosion at steady state, to
    separate shallow, mid and deep deposits and to score preservation. A true cumulative-erosion
    accumulator in `stage2.evolve` is M and can wait until the proxy proves inadequate.

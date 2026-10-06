@@ -240,6 +240,17 @@ def main():
         lake_level_m=hyd.lake_level_m, lake_depth_m=hyd.lake_depth_m,
         lake_id=hyd.lake_id, endorheic=hyd.endorheic, lakes=hyd.lakes,
         temperature_monthly_c=t_month, precipitation_monthly_mm=p_month, months=months,
+        # Stage 1's plates, as generated. Unlike `margin` these are not re-derived after the
+        # reflood: boundary type, motion and distance are geometry, not coastline. `uplift`
+        # is the one field here that was masked by the Stage 1 coast, and it is exported as
+        # the field erosion actually ran on.
+        plate_id=crust.plate_id, boundary_type=crust.boundary_type,
+        boundary_stress=crust.boundary_stress,
+        boundary_speed=crust.plates.boundary_speed,
+        boundary_dist_km=crust.plates.boundary_dist_km,
+        nearest_boundary=crust.plates.nearest_boundary,
+        crust_thickness=crust.crust_thickness, uplift=crust.uplift,
+        is_continental=crust.is_continental,
         params=params, metrics_summary=summary)
     for name, path in res.files.items():
         size = pathlib.Path(path).stat().st_size / 1e6

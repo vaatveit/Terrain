@@ -199,6 +199,32 @@ def test_the_seasonal_cycle_reaches_the_archive(world, tmp_path):
                        c.precipitation_mm[wet], rtol=1e-4)
 
 
+def test_the_tectonics_reach_the_archive(world, tmp_path):
+    """Stage 1 knows where the plates meet, how they move and which crust is continental,
+    and all of it used to stop at the export. Anything scored against plate setting needs
+    these, and none is recoverable from the elevation that erosion has since reworked.
+
+    Exported separately from the fixture for the same reason as the monthly fields: the
+    bytes-per-cell bound there guards against storing geometry."""
+    g, crust, res, b, ex, hyd = world
+    pl = crust.plates
+    sent = {"plate_id": pl.plate_id, "boundary_type": pl.boundary_type,
+            "boundary_stress": pl.boundary_stress, "boundary_speed": pl.boundary_speed,
+            "boundary_dist_km": pl.boundary_dist_km,
+            "nearest_boundary": pl.nearest_boundary,
+            "crust_thickness": crust.crust_thickness, "uplift": crust.uplift,
+            "is_continental": crust.is_continental}
+    ex2 = export.export_world(tmp_path, g, res.elevation, crust.land_mask, seed=1, **sent)
+    _, fields, _ = export.load_native(ex2.files["native"])
+
+    for name, arr in sent.items():
+        assert np.array_equal(fields[name], arr), f"{name} did not round-trip"
+    # Masks travel as uint8, like land_mask.
+    assert fields["is_continental"].dtype == np.uint8
+    # The index that carries a boundary's properties inland has to stay an index.
+    assert fields["nearest_boundary"].dtype == np.int32
+
+
 def test_native_archive_rebuilds_the_grid_rather_than_storing_it(world):
     """Geometry is regenerable from n, so it must not be paying to store it: the cached
     grid at n=785 alone is 650 MB."""

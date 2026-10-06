@@ -174,6 +174,7 @@ class Plates:
     euler_rate: np.ndarray       # (P,) rad/Myr
     boundary_type: np.ndarray    # (N,) u8
     boundary_stress: np.ndarray  # (N,) f32, signed normal velocity, mm/yr
+    boundary_speed: np.ndarray   # (N,) f32, relative plate speed, mm/yr; 0 off-boundary
     boundary_dist_km: np.ndarray  # (N,) f32, great-circle distance to nearest boundary
     nearest_boundary: np.ndarray  # (N,) i32, index of that boundary cell
     radius_km: float = 0.0       # the sphere these distances were measured on
@@ -331,6 +332,29 @@ def _classify_boundaries(xyz, nbr, plate_id, vel, transform_ratio, b_type, b_str
     return b_type, b_stress
 
 
+def boundary_speed(nbr, plate_id, vel):
+    """Relative plate speed across each boundary cell, mm/yr; zero off-boundary.
+
+    `boundary_stress` keeps only the normal component, so a boundary whose plates slide
+    past each other without closing or parting reads as quiet. This is the whole of the
+    motion, and it is exact: it does not depend on which way the neighbour across the
+    boundary happens to lie.
+
+    Do NOT recover slip as sqrt(speed^2 - stress^2). `boundary_stress` takes its normal
+    from the direction to ONE neighbour, which on a hexagonal mesh can lie far off the true
+    boundary normal. Measured at n=48 on two counter-rotating hemispheres, with the stress
+    smoothed as `build_plates` smooths it: a purely head-on boundary gives slip/speed 0.68
+    that way, where the answer is 0, against 0.99 on a purely strike-slip one. Obliquity
+    needs a better normal than that.
+    """
+    speed = np.zeros(plate_id.shape[0], dtype=np.float64)
+    for s in range(nbr.shape[1]):
+        j = nbr[:, s]
+        across = (j >= 0) & (plate_id[j] != plate_id)
+        speed = np.maximum(speed, np.where(across, np.linalg.norm(vel - vel[j], axis=1), 0.0))
+    return speed.astype(np.float32)
+
+
 def boundary_distance(is_boundary, xyz, radius_km, dist, source, max_km):
     """True great-circle distance to the nearest boundary cell, and which cell that is.
 
@@ -432,6 +456,7 @@ def build_plates(grid, params: PlateParams = None, seed=0) -> Plates:
 
     return Plates(plate_id=plate_id, sites=sites, euler_axis=axis, euler_rate=rate,
                   boundary_type=b_type, boundary_stress=b_stress,
+                  boundary_speed=boundary_speed(grid.neighbours, plate_id, vel),
                   boundary_dist_km=dist, nearest_boundary=source,
                   radius_km=float(grid.radius_km))
 
