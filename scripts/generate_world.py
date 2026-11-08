@@ -60,8 +60,9 @@ def load_or_build(n):
 #                                   default        continents
 #     landmasses >= 5% of land      3 / 2 / 3      4 / 5 / 4
 #     top-three share of land       81-90%         62-71%
-#     landmasses kept               50-56          49-74
-#     land uplifting > 20 m/Myr     9-13%          17-19%
+#     landmasses kept               50-56          49-76
+#     land uplifting > 20 m/Myr     9-13%          21-25%
+#     land uplifting > 50 m/Myr     --             10-12%
 #
 # How each knob earns its place:
 #   * crust_frequency 1.0 splits the land into more continents. On its own it also doubles
@@ -70,30 +71,53 @@ def load_or_build(n):
 #     outline detail, and less drowned shelf above which relief texture pokes as speckle.
 #   * plate_count 30 puts more boundaries across the land. Alone it moves mountain land
 #     only 9-13% -> 12-14%; 40 plates does no better than 30.
-#   * belt_width 2 is the larger lever (to 18-20% with 30 plates). It widens the belts and
-#     leaves the peak uplift RATE alone, since u_max_m_per_myr is a spent budget -- see
-#     PlateParams. The eroded peaks still come out higher, because rivers have more rising
-#     ground to cross before they reach the sea.
+#   * belt_width is the larger lever: 2 takes mountain land to 18-20% with 30 plates, 3 to
+#     21-25%. It widens the belts and leaves the peak uplift RATE alone, since
+#     u_max_m_per_myr is a spent budget -- see PlateParams. The eroded peaks still come out
+#     higher, because rivers have more rising ground to cross before they reach the sea.
+#     The preset was 2 at first; 3 was kept after the full-pipeline run below showed it
+#     costs nothing further in the rivers.
 #
-# Full pipeline, n=256, seed 2, steps 600, passes 3:
+# Full pipeline, n=256, seed 2, steps 600, passes 3, measured on the exported coastline:
 #
-#                             earth     continents
-#     landmasses >= 5%        2         5
-#     peaks after erosion     762 m     1,402 m
-#     largest basin           85 km^2   32 km^2
-#     per-basin theta         0.416     nan
-#     Hack h                  0.560     0.590    (SRTM 9-tile 0.513)
+#                             earth     belt 2    continents (belt 3)
+#     landmasses >= 5%        2         6         6
+#     land above 300 m        2%        4%        6%
+#     land above 1,000 m      0%        0.5%      1.0%
+#     peaks after erosion     762 m     1,402 m   1,565 m
+#     largest basin           85 km^2   32 km^2   34 km^2
+#     per-basin theta         0.416     nan       nan
+#     Hack h                  0.560     0.590     0.555    (SRTM 9-tile 0.513)
+#
+# Seed 2 is the high end for relief. The preset on seeds 1-5:
+#
+#     seed                    1      2      3      4      5
+#     landmasses >= 5%        4      6      5      5      5
+#     largest, % of land      29%    30%    32%    33%    34%
+#     land above 300 m        2%     6%     4%     4%     7%
+#     peaks after erosion     681    1565   940    908    1661 m
+#     largest basin, km^2     38     34     41     36     39
+#     Hack h                  0.544  0.555  0.491  0.509  0.455
+#
+# The continents hold up on every seed; the relief does not, and the default was only run
+# on seed 2, so the gain on the others is not measured.
 #
 # The nan is the cost to know about. Smaller continents with more divides give shorter
 # rivers: no basin reaches the 400 channel cells `slope_area_by_basin` asks for, and none
 # fits with r2 > 0.5 even at 100. The default world only clears that bar with 2 basins at
 # n=256, so it is partly a resolution limit -- but the drainage metrics on a world built
 # with this preset do not compare with the defaults' and were not tuned for it.
+#
+# More land brings the rivers back. Adding --target-land-fraction 0.35
+# --continental-fraction 0.39 --crust-frequency 1.1 on the same seed gave 34% land, 5
+# landmasses >= 5%, peaks 1,908 m, a 138 km^2 basin and per-basin theta 0.302 -- but the
+# central continents joined into one holding half the land, and erosion was still moving
+# 19 m a pass at the end against 7-9 m for the others. One seed; not made the preset.
 PRESETS = {
     "earth": {},
     "continents": {
         "crust_frequency": 1.0, "crust_octaves": 2, "continental_fraction": 0.33,
-        "plate_count": 30, "belt_width": 2.0,
+        "plate_count": 30, "belt_width": 3.0,
     },
 }
 

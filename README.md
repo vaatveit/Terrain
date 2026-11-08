@@ -94,20 +94,33 @@ same `n` and a 98× larger sphere, and would otherwise be loaded silently.
 **`--preset continents` gives up some Earth-likeness for a more useful map:** several large
 landmasses instead of one dominant one plus islands, and about twice the land in mountain
 belts. It sets `--crust-frequency 1.0 --crust-octaves 2 --continental-fraction 0.33
---plate-count 30 --belt-width 2`. Measured on Stage 1 at n=256, seeds 1–3:
+--plate-count 30 --belt-width 3`. Measured on Stage 1 at n=256, seeds 1–3:
 
 | | `earth` | `continents` |
 |---|---|---|
 | landmasses holding ≥5% of land | 3 / 2 / 3 | 4 / 5 / 4 |
 | top-three share of land | 81–90% | 62–71% |
-| landmasses kept | 50–56 | 49–74 |
-| land uplifting > 20 m/Myr | 9–13% | 17–19% |
+| landmasses kept | 50–56 | 49–76 |
+| land uplifting > 20 m/Myr | 9–13% | 21–25% |
 
-Through the full pipeline (n=256, seed 2) the preset gives 5 landmasses holding ≥5% of land
-against the default's 2, and peaks of 1,402 m against 762 m. **The cost is the rivers:**
-the largest basin shrinks from 85 to 32 km², so per-basin θ reports `nan` (no basin is
-big enough to fit), and Hack h moves from 0.560 to 0.590 against SRTM's 0.513. The drainage
-metrics on a preset world are not comparable to the defaults'.
+Through the full pipeline (n=256, seed 2) the preset gives 6 landmasses holding ≥5% of land
+against the default's 2, three times the land above 300 m (6% against 2%), and peaks of
+1,565 m against 762 m. **The cost is the rivers:** the largest basin shrinks from 85 to
+34 km², so per-basin θ reports `nan` (no basin is big enough to fit). Hack h is 0.555
+against the default's 0.560 and SRTM's 0.513. The drainage metrics on a preset world are
+not comparable to the defaults'.
+
+Seed 2 is on the high side for relief. Over seeds 1–5 the preset gave 4–6 landmasses
+holding ≥5% of land on every seed, with the largest holding 29–34%. The relief varied
+much more: peaks 681–1,661 m, land above 300 m 2–7%, and only seeds 2 and 5 had any
+ground above 1,000 m. No seed produced a basin big enough for per-basin θ. The default
+was only run on seed 2, so how much the preset raises relief on the other seeds is not
+measured.
+
+**For bigger landmasses**, add `--target-land-fraction 0.35 --continental-fraction 0.39
+--crust-frequency 1.1`. On seed 2 that gave 34% land, peaks of 1,908 m and per-basin θ
+0.302, because the longer rivers come back. But the central continents joined into one
+holding half the land, so expect fewer, larger landmasses and try a few seeds.
 
 Continent count is still drawn from noise, so it varies by seed. The reasoning behind each
 value is at `PRESETS` in `scripts/generate_world.py`.
