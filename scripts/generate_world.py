@@ -8,6 +8,7 @@ Run:  .venv\\Scripts\\python.exe scripts\\generate_world.py --n 256 --out data/w
 """
 
 import argparse
+import dataclasses
 import json
 import pathlib
 import sys
@@ -48,33 +49,128 @@ def load_or_build(n):
     return g
 
 
+# Named bundles of the world-shape flags. A flag passed explicitly beats the preset, and
+# the preset beats the dataclass default, so `--preset continents --plate-count 24` is the
+# preset with fewer plates.
+#
+# `continents` trades Earth-likeness for usefulness: several large landmasses instead of
+# one dominant one, and more of each in mountain belts. Measured on Stage 1 alone at n=256,
+# seeds 1-3, against the defaults:
+#
+#                                   default        continents
+#     landmasses >= 5% of land      3 / 2 / 3      4 / 5 / 4
+#     top-three share of land       81-90%         62-71%
+#     landmasses kept               50-56          49-74
+#     land uplifting > 20 m/Myr     9-13%          17-19%
+#
+# How each knob earns its place:
+#   * crust_frequency 1.0 splits the land into more continents. On its own it also doubles
+#     the islands (82-106 landmasses); 1.2 gives more continents still but ~130 landmasses.
+#   * crust_octaves 2 and continental_fraction 0.33 take most of those islands back: less
+#     outline detail, and less drowned shelf above which relief texture pokes as speckle.
+#   * plate_count 30 puts more boundaries across the land. Alone it moves mountain land
+#     only 9-13% -> 12-14%; 40 plates does no better than 30.
+#   * belt_width 2 is the larger lever (to 18-20% with 30 plates). It widens the belts and
+#     leaves the peak uplift RATE alone, since u_max_m_per_myr is a spent budget -- see
+#     PlateParams. The eroded peaks still come out higher, because rivers have more rising
+#     ground to cross before they reach the sea.
+#
+# Full pipeline, n=256, seed 2, steps 600, passes 3:
+#
+#                             earth     continents
+#     landmasses >= 5%        2         5
+#     peaks after erosion     762 m     1,402 m
+#     largest basin           85 km^2   32 km^2
+#     per-basin theta         0.416     nan
+#     Hack h                  0.560     0.590    (SRTM 9-tile 0.513)
+#
+# The nan is the cost to know about. Smaller continents with more divides give shorter
+# rivers: no basin reaches the 400 channel cells `slope_area_by_basin` asks for, and none
+# fits with r2 > 0.5 even at 100. The default world only clears that bar with 2 basins at
+# n=256, so it is partly a resolution limit -- but the drainage metrics on a world built
+# with this preset do not compare with the defaults' and were not tuned for it.
+PRESETS = {
+    "earth": {},
+    "continents": {
+        "crust_frequency": 1.0, "crust_octaves": 2, "continental_fraction": 0.33,
+        "plate_count": 30, "belt_width": 2.0,
+    },
+}
+
+
+def plate_params_for(plate_count, separation_deg, belt_width):
+    """PlateParams for the CLI's three plate knobs; anything left None keeps its default.
+
+    The minimum separation follows the plate count unless given: 18 degrees was chosen for
+    18 plates, and spacing on a sphere goes as 1/sqrt(count), so 30 plates get ~13.9. Left at
+    18 the Poisson-disk sampler cannot fit them and falls back on relaxing the bar in steps.
+
+    `belt_width` scales the collision-orogen decay and the volcanic-arc width together --
+    the two terms that make a range. Arc offset, rift shoulders and transforms are left
+    alone: the sweep that chose the preset only measured those two.
+    """
+    d = plates.PlateParams()
+    count = d.plate_count if plate_count is None else plate_count
+    if separation_deg is None:
+        separation_deg = d.min_separation_deg * (d.plate_count / count) ** 0.5
+    w = 1.0 if belt_width is None else belt_width
+    return dataclasses.replace(
+        d, plate_count=count, min_separation_deg=separation_deg,
+        orogen_decay_km=d.orogen_decay_km * w, arc_width_km=d.arc_width_km * w)
+
+
 def main():
     crust_defaults = stage1.CrustParams()
+    plate_defaults = plates.PlateParams()
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=256)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--steps", type=int, default=600)
     ap.add_argument("--passes", type=int, default=3)
-    ap.add_argument("--target-land-fraction", type=float,
-                    default=crust_defaults.target_land_fraction,
+    ap.add_argument("--preset", choices=sorted(PRESETS), default="earth",
+                    help="named world shape; explicit flags below override it. 'continents' "
+                         "gives several large landmasses with more mountain belts "
+                         "(default %(default)s)")
+    # World-shape flags default to None so an explicit value can be told apart from "not
+    # given", which is what lets them override the preset.
+    ap.add_argument("--target-land-fraction", type=float, default=None,
                     help="share of the globe above sea level; sea level is solved to hit it "
-                         "(default %(default)s)")
-    ap.add_argument("--continental-fraction", type=float,
-                    default=crust_defaults.continental_fraction,
+                         f"(default {crust_defaults.target_land_fraction})")
+    ap.add_argument("--continental-fraction", type=float, default=None,
                     help="share of SURFACE that is continental crust; the excess drowns as "
-                         "shelf (default %(default)s)")
-    ap.add_argument("--crust-frequency", type=float,
-                    default=crust_defaults.crust_frequency,
+                         f"shelf (default {crust_defaults.continental_fraction})")
+    ap.add_argument("--crust-frequency", type=float, default=None,
                     help="continent size: higher breaks land into more, smaller continents "
-                         "(default %(default)s)")
+                         f"(default {crust_defaults.crust_frequency})")
+    ap.add_argument("--crust-octaves", type=int, default=None,
+                    help="detail in the continent outline; fewer means fewer offshore "
+                         f"islands (default {crust_defaults.crust_octaves})")
+    ap.add_argument("--plate-count", type=int, default=None,
+                    help="tectonic plates; more puts more mountain-building boundaries "
+                         f"across the land (default {plate_defaults.plate_count})")
+    ap.add_argument("--plate-separation-deg", type=float, default=None,
+                    help="minimum spacing between plate seeds; follows --plate-count unless "
+                         f"given (default {plate_defaults.min_separation_deg} at "
+                         f"{plate_defaults.plate_count} plates)")
+    ap.add_argument("--belt-width", type=float, default=None,
+                    help="multiplier on mountain-belt width; same peak uplift rate, but "
+                         "eroded peaks come out higher (default 1.0)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-glacial", action="store_true")
     args = ap.parse_args()
 
-    crust_params = stage1.CrustParams(
-        target_land_fraction=args.target_land_fraction,
-        continental_fraction=args.continental_fraction,
-        crust_frequency=args.crust_frequency)
+    preset = PRESETS[args.preset]
+
+    def pick(name):
+        v = getattr(args, name)
+        return preset.get(name) if v is None else v
+
+    crust_params = dataclasses.replace(crust_defaults, **{
+        k: v for k in ("target_land_fraction", "continental_fraction", "crust_frequency",
+                       "crust_octaves")
+        if (v := pick(k)) is not None})
+    plate_params = plate_params_for(pick("plate_count"), pick("plate_separation_deg"),
+                                    pick("belt_width"))
 
     out_dir = pathlib.Path(args.out or (ROOT / "data" / f"world_n{args.n}_s{args.seed}"))
     t_start = time.perf_counter()
@@ -84,11 +180,17 @@ def main():
     print(f"    {grid.cell_count:,} cells, "
           f"{np.mean(grid.arc_dist[grid.neighbours >= 0]):.2f} km spacing")
 
-    print("[1] tectonic crust")
-    crust = stage1.generate_crust_tectonic(grid, crust_params, seed=args.seed)
+    print(f"[1] tectonic crust (preset {args.preset})")
+    crust = stage1.generate_crust_tectonic(grid, crust_params, plate_params=plate_params,
+                                           seed=args.seed)
     land, is_ocean = crust.land_mask, ~crust.land_mask
-    print(f"    land {crust.land_fraction:.1%}, {len(crust.landmass_areas)} landmasses, "
+    areas = crust.landmass_areas
+    print(f"    land {crust.land_fraction:.1%}, {len(areas)} landmasses "
+          f"({int((areas >= 0.05 * areas.sum()).sum())} holding >= 5% of land), "
           f"relief {crust.elevation.min():,.0f}..{crust.elevation.max():,.0f} m")
+    print(f"    {crust.plates.sites.shape[0]} plates, "
+          f"{grid.area[land & (crust.uplift > 20.0)].sum() / grid.area[land].sum():.1%} "
+          f"of land uplifting > 20 m/Myr")
 
     print(f"[2-4] landscape evolution, {args.passes} passes coupled with climate")
     per_pass = max(1, args.steps // args.passes)
@@ -249,7 +351,9 @@ def main():
     params = {
         # The one that RAN, not a fresh default -- the two now differ whenever a crust flag
         # is passed, and the provenance file is the only record of which world this is.
-        "crust": crust_params.__dict__, "plates": plates.PlateParams().__dict__,
+        # Plates likewise: they were a fresh default here until the plate flags existed.
+        "preset": args.preset,
+        "crust": crust_params.__dict__, "plates": plate_params.__dict__,
         "lem": stage2.LemParams().__dict__, "climate": climate.ClimateParams().__dict__,
         "glacial": None if args.no_glacial else glacial.GlacialParams().__dict__,
         "hydrology": hydrology.HydrologyParams().__dict__,

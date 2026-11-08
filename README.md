@@ -82,6 +82,35 @@ same `n` and a 98× larger sphere, and would otherwise be loaded silently.
 | `--passes` | 3 | climate–erosion coupling passes |
 | `--out` | `data/world_n<N>_s<S>` | output directory |
 | `--no-glacial` | off | skip stage 5 |
+| `--preset` | `earth` | named world shape: `earth` (the dataclass defaults) or `continents` (below). Any world-shape flag passed explicitly overrides it |
+| `--target-land-fraction` | 0.29 | share of the globe above sea level |
+| `--continental-fraction` | 0.40 | share of surface that is continental crust |
+| `--crust-frequency` | 0.7 | continent size; higher = more, smaller continents |
+| `--crust-octaves` | 3 | continent outline detail; fewer = fewer offshore islands |
+| `--plate-count` | 18 | tectonic plates; more = more mountain-building boundaries across land |
+| `--plate-separation-deg` | 18.0 | minimum plate-seed spacing; scales as `18·√(18/count)` unless given |
+| `--belt-width` | 1.0 | multiplier on collision-orogen decay and volcanic-arc width; wider ranges at the same peak uplift rate, though eroded peaks come out higher |
+
+**`--preset continents` gives up some Earth-likeness for a more useful map:** several large
+landmasses instead of one dominant one plus islands, and about twice the land in mountain
+belts. It sets `--crust-frequency 1.0 --crust-octaves 2 --continental-fraction 0.33
+--plate-count 30 --belt-width 2`. Measured on Stage 1 at n=256, seeds 1–3:
+
+| | `earth` | `continents` |
+|---|---|---|
+| landmasses holding ≥5% of land | 3 / 2 / 3 | 4 / 5 / 4 |
+| top-three share of land | 81–90% | 62–71% |
+| landmasses kept | 50–56 | 49–74 |
+| land uplifting > 20 m/Myr | 9–13% | 17–19% |
+
+Through the full pipeline (n=256, seed 2) the preset gives 5 landmasses holding ≥5% of land
+against the default's 2, and peaks of 1,402 m against 762 m. **The cost is the rivers:**
+the largest basin shrinks from 85 to 32 km², so per-basin θ reports `nan` (no basin is
+big enough to fit), and Hack h moves from 0.560 to 0.590 against SRTM's 0.513. The drainage
+metrics on a preset world are not comparable to the defaults'.
+
+Continent count is still drawn from noise, so it varies by seed. The reasoning behind each
+value is at `PRESETS` in `scripts/generate_world.py`.
 
 `render_world.py` takes `--width` (default 4096) and `--resample` (`nearest` \| `barycentric` \| `c1`) — the raster is a rendering concern and lives there now, not in the export.
 
@@ -284,8 +313,8 @@ result = coupled.run(
     passes=3, steps_per_pass=200)
 ```
 
-`scripts/generate_world.py` exposes only `--target-land-fraction`,
-`--continental-fraction` and `--crust-frequency` and takes defaults for the rest, so **edit
+`scripts/generate_world.py` exposes only the world-shape knobs listed under
+[Command-line options](#command-line-options) and takes defaults for the rest, so **edit
 the dataclass defaults or call the modules directly** to change anything not exposed as a
 CLI flag.
 
