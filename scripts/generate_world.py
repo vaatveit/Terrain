@@ -80,24 +80,29 @@ def load_or_build(n):
 #
 # Full pipeline, n=256, seed 2, steps 600, passes 3, measured on the exported coastline:
 #
-#                             earth     belt 2    continents (belt 3)
+#                             earth     belt 2*   continents (belt 3)
 #     landmasses >= 5%        2         6         6
 #     land above 300 m        2%        4%        6%
 #     land above 1,000 m      0%        0.5%      1.0%
-#     peaks after erosion     762 m     1,402 m   1,565 m
-#     largest basin           85 km^2   32 km^2   34 km^2
-#     per-basin theta         0.416     nan       nan
-#     Hack h                  0.560     0.590     0.555    (SRTM 9-tile 0.513)
+#     peaks after erosion     760 m     1,402 m   1,565 m
+#     largest basin           88 km^2   32 km^2   25 km^2
+#     per-basin theta         0.315     nan       nan
+#     Hack h                  0.567     0.590     0.570    (SRTM 9-tile 0.513)
 #
 # Seed 2 is the high end for relief. The preset on seeds 1-5:
 #
 #     seed                    1      2      3      4      5
 #     landmasses >= 5%        4      6      5      5      5
 #     largest, % of land      29%    30%    32%    33%    34%
-#     land above 300 m        2%     6%     4%     4%     7%
-#     peaks after erosion     681    1565   940    908    1661 m
-#     largest basin, km^2     38     34     41     36     39
-#     Hack h                  0.544  0.555  0.491  0.509  0.455
+#     land above 300 m        3%     6%     4%     4%     7%
+#     peaks after erosion     680    1565   940    909    1662 m
+#     largest basin, km^2     38     25     41     36     39
+#     Hack h                  0.534  0.570  0.520  0.518  0.457
+#
+# * Re-measured after the moisture solver change (climate._solve_moisture) except the
+#   belt-2 column, which was measured before it. The landmass and relief rows barely
+#   moved; Hack h moved by up to 0.03 and the seed-2 basin from 34 to 25 km^2, and the
+#   default world's per-basin theta from 0.416 to 0.315 (see climate.py on why).
 #
 # The continents hold up on every seed; the relief does not, and the default was only run
 # on seed 2, so the gain on the others is not measured.
@@ -110,9 +115,9 @@ def load_or_build(n):
 #
 # More land brings the rivers back. Adding --target-land-fraction 0.35
 # --continental-fraction 0.39 --crust-frequency 1.1 on the same seed gave 34% land, 5
-# landmasses >= 5%, peaks 1,908 m, a 138 km^2 basin and per-basin theta 0.302 -- but the
+# landmasses >= 5%, peaks 1,908 m, a 138 km^2 basin and per-basin theta 0.291 -- but the
 # central continents joined into one holding half the land, and erosion was still moving
-# 19 m a pass at the end against 7-9 m for the others. One seed; not made the preset.
+# 19 m a pass at the end against 6-9 m for the others. One seed; not made the preset.
 PRESETS = {
     "earth": {},
     "continents": {
@@ -304,11 +309,12 @@ def main():
     # and theta comes out meaningless. At 9.77 km cells this could not happen -- 6 cells was
     # 500 km^2, far above any channel head -- but at 100 m cells 6 cells IS the head.
     #
-    # Re-measured on the shipped n=785 world, seed 42, exported mask:
+    # Re-measured on the n=785 world, seed 42, exported mask, after the moisture solver
+    # change (it read 0.285 / 0.289 / 0.280 / 0.271 / 0.265 / 0.310 / 0.203 before it):
     #
     #     cells      6      13      20      40      80     120     400
-    #     theta  0.285   0.289   0.280   0.271   0.265   0.310   0.203
-    #     r2     0.919   0.907   0.888   0.848   0.809   0.891   0.613
+    #     theta  0.302   0.302   0.302   0.292   0.296   0.294   0.223
+    #     r2     0.936   0.914   0.918   0.880   0.852   0.818   0.648
     #
     # 40 is kept, but the reason has changed and it is worth being honest about: theta is
     # FLAT across every sensible threshold here, so the choice barely matters and 40 is no
@@ -321,15 +327,18 @@ def main():
     # differing only in seed, at a 40-cell threshold:
     #
     #     seed            42      149   deadbeef      mean      sd      CV
-    #     planet-wide  0.2710   0.1951     0.3037    0.2566  0.0557   21.7%
-    #     per basin    0.2932   0.2882     0.2737    0.2850  0.0102    3.6%
-    #     hack h       0.5571   0.5559     0.5627    0.5586  0.0036    0.7%
+    #     planet-wide  0.2919   0.2063     0.2729    0.2570  0.0450   17.5%
+    #     per basin    0.2913   0.2791     0.2877    0.2860  0.0063    2.2%
+    #     hack h       0.5582   0.5636     0.5720    0.5646  0.0070    1.2%
+    #
+    # (Before the moisture solver change: per basin 0.2850 +/- 0.0102, hack h 0.5586 +/-
+    # 0.0036, planet-wide 0.2566 +/- 0.0557 -- every shift inside the seed spread.)
     #
     # The planet-wide figure is mostly seed -- a global regression pools basins with
     # different uplift, and how many of each a world grows is an accident of the crust seed.
-    # At a 400-cell threshold its CV reaches 55%. It is no longer reported at all, for the
+    # At a 400-cell threshold its CV reaches 35%. It is no longer reported at all, for the
     # reason given at `summary` below. The per-basin figure is the one to compare with real
-    # terrain, and it lands on it: 0.285 +/- 0.010 across seeds against 0.290 pooled over
+    # terrain, and it lands on it: 0.286 +/- 0.006 across seeds against 0.290 pooled over
     # 102 basins in nine SRTM tiles. This comment read "well short of" SRTM east's 0.516,
     # which is a whole-window fit on the highest of those nine.
     thr = float(np.median(grid.area) * 40)

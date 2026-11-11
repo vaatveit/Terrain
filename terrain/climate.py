@@ -425,6 +425,10 @@ class ClimateParams:
     # interiors included. Costs sweeps linearly: nothing at all at n=256, where 400 already
     # covered the world twice over, and 5x the sweeps at n=785 for 2.5x the wall clock --
     # `compute_seasons` there goes 132 s to 330 s.
+    #
+    # Since `_solve_moisture` replaced the Jacobi loop, the span is the CAP on sweeps rather
+    # than the count: the solver stops when the moisture has converged, which at n=785 is
+    # about 60 sweeps' worth of work. The cap still means what the table above says it does.
     advection_span_km: float = 200.0
     # Anchor for the final scaling. Earth's land MEDIAN, and the median is the point.
     #
@@ -1280,6 +1284,253 @@ def _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
     return new_m, precip
 
 
+# --------------------------------------------------------------------------------------
+# Solving the moisture fixed point in far fewer sweeps.
+#
+# `_advect_step` is a Jacobi sweep: every cell reads its neighbours' moisture from the
+# previous sweep, so moisture moves one cell per sweep and the loop needs `sweeps_for_span`
+# of them -- 2,000 at n=785, 42% of a production run. What the loop converges TO does not
+# depend on that. The sweep is monotone (more moisture upwind never means less downwind),
+# so iterating from zero climbs to the least fixed point whatever order cells are updated
+# in. On the finished n=785 world the 2,000 Jacobi sweeps reach it -- the largest
+# per-sweep change is 1e-14 by sweep 2,000 and 8,000 sweeps change nothing -- but on the
+# FIRST coupling pass they do not. That pass runs on bare Stage 1 terrain with no river
+# source, and converges more slowly: at n=256, seed 2, the Jacobi loop stopped at its
+# 653-sweep cap with cells still up to 12% off the converged rain (0.03-0.21% of cells
+# more than 1% off, by season). The solver below ends within 1.4% there, at the same cap.
+# So switching to it moved the coupled worlds, through those early passes: per-basin
+# theta 0.416 -> 0.315 at n=256 seed 2, 0.282 -> 0.288 at n=785 seed 1.
+#
+# So this reaches the same fixed point a faster way:
+#   * Gauss-Seidel in tiles. Cells are updated in place, in downwind order inside compact
+#     lat/lon tiles, so a parcel crosses a whole tile in one sweep instead of one cell.
+#   * Four colours. Tiles of one colour never touch, so a colour's tiles run in parallel
+#     with no races, and the result is the same whatever the thread count.
+#   * Converged tiles are skipped. A tile is updated only while it, or a tile next to it,
+#     still moved more than the tolerance; before stopping, one sweep over every tile has
+#     to pass the tolerance too, so skipping cannot end the loop early.
+# `advection_span_km` stays as the cap on sweeps. Precipitation is then taken from one
+# ordinary `_advect_step` sweep from the converged moisture, exactly as the loop used to.
+#
+# Measured at n=785 on the finished world, all four seasons, against 2,000 Jacobi sweeps:
+# about 60 sweeps' worth of work instead of 2,000, and the returned float32 precipitation
+# within 1 ulp in every cell. A production run's precipitation went from 953 s to 81 s.
+
+MOISTURE_TOL = 1e-13       # converged when no cell's moisture moves more than this in a sweep
+MOISTURE_TILE_CELLS = 32   # tile side, in cells
+_MAX_TILE_NBRS = 32        # a tile with more neighbouring tiles is simply never skipped
+
+
+@njit(cache=True, parallel=True)
+def _inflow_tables(nbr, rev, out_w, nbr_in, in_w):
+    """in_w[i, s] = out_w[nbr[i, s], rev[i, s]]: the weight cell i receives on slot s.
+
+    Reading it per cell is a sequential stream, where `_advect_step` jumps into each
+    neighbour's row. Missing slots point at the cell itself with weight 0.
+    """
+    n, k = nbr.shape
+    for i in prange(n):
+        for s in range(k):
+            j = nbr[i, s]
+            t = rev[i, s]
+            if j < 0 or t < 0:
+                nbr_in[i, s] = i
+                in_w[i, s] = 0.0
+            else:
+                nbr_in[i, s] = j
+                in_w[i, s] = out_w[j, t]
+
+
+@njit(cache=True)
+def _group_by_tile(blk, bptr, cells):
+    """Counting sort of cell indices by tile."""
+    fill = bptr[:-1].copy()
+    for i in range(blk.shape[0]):
+        b = blk[i]
+        cells[fill[b]] = i
+        fill[b] += 1
+
+
+@njit(cache=True, parallel=True)
+def _downwind_order(cells, bptr, xyz, wind, key, order):
+    """Within each tile, order cells upwind first along the tile's mean wind."""
+    nb = bptr.shape[0] - 1
+    for b in prange(nb):
+        lo = bptr[b]
+        hi = bptr[b + 1]
+        wx = 0.0
+        wy = 0.0
+        wz = 0.0
+        for q in range(lo, hi):
+            i = cells[q]
+            wx += wind[i, 0]
+            wy += wind[i, 1]
+            wz += wind[i, 2]
+        for q in range(lo, hi):
+            i = cells[q]
+            key[q] = xyz[i, 0] * wx + xyz[i, 1] * wy + xyz[i, 2] * wz
+        idx = np.argsort(key[lo:hi], kind="mergesort")
+        for r in range(hi - lo):
+            order[lo + r] = cells[lo + idx[r]]
+
+
+@njit(cache=True, parallel=True)
+def _tile_neighbours(order, bptr, blk, colour, nbr, tadj, overflow, clash):
+    """Neighbouring tiles of each tile, and a check that the colouring holds."""
+    nb = bptr.shape[0] - 1
+    k = nbr.shape[1]
+    width = tadj.shape[1]
+    for b in prange(nb):
+        cnt = 0
+        for q in range(bptr[b], bptr[b + 1]):
+            i = order[q]
+            for s in range(k):
+                j = nbr[i, s]
+                if j < 0:
+                    continue
+                t = blk[j]
+                if t == b:
+                    continue
+                if colour[t] == colour[b]:
+                    clash[b] = True
+                seen = False
+                for p in range(cnt):
+                    if tadj[b, p] == t:
+                        seen = True
+                        break
+                if seen:
+                    continue
+                if cnt < width:
+                    tadj[b, cnt] = t
+                    cnt += 1
+                else:
+                    overflow[b] = True
+
+
+def _moisture_tiling(xyz, wind, nbr, spacing_km, radius_km, tile_cells=MOISTURE_TILE_CELLS):
+    """Four-coloured lat/lon tiles about `tile_cells` across, cells in downwind order.
+
+    Colour is (band parity, tile parity). Tiles in one band alternate because every band
+    has an even number of tiles; bands alternate because a tile is many cells tall, so a
+    cell's neighbours are never two bands away. The polar caps are one tile each, since
+    tiles meeting at a pole would otherwise touch across it at the same parity.
+    """
+    n = xyz.shape[0]
+    lat = np.degrees(np.arcsin(np.clip(xyz[:, 2], -1.0, 1.0)))
+    lon = np.degrees(np.arctan2(xyz[:, 1], xyz[:, 0]))
+    dlat = float(np.degrees(tile_cells * spacing_km / radius_km))
+    nband = max(1, int(np.ceil(180.0 / dlat)))
+    band = np.minimum(((lat + 90.0) / dlat).astype(np.int64), nband - 1)
+    centre = -90.0 + (np.arange(nband) + 0.5) * dlat
+    ntile = np.round(360.0 * np.cos(np.radians(centre)) / dlat / 2.0).astype(np.int64) * 2
+    ntile = np.maximum(ntile, 2)
+    ntile[0] = ntile[-1] = 1
+    off = np.concatenate([[0], np.cumsum(ntile)])
+    tile = np.minimum(((lon + 180.0) / 360.0 * ntile[band]).astype(np.int64),
+                      ntile[band] - 1)
+    blk = np.ascontiguousarray(off[band] + tile, dtype=np.int32)
+    nb = int(off[-1])
+    tband = np.repeat(np.arange(nband), ntile)
+    colour = ((tband % 2) * 2 + (np.arange(nb) - off[tband]) % 2).astype(np.int8)
+
+    bptr = np.concatenate([[0], np.cumsum(np.bincount(blk, minlength=nb))]).astype(np.int64)
+    cells = np.empty(n, dtype=np.int32)
+    _group_by_tile(blk, bptr, cells)
+    order = np.empty(n, dtype=np.int32)
+    _downwind_order(cells, bptr, xyz, wind, np.empty(n), order)
+
+    tadj = np.full((nb, _MAX_TILE_NBRS), -1, dtype=np.int32)
+    overflow = np.zeros(nb, dtype=np.bool_)
+    clash = np.zeros(nb, dtype=np.bool_)
+    _tile_neighbours(order, bptr, blk, colour, nbr, tadj, overflow, clash)
+    if clash.any():
+        raise AssertionError(f"moisture tiling: {int(clash.sum())} tiles touch a tile of "
+                             "their own colour, so a colour's tiles would race")
+    by_colour = np.argsort(colour, kind="stable").astype(np.int32)
+    cptr = np.concatenate([[0], np.cumsum(np.bincount(colour, minlength=4))])
+    return order, bptr, by_colour, cptr, tadj, overflow
+
+
+@njit(cache=True, parallel=True)
+def _colour_sweep(m, tiles, active, order, bptr, nbr_in, in_w, lift_loss, retain, source,
+                  capacity, recycle, forward, dmax_b):
+    """One Gauss-Seidel pass over the active tiles of one colour, in place.
+
+    The update is `_advect_step`'s, minus the rain it does not need to record.
+    """
+    k = nbr_in.shape[1]
+    for q0 in prange(tiles.shape[0]):
+        b = tiles[q0]
+        if not active[b]:
+            dmax_b[b] = 0.0
+            continue
+        lo = bptr[b]
+        hi = bptr[b + 1]
+        dm = 0.0
+        for q in range(hi - lo):
+            i = order[lo + q] if forward else order[hi - 1 - q]
+            incoming = 0.0
+            for s in range(k):
+                incoming += m[nbr_in[i, s]] * in_w[i, s]
+            kept = incoming * lift_loss[i] * retain[i]
+            rained = incoming - kept
+            total = kept
+            if source[i] > 0.0:
+                room = capacity[i] - total
+                if room > 0.0:
+                    total += source[i] if source[i] < room else room
+            total += recycle[i] * rained
+            if total > capacity[i]:
+                total = capacity[i]
+            d = abs(total - m[i])
+            if d > dm:
+                dm = d
+            m[i] = total
+        dmax_b[b] = dm
+
+
+@njit(cache=True, parallel=True)
+def _next_active(dmax_b, tadj, overflow, tol, active):
+    """A tile stays active while it or any tile next to it moved more than `tol`."""
+    nb = dmax_b.shape[0]
+    for b in prange(nb):
+        a = overflow[b] or dmax_b[b] > tol
+        if not a:
+            for p in range(tadj.shape[1]):
+                t = tadj[b, p]
+                if t < 0:
+                    break
+                if dmax_b[t] > tol:
+                    a = True
+                    break
+        active[b] = a
+
+
+def _solve_moisture(nbr_in, in_w, lift_loss, retain, source, capacity, recycle, tiling,
+                    max_sweeps, tol=MOISTURE_TOL):
+    """Converged moisture, from zero, by tiled Gauss-Seidel. Returns (moisture, sweeps)."""
+    order, bptr, by_colour, cptr, tadj, overflow = tiling
+    nb = bptr.shape[0] - 1
+    m = np.zeros(nbr_in.shape[0], dtype=np.float64)
+    dmax_b = np.zeros(nb, dtype=np.float64)
+    active = np.ones(nb, dtype=np.bool_)
+    colours = [by_colour[cptr[c]:cptr[c + 1]] for c in range(4)]
+    sweeps = 0
+    while sweeps < max_sweeps:
+        forward = sweeps % 2 == 0
+        for tiles in colours:
+            _colour_sweep(m, tiles, active, order, bptr, nbr_in, in_w, lift_loss, retain,
+                          source, capacity, recycle, forward, dmax_b)
+        sweeps += 1
+        if dmax_b.max() <= tol:
+            if active.all():
+                break          # a sweep over every tile moved nothing: converged
+            active[:] = True   # confirm on every tile before stopping
+            continue
+        _next_active(dmax_b, tadj, overflow, tol, active)
+    return m, sweeps
+
+
 def open_water_fraction(discharge_km2, p: ClimateParams):
     """Share of a cell's surface that is river, from hydraulic geometry.
 
@@ -1335,13 +1586,22 @@ def precipitation(grid, elevation_m, land_mask, temperature_c, wind, p: ClimateP
 
     recycle = np.ascontiguousarray(np.where(land_mask, p.land_recycling, 0.0))
 
-    moisture = np.zeros(n, dtype=np.float64)
+    # Converge the moisture by tiled Gauss-Seidel (see `_solve_moisture`), then take one
+    # ordinary sweep from it, so `precip` is computed exactly as the Jacobi loop computed it.
+    nbr_in = np.empty(nbr.shape, dtype=np.int32)
+    in_w = np.empty(nbr.shape, dtype=np.float64)
+    _inflow_tables(nbr, rev, out_w, nbr_in, in_w)
+    tiling = _moisture_tiling(
+        xyz, np.ascontiguousarray(wind, dtype=np.float64), nbr,
+        mean_spacing_km(grid) if spacing_km is None else spacing_km, grid.radius_km)
+    moisture, _ = _solve_moisture(
+        nbr_in, in_w, lift_loss, retain, source, capacity, recycle, tiling,
+        max_sweeps=sweeps_for_span(grid, p.advection_span_km, spacing_km))
     new_m = np.empty(n, dtype=np.float64)
     precip = np.zeros(n, dtype=np.float64)
-    for _ in range(sweeps_for_span(grid, p.advection_span_km, spacing_km)):
-        _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity,
-                     recycle, new_m, precip)
-        moisture, new_m = new_m, moisture
+    _advect_step(moisture, nbr, rev, out_w, lift_loss, retain, source, capacity, recycle,
+                 new_m, precip)
+    moisture = new_m
 
     # Scale to a realistic annual total. Absolute units are not derivable from this model;
     # what it produces is a spatial pattern, and the pattern is what Stage 4 needs. The

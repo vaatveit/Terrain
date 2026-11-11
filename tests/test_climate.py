@@ -749,3 +749,77 @@ def test_climate_is_reproducible(world):
         a, b = solve(g, z, land), solve(g, z, land)
         assert np.array_equal(a.precipitation_mm, b.precipitation_mm)
         assert np.array_equal(a.temperature_c, b.temperature_c)
+
+
+# --------------------------------------------------------------------------------------
+# The moisture solver
+# --------------------------------------------------------------------------------------
+
+
+def test_tiled_moisture_solver_reaches_the_jacobi_fixed_point(world, monkeypatch):
+    """`_solve_moisture` is only a faster route to the fixed point the Jacobi loop reached.
+
+    Spies on the solver's inputs, runs the shipped `_advect_step` from zero until nothing
+    moves, and requires the same precipitation. The span is raised so that neither side
+    stops at the cap: this pins where the solver ends up, not how far a capped run gets.
+    """
+    g, z, land, cl = world
+    base = climate.ClimateParams()
+    p = dataclasses.replace(base, advection_span_km=20 * base.advection_span_km)
+    wind = climate.wind_field(g, p)
+    seen = {}
+
+    real_tables = climate._inflow_tables
+    real_solve = climate._solve_moisture
+
+    def spy_tables(nbr, rev, out_w, nbr_in, in_w):
+        seen.update(nbr=nbr, rev=rev, out_w=out_w)
+        return real_tables(nbr, rev, out_w, nbr_in, in_w)
+
+    def spy_solve(nbr_in, in_w, lift_loss, retain, source, capacity, recycle, tiling,
+                  max_sweeps, tol=climate.MOISTURE_TOL):
+        seen["coeffs"] = (lift_loss, retain, source, capacity, recycle)
+        m, sweeps = real_solve(nbr_in, in_w, lift_loss, retain, source, capacity, recycle,
+                               tiling, max_sweeps, tol)
+        seen.update(sweeps=sweeps, cap=max_sweeps)
+        return m, sweeps
+
+    monkeypatch.setattr(climate, "_inflow_tables", spy_tables)
+    monkeypatch.setattr(climate, "_solve_moisture", spy_solve)
+    precip, _ = climate.precipitation(g, z, land, cl.temperature_c, wind, p, anchor=False)
+    assert seen["sweeps"] < seen["cap"], "the tiled solver hit the cap instead of converging"
+
+    n = g.cell_count
+    m, new_m, ref = np.zeros(n), np.empty(n), np.zeros(n)
+    for _ in range(seen["cap"]):
+        climate._advect_step(m, seen["nbr"], seen["rev"], seen["out_w"], *seen["coeffs"],
+                             new_m, ref)
+        moved = np.abs(new_m - m).max()
+        m, new_m = new_m, m
+        if moved < 1e-15:
+            break
+    else:
+        pytest.fail("the Jacobi reference did not converge within the cap")
+
+    ref = ref.astype(np.float32)
+    assert np.allclose(precip, ref, rtol=1e-6, atol=0.0)
+    assert np.median(precip[land]) == pytest.approx(np.median(ref[land]), rel=1e-6)
+
+
+@pytest.mark.parametrize("n", [8, 16, 32, 64, 128])
+def test_moisture_tiles_never_touch_their_own_colour(n):
+    """Tiles of one colour run in parallel, so two that touched would race.
+
+    `_moisture_tiling` raises if the colouring fails; the small grids are where it could,
+    since there a tile is a large fraction of the sphere and the polar caps are close.
+    """
+    g = build_goldberg(n)
+    p = climate.ClimateParams()
+    wind = np.ascontiguousarray(climate.wind_field(g, p), dtype=np.float64)
+    order, bptr, by_colour, cptr, _, _ = climate._moisture_tiling(
+        np.ascontiguousarray(g.xyz, dtype=np.float64), wind, np.ascontiguousarray(g.neighbours),
+        climate.mean_spacing_km(g), g.radius_km)
+    assert np.array_equal(np.sort(order), np.arange(g.cell_count))
+    assert bptr[-1] == g.cell_count
+    assert np.array_equal(np.sort(by_colour), np.arange(bptr.shape[0] - 1))
+    assert cptr[-1] == bptr.shape[0] - 1

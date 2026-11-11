@@ -222,7 +222,7 @@ Two artifacts, not one. **Native:** the flat per-cell field arrays plus `n` and 
 
 Stages 2 and 5 dominate runtime. Stage 4 is the one most implementations skip and the one that most improves plausibility at continental scale.
 
-**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 11.8 s at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ → **Stage 9 export** ✅. **The pipeline is complete** — `scripts/generate_world.py` runs all nine stages end to end and writes a georeferenced world. See **[README.md](README.md)** for how to run it, what every parameter does, and what the outputs contain.
+**Build them in a different order than you run them.** The thesis of this document is that erosion produces realism, so the schedule should reflect that rather than working left to right — most of Stage 1's careful output gets overwritten by Stage 2 anyway. Order: grid ✅ → **metrics module** ✅ → throwaway Stage 1 ✅ → **Stage 2** ✅ → **real Stage 1** ✅ (plates, Euler poles, derived uplift; per-basin θ = 0.452, peaks 8.4 km) → **Stage 3 climate** ✅ (temperature, wind bands, orographic precipitation; 17.6 s per season at n=785) → **Stage 4 coupled loop** ✅ (discharge-weighted erosion; wet ground incises 52 m deeper, arid ground holds 228 m more relief) → **Stage 7 biomes** ✅ → **Stage 5 glacial** ✅ (the rest of secondary erosion is sub-grid) → **Stage 6 hydrology** ✅ (lakes, endorheic basins, rivers) → **Stage 8 amplification** ✅ → **Stage 9 export** ✅. **The pipeline is complete** — `scripts/generate_world.py` runs all nine stages end to end and writes a georeferenced world. See **[README.md](README.md)** for how to run it, what every parameter does, and what the outputs contain.
 
 ### Cell size: why the sphere shrank to 64.9 km
 
@@ -262,7 +262,7 @@ Putting a parameter in the wrong class is silent. `valley_smoothing_km2 = 60000`
 
 Every channel head there sits inside the real 0.01–1 km² band, so that criterion does not discriminate. `D = 0.02` is the chosen trade: about two cells of hillslope and 20 sub-steps.
 
-**The θ column above was long believed to understate the production world, and it does not.** That fixture's basins are 4× smaller than production's and its θ is fitted close to the channel head, which is why the correction looked safe. Re-measured across three shipped n=785 worlds, per-basin θ is **0.285 ± 0.010 at 40 cells**, and the planet-wide figure is 0.257 ± 0.056 — flat in the threshold rather than rising through the band, and far too noisy across seeds to quote on its own. The figures this paragraph used to give (0.467 and 0.556) predate the climate work and no longer describe the pipeline; see [Concavity, settled on the shipped world](#concavity-settled-on-the-shipped-world).
+**The θ column above was long believed to understate the production world, and it does not.** That fixture's basins are 4× smaller than production's and its θ is fitted close to the channel head, which is why the correction looked safe. Re-measured across three shipped n=785 worlds, per-basin θ is **0.286 ± 0.006 at 40 cells**, and the planet-wide figure is 0.257 ± 0.045 — flat in the threshold rather than rising through the band, and far too noisy across seeds to quote on its own. The figures this paragraph used to give (0.467 and 0.556) predate the climate work and no longer describe the pipeline; see [Concavity, settled on the shipped world](#concavity-settled-on-the-shipped-world).
 
 **This resolved two findings previously recorded here as unfixed.** The section on straight-line artifacts closed by conceding that some mountain flanks still combed with detail off, because the mesh was genuinely rough at cell scale, and called it "a Stage 2 question about drainage density at 9.8 km cells, not an export question." That diagnosis was right and the grid was the answer:
 
@@ -779,7 +779,7 @@ The pre-erosion figure is the point of adding tectonics: crustal roots under oro
 
 ### Stage 3: climate
 
-Temperature, three-cell wind, and precipitation as a steady-state advection-reaction fixed point rather than time-stepped moisture packets. 11.8 s at n=785.
+Temperature, three-cell wind, and precipitation as a steady-state advection-reaction fixed point rather than time-stepped moisture packets. 17.6 s per season at n=785 — see [solved to a tolerance](#solved-to-a-tolerance-not-a-reach) for why it is not the 11.8 s first measured, or the ~53 s it later grew to.
 
 **What works.** Temperature lands at 26 °C at the equator and −23 °C at the poles with the 6.5 °C/km lapse rate applied exactly, and a land mean of 9.4 °C against Earth's ~8.5. Wind bands come out easterly / westerly / easterly with the circulation going slack at 0°, 30°, 60° and 90° — the doldrums, horse latitudes and polar front. Precipitation falls monotonically from wet tropics to dry poles, and there is a real coast-to-interior gradient.
 
@@ -821,7 +821,7 @@ What the tail is instead is the two *intended* mechanisms multiplying. The wette
 | 800 | 1.89 R | 6.27e-04 | 5.32e-06 | 4.70e-04 | 0.000% |
 | 2400 | 5.67 R | 6.27e-04 | 5.32e-06 | 4.70e-04 | |
 
-The mean error is small because the unfinished part is the interior and the interior holds almost no rain. The deep band is wrong by 10×. `iterations` is therefore replaced by `advection_span_km` = 200, which is 3.08 R at every radius — a 1.6× margin on the 1.89 R that world needed, kept because the controlling length is the *streamline* from sea to interior and so grows with `target_land_fraction`. It costs sweeps linearly: about 5× the moisture solve at n=785 and nothing at n=256.
+The mean error is small because the unfinished part is the interior and the interior holds almost no rain. The deep band is wrong by 10×. `iterations` is therefore replaced by `advection_span_km` = 200, which is 3.08 R at every radius — a 1.6× margin on the 1.89 R that world needed, kept because the controlling length is the *streamline* from sea to interior and so grows with `target_land_fraction`. It costs sweeps linearly: about 5× the moisture solve at n=785 and nothing at n=256. (The span is now only a cap on sweeps — see [solved to a tolerance](#solved-to-a-tolerance-not-a-reach) below.)
 
 **Every n=785 figure taken before this change was taken on an unconverged field**, including the 22.8%-of-land-under-1-mm number and the season medians behind the anchor work. They have been re-measured on the same world, seed 1, default crust — the two runs differ in nothing but how far the sweep was allowed to travel:
 
@@ -840,6 +840,19 @@ The interior bands were not dry, they were unfinished: 8–16 km rises 84×, and
 | 3 | +7.5° | 178.1 | 378.2 | 2.75e-2 | 7.09e-2 |
 
 Season 2 — one of the two that were anchoring on noise — improves 9×, and every season's ratio improves. The annual mean falls 6343 → 5201 against a median pinned at 600, so the distribution narrowed and less of the total sits in the wet tail. **Seasons 0 and 2 are still under `MIN_ANCHOR_RATIO`**; they pass only because the guard runs on the annual field, which is exactly why moving it there was right. And the span itself was confirmed at n=785 rather than extrapolated — 3.08 R, 4.62 R and 6.93 R agree to four figures in every band.
+
+### Solved to a tolerance, not a reach
+
+**The span fixed the answer and made it expensive: 2,000 Jacobi sweeps at n=785 took 953 s of a 2,246 s production run, 42% of it.** Each sweep is memory-bound and moves moisture one cell, so the only lever was sweeping smarter. The sweep is monotone — more moisture upwind never means less downwind — so iterating from zero climbs to the least fixed point *whatever order cells are updated in*, and the order is free to change. `climate._solve_moisture` updates cells in place (Gauss–Seidel), in downwind order inside lat/lon tiles 32 cells across, so a parcel crosses a whole tile per sweep. The tiles are four-coloured so that no two of one colour touch, which lets a colour run in parallel with no races and gives the same answer on any thread count. Tiles whose neighbourhood has stopped moving are skipped, and the loop stops when one full sweep moves no cell more than 10⁻¹³, with `advection_span_km` kept as the cap.
+
+| n=785, finished world, per season | Jacobi, 2,000 sweeps | tiled |
+|---|---|---|
+| `compute_climate` | 52–56 s | **17.2–17.8 s** |
+| sweeps' worth of work | 2,000 | ~60 |
+| precipitation, float32 | — | identical to within **1 ulp** in every cell |
+| production run, precipitation total | 953 s | **81 s** |
+
+**On the finished world the two agree; on the first coupling pass they do not, and that moved the worlds.** Pass 0 runs on bare Stage 1 terrain with no river source, where the fixed point is reached far more slowly, and the Jacobi loop was stopping at its cap short of it: at n=256, seed 2, cells were still up to 12% off the converged rain (0.03–0.21% of cells more than 1% off, by season). The tiled solver ends within 1.4% at the same cap. Erosion in pass 0 reads that rain, so the coupled world moves with it — per-basin θ 0.416 → 0.315 on that world. **It is not chaos amplifying round-off**: perturbing the old solver's output by one ulp in 0.01% of cells left the final world bit-identical. The new figures are the less wrong ones, and every coupled-world statistic measured before this change carries that pass-0 error. At production the error is small: the three-seed concavity table below was re-measured and per-basin θ went 0.285 ± 0.010 → 0.286 ± 0.006, well inside the seed spread, and Hack *h* 0.559 → 0.565, about one seed sd. Sections that describe one past run are left as measured.
 
 ### The dry interior is not a capacity problem
 
@@ -880,20 +893,22 @@ Measured on the full coupled pipeline, seed 1, three passes, off against on:
 
 ### Concavity, settled on the shipped world
 
-Measured on `world_42_n` — seed 42, n=785, generated by `generate_world.py` on current `main` with river evaporation on and `advection_span_km` = 200, using the exported land mask:
+Measured on seed 42, n=785, generated by `generate_world.py` with river evaporation on and the [tiled moisture solver](#solved-to-a-tolerance-not-a-reach), using the exported land mask:
 
 | cells | 6 | 13 | 20 | 40 | 80 | 120 | 400 |
 |---|---|---|---|---|---|---|---|
-| θ | 0.285 | 0.289 | 0.280 | **0.271** | 0.265 | 0.310 | 0.203 |
-| r² | 0.919 | 0.907 | 0.888 | 0.848 | 0.809 | 0.891 | 0.613 |
-| basin θ | 0.232 | 0.243 | 0.266 | 0.293 | 0.290 | 0.365 | 0.517 |
-| Hack *h* | 0.447 | 0.522 | 0.541 | 0.557 | 0.562 | 0.564 | 0.459 |
+| θ | 0.302 | 0.302 | 0.302 | **0.292** | 0.296 | 0.294 | 0.223 |
+| r² | 0.936 | 0.914 | 0.918 | 0.880 | 0.852 | 0.818 | 0.648 |
+| basin θ | 0.235 | 0.257 | 0.266 | 0.291 | 0.309 | 0.368 | 0.419 |
+| Hack *h* | 0.448 | 0.515 | 0.538 | 0.558 | 0.561 | 0.554 | 0.448 |
+
+This and the seed table below were re-measured after the moisture solver changed, because every earlier coupled world carried the first pass's unconverged rain. The first measurement, on `world_42_n` with the Jacobi loop, read θ 0.285 / 0.289 / 0.280 / 0.271 / 0.265 / 0.310 / 0.203 across the same thresholds — the same shape, which is what the conclusions rest on.
 
 Three things follow.
 
 **The recorded 0.467 was stale.** `generate_world.py` carried "θ reads 0.392 at 6 cells, 0.467 at 40 (r² 0.904) and 0.556 at 400" — a claim that θ *rises* with the threshold. It falls. Those figures predate the climate work, and precipitation feeds discharge weight which feeds erosion, so they no longer describe anything the code produces.
 
-**θ is flat in the threshold**, 0.27–0.31 everywhere sensible with r² above 0.8. So the 40-cell choice is no longer buying what it was chosen to buy, and the earlier `test_amplify.py` sensitivity (θ 0.055 at 6 cells against 0.327 at 40) was a small-world effect, not a production one.
+**θ is flat in the threshold**, 0.29–0.30 everywhere sensible with r² above 0.8. So the 40-cell choice is no longer buying what it was chosen to buy, and the earlier `test_amplify.py` sensitivity (θ 0.055 at 6 cells against 0.327 at 40) was a small-world effect, not a production one.
 
 ### How much of that is the seed
 
@@ -901,18 +916,20 @@ Three n=785 worlds, identical code and parameters, seeds 42 / 149 / 3735928559, 
 
 | metric | 42 | 149 | deadbeef | mean | sd | CV |
 |---|---|---|---|---|---|---|
-| global θ @6 | 0.285 | 0.257 | 0.309 | 0.284 | 0.026 | 9.2% |
-| global θ @40 | 0.271 | **0.195** | 0.304 | 0.257 | 0.056 | **21.7%** |
-| global θ @400 | 0.203 | 0.081 | 0.293 | 0.192 | 0.106 | **55.2%** |
-| **basin θ @13** | 0.243 | 0.249 | 0.233 | 0.242 | 0.008 | **3.5%** |
-| **basin θ @40** | 0.293 | 0.288 | 0.274 | **0.285** | **0.010** | **3.6%** |
-| basin θ @120 | 0.365 | 0.307 | 0.282 | 0.318 | 0.043 | 13.4% |
-| **Hack *h* @40** | 0.557 | 0.556 | 0.563 | **0.559** | 0.004 | **0.7%** |
-| land fraction | 0.2987 | 0.2929 | 0.2931 | 0.2949 | 0.0033 | 1.1% |
+| global θ @6 | 0.302 | 0.257 | 0.303 | 0.287 | 0.026 | 9.2% |
+| global θ @40 | 0.292 | **0.206** | 0.273 | 0.257 | 0.045 | **17.5%** |
+| global θ @400 | 0.224 | 0.113 | 0.226 | 0.188 | 0.065 | **34.6%** |
+| **basin θ @13** | 0.257 | 0.236 | 0.244 | 0.246 | 0.011 | **4.3%** |
+| **basin θ @40** | 0.291 | 0.279 | 0.288 | **0.286** | **0.006** | **2.2%** |
+| basin θ @120 | 0.368 | 0.347 | 0.331 | 0.349 | 0.018 | 5.3% |
+| **Hack *h* @40** | 0.558 | 0.564 | 0.572 | **0.565** | 0.007 | **1.2%** |
+| land fraction | 0.2996 | 0.2938 | 0.2935 | 0.2956 | 0.0034 | 1.2% |
 
-**Planet-wide θ is mostly seed.** At 40 cells it swings 0.195 to 0.304 on worlds that differ in nothing but their random number stream, and by 400 cells the coefficient of variation is 55%. Per-basin θ at 13–40 cells is six times tighter, and Hack *h* is tighter still. This is the quantitative form of the advice in the README to measure θ per basin rather than planet-wide: a global regression pools basins with different uplift, and how many of each kind a world happens to grow is a property of the seed.
+With the Jacobi loop these read basin θ @40 0.285 ± 0.010, Hack *h* 0.559 ± 0.004 and global θ @40 0.257 ± 0.056 (CV 55% at 400 cells). The solver change moved the θ figures by less than their seed spread and Hack *h* by about one sd; none of the conclusions below changes.
 
-**So the concavity number to quote is the per-basin one: θ = 0.285 ± 0.010.** That much survives the seed test comfortably — the spread is ±0.01, six times tighter than planet-wide.
+**Planet-wide θ is mostly seed.** At 40 cells it swings 0.206 to 0.292 on worlds that differ in nothing but their random number stream, and by 400 cells the coefficient of variation is 35%. Per-basin θ at 40 cells is seven times tighter, and Hack *h* tighter again in relative terms. This is the quantitative form of the advice in the README to measure θ per basin rather than planet-wide: a global regression pools basins with different uplift, and how many of each kind a world happens to grow is a property of the seed.
+
+**So the concavity number to quote is the per-basin one: θ = 0.286 ± 0.006.** That much survives the seed test comfortably — the spread is ±0.006, seven times tighter than planet-wide.
 
 **What does not survive is the gap this used to report.** This paragraph read "against SRTM east's 0.516 … the gap is 0.23, so no seed comes close to the reference", and it was wrong twice over. It set a **per-basin median** against a **whole-window fit**, and it took that fit from the single highest tile of the nine now measured. Matched on both counts — per-basin against per-basin, at the same 40-cell (0.344 km²) threshold the generated figure is quoted at, pooled over every basin in all nine tiles:
 
@@ -920,15 +937,15 @@ Three n=785 worlds, identical code and parameters, seeds 42 / 149 / 3735928559, 
 |---|---|---|---|---|
 | real terrain, 9 tiles @ 0.344 km² | 102 | 0.293 | 0.131 | **0.290** |
 | real terrain, 9 tiles @ 1.0 km² | 70 | 0.327 | 0.115 | 0.333 |
-| **generated, 3 seeds @ 0.344 km²** | — | **0.285** | **0.010** | — |
+| **generated, 3 seeds @ 0.344 km²** | — | **0.286** | **0.006** | — |
 
-0.285 against 0.290. The concavity of this world is indistinguishable from real terrain measured the same way, and three individual tiles (g 0.165, b 0.213, e 0.214) come out *below* it.
+0.286 against 0.290. The concavity of this world is indistinguishable from real terrain measured the same way, and three individual tiles (g 0.165, b 0.213, e 0.214) come out *below* it.
 
 **Where the phantom 0.23 came from is worth keeping, because the two halves are separable.** About 0.12 of it was the estimator: east's own per-basin median is 0.398, not 0.516, so that much of the "gap" never left the reference tile and would have shown up against east alone. The rest was sampling — east is the maximum of nine, and the real distribution's median is 0.29, not 0.52. Neither half was a property of the generated world, and nothing about the model changed to close it.
 
-The residual disagreement at the more conservative 1.0 km² threshold (0.333 real against 0.285) is 0.4 sd of the basin-to-basin spread. That is not a defect to chase; it is a threshold choice, and it is the reason any θ from this pipeline has to carry the threshold it was measured at.
+The residual disagreement at the more conservative 1.0 km² threshold (0.333 real against 0.286) is 0.4 sd of the basin-to-basin spread. That is not a defect to chase; it is a threshold choice, and it is the reason any θ from this pipeline has to carry the threshold it was measured at.
 
-**The apparent decline with world size is NOT established.** An earlier version of this section reported θ 0.444 at n=256, 0.346 at n=512 and 0.271 at n=785 as a monotonic trend and called it the largest open gap. Those are *global* θ values with one seed apiece, and the seed sd at n=785 alone is 0.056 — so the n=512 and n=785 points sit about 1.3 sd apart, and the two smaller ones came from a different measurement path (coupled-only, reflooded here rather than exported). The trend may well be real. It is not shown by that evidence, and settling it needs several seeds at each radius rather than one.
+**The apparent decline with world size is NOT established.** An earlier version of this section reported θ 0.444 at n=256, 0.346 at n=512 and 0.271 at n=785 as a monotonic trend and called it the largest open gap. Those are *global* θ values with one seed apiece, and the seed sd at n=785 alone was 0.056 when they were taken — so the n=512 and n=785 points sit about 1.3 sd apart, and the two smaller ones came from a different measurement path (coupled-only, reflooded here rather than exported). The trend may well be real. It is not shown by that evidence, and settling it needs several seeds at each radius rather than one.
 
 Land precipitation median by distance from coast at n=785, mm/yr:
 

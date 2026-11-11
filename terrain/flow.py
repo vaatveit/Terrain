@@ -90,18 +90,30 @@ def priority_flood(z, nbr, is_sink, filled, closed, keys, idxs):
 
     `is_sink` is where water leaves the domain: ocean cells on a globe, border cells on a
     DEM window. A globe has no border, which is the whole point -- the ocean is the outlet.
+
+    Only sinks with a non-sink neighbour are seeded. Every sink starts closed, so a sink
+    whose neighbours are all sinks would be pushed, popped, and then claim nothing. On a
+    globe that is the open ocean -- most of the heap traffic -- and leaving it out does not
+    change `filled`. Sinks keep their own elevation either way. A cell's fill depends only
+    on the key it was claimed at, and keys still pop in order: a pushed key is always
+    strictly above the one just popped, so all cells at one key go out together, whatever
+    the tie order inside the heap.
     """
     n = z.shape[0]
     k = nbr.shape[1]
     for i in range(n):
         filled[i] = z[i]
-        closed[i] = False
+        closed[i] = is_sink[i]
 
     size = 0
     for i in range(n):
-        if is_sink[i]:
-            closed[i] = True
-            size = heap_push(keys, idxs, size, z[i], i)
+        if not is_sink[i]:
+            continue
+        for s in range(k):
+            j = nbr[i, s]
+            if j >= 0 and not is_sink[j]:
+                size = heap_push(keys, idxs, size, z[i], i)
+                break
 
     while size > 0:
         key, c, size = heap_pop(keys, idxs, size)

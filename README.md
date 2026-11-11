@@ -105,21 +105,21 @@ belts. It sets `--crust-frequency 1.0 --crust-octaves 2 --continental-fraction 0
 
 Through the full pipeline (n=256, seed 2) the preset gives 6 landmasses holding ≥5% of land
 against the default's 2, three times the land above 300 m (6% against 2%), and peaks of
-1,565 m against 762 m. **The cost is the rivers:** the largest basin shrinks from 85 to
-34 km², so per-basin θ reports `nan` (no basin is big enough to fit). Hack h is 0.555
-against the default's 0.560 and SRTM's 0.513. The drainage metrics on a preset world are
+1,565 m against 760 m. **The cost is the rivers:** the largest basin shrinks from 88 to
+25 km², so per-basin θ reports `nan` (no basin is big enough to fit). Hack h is 0.570
+against the default's 0.567 and SRTM's 0.513. The drainage metrics on a preset world are
 not comparable to the defaults'.
 
 Seed 2 is on the high side for relief. Over seeds 1–5 the preset gave 4–6 landmasses
 holding ≥5% of land on every seed, with the largest holding 29–34%. The relief varied
-much more: peaks 681–1,661 m, land above 300 m 2–7%, and only seeds 2 and 5 had any
+much more: peaks 680–1,662 m, land above 300 m 2–7%, and only seeds 2 and 5 had any
 ground above 1,000 m. No seed produced a basin big enough for per-basin θ. The default
 was only run on seed 2, so how much the preset raises relief on the other seeds is not
 measured.
 
 **For bigger landmasses**, add `--target-land-fraction 0.35 --continental-fraction 0.39
 --crust-frequency 1.1`. On seed 2 that gave 34% land, peaks of 1,908 m and per-basin θ
-0.302, because the longer rivers come back. But the central continents joined into one
+0.291, because the longer rivers come back. But the central continents joined into one
 holding half the land, so expect fewer, larger landmasses and try a few seeds.
 
 Continent count is still drawn from noise, so it varies by seed. The reasoning behind each
@@ -604,9 +604,9 @@ Mindanao, Uintas — each a 63 km window:
 
 | metric | SRTM, 9 tiles | typical generated |
 |---|---|---|
-| slope–area concavity θ, per basin | 0.293 ± 0.131 (102 basins) | **0.285 ± 0.010** at n=785 |
-| slope–area concavity θ, whole window | 0.311 ± 0.139 (range 0.130–0.516) | planet-wide 0.257 ± 0.056 — too seed-noisy to quote |
-| Hack exponent h | 0.513 ± 0.057 | 0.559 ± 0.004 |
+| slope–area concavity θ, per basin | 0.293 ± 0.131 (102 basins) | **0.286 ± 0.006** at n=785 |
+| slope–area concavity θ, whole window | 0.311 ± 0.139 (range 0.130–0.516) | planet-wide 0.257 ± 0.045 — too seed-noisy to quote |
+| Hack exponent h | 0.513 ± 0.057 | 0.565 ± 0.007 |
 | Horton bifurcation Rb | 5.87 (range 4.67–6.95) | ~5.1 |
 
 The per-basin row is at a **40-cell (0.344 km²)** channel threshold, matching the generated
@@ -656,28 +656,28 @@ pick between them. `D=0.02` is the chosen trade.
 |---|---|---|---|
 | land cells that are local maxima | 4.40% | **0.502%** | 0.287% mean, range 0.090–0.508% |
 | median drainage area | 1.0 cells | **5.98 cells** | 3 cells median, range 2–13 |
-| θ per basin, 40 cells | — | **0.285 ± 0.010** | **0.290** median, 102 basins |
+| θ per basin, 40 cells | — | **0.286 ± 0.006** | **0.290** median, 102 basins |
 
 That last row read 0.467 (r² 0.90) until it was re-measured on three shipped n=785 worlds.
 The old figure predates the climate work — precipitation feeds discharge weight, which feeds
 erosion — and it also asserted that θ *rises* with the channel threshold, where it is in fact
-flat from 6 cells to 120 and falls beyond. Hack *h* is 0.559 ± 0.004 against a nine-tile
+flat from 6 cells to 120 and falls beyond. Hack *h* is 0.565 ± 0.007 against a nine-tile
 0.513 ± 0.057.
 
 **The real-terrain column is measured, and it did not used to be.** It read 0.14–0.26% and
 3–4 px "(SRTM)" for the first two rows and a published 0.4–0.6 band for θ — and this section
 concluded from that θ row that "the concavity is not good". Measured per basin at the same
-threshold over nine tiles, real terrain gives 0.290 against this world's 0.285. The local
+threshold over nine tiles, real terrain gives 0.290 against this world's 0.286. The local
 maxima row is quoted as a range rather than a target because the DEM has eight neighbours to
 the mesh's six, which biases the generated figure up on its own.
 
 **Quote the per-basin figure, not the planet-wide one.** Across three seeds at n=785,
-planet-wide θ at 40 cells came out 0.271 / 0.195 / 0.304 — a coefficient of variation of
-21.7%, rising to 55% at a 400-cell threshold — while per-basin θ held 0.293 / 0.288 / 0.274
-at 3.6%. A global regression pools basins with different uplift, and how many of each a world
+planet-wide θ at 40 cells came out 0.292 / 0.206 / 0.273 — a coefficient of variation of
+17.5%, rising to 35% at a 400-cell threshold — while per-basin θ held 0.291 / 0.279 / 0.288
+at 2.2%. A global regression pools basins with different uplift, and how many of each a world
 happens to grow is a property of the seed. An earlier version of this section read a
 0.444 / 0.346 / 0.271 decline across n=256 / 512 / 785 as a trend; those are planet-wide
-figures with one seed each, against a seed sd of 0.056, so the trend is not shown by them.
+figures with one seed each, against a seed sd of 0.045, so the trend is not shown by them.
 
 The first two were recorded in terrain-algorithms.md as *unfixed* — a surface genuinely
 rough at the cell scale, with half of all land having no upstream contribution at all. Both
@@ -759,12 +759,12 @@ Recorded with measurements in [terrain-algorithms.md](terrain-algorithms.md):
   kept on because glacial erosion does create real over-steep land (80 → 4,530 edges),
   almost all of which Stage 5b then floods.
 - **Concavity is fine, and this bullet used to say it was the largest open gap in the
-  project.** Per-basin θ is **0.285 ± 0.010** across three n=785 seeds, against **0.290**
+  project.** Per-basin θ is **0.286 ± 0.006** across three n=785 seeds, against **0.290**
   measured the same way over 102 basins in nine SRTM tiles. The gap it reported was against
   SRTM east's 0.516 — a whole-window fit on the highest tile of nine, compared to a per-basin
-  median. Correcting either half shrinks it; correcting both closes it. Hack *h* is 0.559 ±
-  0.004 against a nine-tile 0.513 ± 0.057. Planet-wide θ is still *not* a usable statistic
-  here — 0.257 ± 0.056 at 40 cells, ±0.106 at 400 — so state per-basin, and state the
+  median. Correcting either half shrinks it; correcting both closes it. Hack *h* is 0.565 ±
+  0.007 against a nine-tile 0.513 ± 0.057. Planet-wide θ is still *not* a usable statistic
+  here — 0.257 ± 0.045 at 40 cells, ±0.065 at 400 — so state per-basin, and state the
   threshold.
 - **The temperature field is short of relief, and the obvious fix does not work.** This
   world's 104 m elevation sd gives the lapse rate 0.68 °C of influence where Earth's ~800 m
