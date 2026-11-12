@@ -24,6 +24,10 @@ const MODES = [
 const VERTS_PER_CELL = 7;
 const INDICES_PER_CELL = 18;
 const POS_SCALE = 32767;
+// Cells per draw call. Every chunk reuses one index buffer of this size, which is what keeps
+// an n=785 globe (6.2M cells) from needing a 444 MB index of its own; and cell ids run in
+// spatially coherent blocks, so a chunk facing away from the camera can be skipped.
+const CHUNK_CELLS = 1 << 19;
 // Distinct colours for the ten largest landmasses; smaller ones share a grey.
 const LANDMASS_COLOURS = [
   [0.902, 0.624, 0.000], [0.337, 0.706, 0.914], [0.000, 0.620, 0.451], [0.941, 0.894, 0.259],
@@ -43,6 +47,7 @@ uniform sampler2D uSA;      // elevation, temperature, precipitation, discharge
 uniform sampler2D uSB;      // uplift, river width, lake level, landmass rank
 uniform sampler2D uCodes;   // biome, flags (land|lake<<1|river<<2), koppen+1, plate
 uniform int uTexW;
+uniform int uCellOffset;    // first cell of this chunk
 uniform float uExag;
 uniform float uRadiusM;
 uniform float uFlat;
@@ -55,7 +60,7 @@ flat out vec4 vC;
 out vec3 vWorld;
 
 void main() {
-  int cell = gl_VertexID / 7;
+  int cell = uCellOffset + gl_VertexID / 7;
   vCell = cell;
   ivec2 uv = ivec2(cell % uTexW, cell / uTexW);
   vA = texelFetch(uSA, uv, 0);
@@ -231,39 +236,60 @@ async function getBuffer(url) {
   return r.arrayBuffer();
 }
 
-const geometries = new Map();   // key -> Promise<{ position, index, dirs, cells }>
+const geometries = new Map();   // key -> Promise<{ key, cells, dirs, chunks, index }>
+let sharedIndex = null;
+
+/** The fan pattern is the same for every cell, so one index buffer serves every chunk. */
+function fanIndex() {
+  if (!sharedIndex) {
+    const idx = new Uint32Array(CHUNK_CELLS * INDICES_PER_CELL);
+    for (let c = 0, w = 0; c < CHUNK_CELLS; c++) {
+      const base = c * VERTS_PER_CELL;
+      for (let k = 0; k < 6; k++) {
+        idx[w++] = base;
+        idx[w++] = base + 1 + k;
+        idx[w++] = base + 1 + ((k + 1) % 6);
+      }
+    }
+    sharedIndex = new THREE.BufferAttribute(idx, 1);
+  }
+  return sharedIndex;
+}
 
 function loadGeometry(key, cells) {
   if (!geometries.has(key)) {
     geometries.set(key, getBuffer(`/api/geometry/${encodeURIComponent(key)}`).then((buf) => {
       const dirs = new Int16Array(buf);
       if (dirs.length !== cells * VERTS_PER_CELL * 3) throw new Error(`geometry ${key} is the wrong size`);
-      const idx = new Uint32Array(cells * INDICES_PER_CELL);
-      for (let c = 0, w = 0; c < cells; c++) {
-        const base = c * VERTS_PER_CELL;
-        for (let k = 0; k < 6; k++) {
-          idx[w++] = base;
-          idx[w++] = base + 1 + k;
-          idx[w++] = base + 1 + ((k + 1) % 6);
+      const chunks = [];
+      for (let start = 0; start < cells; start += CHUNK_CELLS) {
+        const count = Math.min(CHUNK_CELLS, cells - start);
+        // The spherical cap the chunk's cell centres span, for skipping it when it faces away.
+        const axis = new THREE.Vector3();
+        for (let c = start; c < start + count; c++) {
+          axis.x += dirs[c * 21]; axis.y += dirs[c * 21 + 1]; axis.z += dirs[c * 21 + 2];
         }
+        axis.normalize();
+        let minDot = 1;
+        for (let c = start; c < start + count; c++) {
+          const d = (axis.x * dirs[c * 21] + axis.y * dirs[c * 21 + 1] + axis.z * dirs[c * 21 + 2]) / POS_SCALE;
+          if (d < minDot) minDot = d;
+        }
+        const sub = dirs.subarray(start * 21, (start + count) * 21);
+        chunks.push({
+          start, count, axis,
+          cap: Math.acos(Math.max(-1, Math.min(1, minDot))),
+          position: new THREE.Int16BufferAttribute(sub, 3, true),
+        });
       }
-      return {
-        key, cells, dirs,
-        position: new THREE.Int16BufferAttribute(dirs, 3, true),
-        index: new THREE.BufferAttribute(idx, 1),
-      };
+      return { key, cells, dirs, chunks, index: fanIndex() };
     }));
   }
   return geometries.get(key);
 }
 
-function dataTexture(src, cells, texW, channels, type) {
-  const Ctor = src.constructor;
-  const data = new Ctor(texW * texW * channels);
-  data.set(src.subarray(0, cells * channels));
-  const format = channels === 4 ? THREE.RGBAFormat : THREE.RedFormat;
-  const tex = new THREE.DataTexture(data, texW, texW, format, type);
-  if (type === THREE.UnsignedByteType && channels === 1) tex.unpackAlignment = 1;
+function dataTexture(data, texW, type) {
+  const tex = new THREE.DataTexture(data, texW, texW, THREE.RGBAFormat, type);
   tex.minFilter = tex.magFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.colorSpace = THREE.NoColorSpace;
@@ -286,44 +312,59 @@ function classPalette(rows) {
   return out;
 }
 
-async function loadWorld(name) {
+async function loadWorld(name, onStatus) {
+  onStatus(`preparing ${name} … (the first view of a world exports it: seconds at n=256, ~10 s at n=785)`);
   const meta = await getJSON(`/api/world/${encodeURIComponent(name)}/meta.json`);
+  onStatus(`loading ${name} (${(meta.cells / 1e6).toFixed(2)}M cells) …`);
   const [geom, buf] = await Promise.all([
     loadGeometry(meta.geometry, meta.cells),
     getBuffer(`/api/world/${encodeURIComponent(name)}/world.bin`),
   ]);
   const s = meta.sections;
   const cells = meta.cells;
+  const texW = meta.texW;
   const view = (Ctor, sec) => new Ctor(buf, s[sec].offset, s[sec].count);
-  const sA = view(Float32Array, 'scalarsA');
-  const sB = view(Float32Array, 'scalarsB');
-  const codes = view(Uint8Array, 'codes');
-  const texW = Math.ceil(Math.sqrt(cells));
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', geom.position);
-  geometry.setAttribute('aElev', new THREE.Int16BufferAttribute(view(Int16Array, 'elevSmooth'), 1, false));
-  geometry.setAttribute('aElevFlat', new THREE.Int16BufferAttribute(view(Int16Array, 'elevFlat'), 1, false));
-  geometry.setIndex(geom.index);
-  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.5);
+  // Copied out, so the corner elevations -- the other 40% of the buffer -- can be freed once
+  // they reach the GPU. These three stay: the inspector reads them.
+  const sA = view(Float32Array, 'scalarsA').slice();
+  const sB = view(Float32Array, 'scalarsB').slice();
+  const codes = view(Uint8Array, 'codes').slice();
+  const elevSmooth = view(Int16Array, 'elevSmooth');
+  const elevFlat = view(Int16Array, 'elevFlat');
 
   const own = {
-    uSA: { value: dataTexture(sA, cells, texW, 4, THREE.FloatType) },
-    uSB: { value: dataTexture(sB, cells, texW, 4, THREE.FloatType) },
-    uCodes: { value: dataTexture(codes, cells, texW, 4, THREE.UnsignedByteType) },
+    uSA: { value: dataTexture(sA, texW, THREE.FloatType) },
+    uSB: { value: dataTexture(sB, texW, THREE.FloatType) },
+    uCodes: { value: dataTexture(codes, texW, THREE.UnsignedByteType) },
     uTexW: { value: texW },
     uRadiusM: { value: meta.stats.radiusKm * 1000 },
   };
-  const material = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3, uniforms: { ...shared, ...own },
-    vertexShader: VERTEX, fragmentShader: FRAGMENT,
+  const free = function () { this.array = new Int16Array(0); };
+  const group = new THREE.Group();
+  const parts = geom.chunks.map((ch) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', ch.position);
+    const e = new THREE.Int16BufferAttribute(elevSmooth.subarray(ch.start * 7, (ch.start + ch.count) * 7), 1, false);
+    const ef = new THREE.Int16BufferAttribute(elevFlat.subarray(ch.start * 7, (ch.start + ch.count) * 7), 1, false);
+    e.onUpload(free);
+    ef.onUpload(free);
+    geometry.setAttribute('aElev', e);
+    geometry.setAttribute('aElevFlat', ef);
+    geometry.setIndex(geom.index);
+    geometry.setDrawRange(0, ch.count * INDICES_PER_CELL);
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.5);
+    const uniforms = () => ({ ...shared, ...own, uCellOffset: { value: ch.start } });
+    const material = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, uniforms: uniforms(), vertexShader: VERTEX, fragmentShader: FRAGMENT,
+    });
+    const pickMaterial = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, uniforms: uniforms(), vertexShader: VERTEX, fragmentShader: PICK_FRAGMENT,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    group.add(mesh);
+    return { mesh, material, pickMaterial, axis: ch.axis, cap: ch.cap };
   });
-  const pickMaterial = new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3, uniforms: { ...shared, ...own },
-    vertexShader: VERTEX, fragmentShader: PICK_FRAGMENT,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.frustumCulled = false;
 
   const present = (channel, offset) => {
     const seen = new Set();
@@ -331,16 +372,29 @@ async function loadWorld(name) {
     return seen;
   };
   return {
-    name, meta, geom, mesh, material, pickMaterial, sA, sB, codes,
+    name, meta, geom, mesh: group, parts, sA, sB, codes,
     biomesPresent: present(0, 0), koppenPresent: present(2, 1),
+    usePick(on) {
+      for (const p of parts) p.mesh.material = on ? p.pickMaterial : p.material;
+    },
+    /** Hide the chunks over the horizon from `camera` -- about half the globe. */
+    cull(camera) {
+      const d = camera.position.length();
+      const dir = camera.position.clone().normalize();
+      const horizon = Math.acos(Math.min(1, 1 / Math.max(d, 1.0001)));
+      for (const p of parts) p.mesh.visible = p.axis.angleTo(dir) < horizon + p.cap + 0.1;
+    },
     dispose() {
-      geometry.dispose();
-      material.dispose();
-      pickMaterial.dispose();
+      for (const p of parts) {
+        p.mesh.geometry.dispose();
+        p.material.dispose();
+        p.pickMaterial.dispose();
+      }
       for (const u of [own.uSA, own.uSB, own.uCodes]) u.value.dispose();
     },
   };
 }
+
 
 // ---------------------------------------------------------------------------------------
 // Renderer, shared uniforms, panels
@@ -513,9 +567,10 @@ async function setWorld(panel, name) {
     afterWorldsChanged();
     return;
   }
-  panel.status.textContent = `loading ${name} … (first view exports it, a few seconds)`;
   try {
-    const world = await loadWorld(name);
+    const world = await loadWorld(name, (text) => {
+      if (panel.loading === token) panel.status.textContent = text;
+    });
     if (panel.loading !== token) { world.dispose(); return; }
     panel.world = world;
     panel.scene.add(world.mesh);
@@ -705,7 +760,8 @@ function pick(panel, x, y) {
   const cam = panel.camera;
   cam.aspect = rect.width / rect.height;
   cam.setViewOffset(W, H, Math.floor(x * dpr), Math.floor(y * dpr), 1, 1);
-  w.mesh.material = w.pickMaterial;
+  w.usePick(true);
+  w.cull(cam);
   shared.uRingOn.value = 0;
   renderer.setRenderTarget(pickTarget);
   renderer.setClearColor(0x000000, 1);
@@ -714,7 +770,7 @@ function pick(panel, x, y) {
   renderer.readRenderTargetPixels(pickTarget, 0, 0, 1, 1, pixel);
   renderer.setRenderTarget(null);
   cam.clearViewOffset();
-  w.mesh.material = w.material;
+  w.usePick(false);
   return pixel[3] === 255 ? -1 : pixel[0] | (pixel[1] << 8) | (pixel[2] << 16);
 }
 
@@ -731,7 +787,10 @@ for (const p of panels) {
 }
 
 function runPendingPick(now) {
-  if (!pendingHover || now - lastPick < 50) return;
+  // A pick re-runs the vertex shader over the visible half of a globe: cheap at n=256, ~20M
+  // vertices at n=785, so the big worlds are picked less often.
+  const cells = pendingHover?.panel.world?.meta.cells ?? 0;
+  if (!pendingHover || now - lastPick < (cells > 2e6 ? 120 : 50)) return;
   lastPick = now;
   const { panel, x, y } = pendingHover;
   pendingHover = null;
@@ -832,6 +891,7 @@ function frame(now) {
     } else {
       shared.uRingOn.value = 0;
     }
+    p.world.cull(p.camera);
     renderer.render(p.scene, p.camera);
   }
   requestAnimationFrame(frame);
@@ -843,18 +903,28 @@ function frame(now) {
 
 async function start() {
   const { worlds, defaults } = await getJSON('/api/worlds');
+  // One option group per folder the server lists worlds from.
+  const groups = new Map();
+  for (const w of worlds) {
+    if (!groups.has(w.group)) groups.set(w.group, []);
+    groups.get(w.group).push(w.name);
+  }
   const fill = (sel, allowNone) => {
-    sel.replaceChildren();
-    if (allowNone) sel.append(new Option('— none —', ''));
-    else sel.append(new Option('— pick a world —', ''));
-    for (const w of worlds) sel.append(new Option(w, w));
+    sel.replaceChildren(new Option(allowNone ? '— none —' : '— pick a world —', ''));
+    for (const [group, names] of groups) {
+      const og = document.createElement('optgroup');
+      og.label = group;
+      for (const n of names) og.append(new Option(n, n));
+      sel.append(og);
+    }
   };
+  const names = worlds.map((w) => w.name);
   fill(selA, false);
   fill(selB, true);
   const a = params.get('a') ?? defaults[0] ?? '';
   const b = params.get('b') ?? defaults[1] ?? '';
-  selA.value = worlds.includes(a) ? a : '';
-  selB.value = worlds.includes(b) ? b : '';
+  selA.value = names.includes(a) ? a : '';
+  selB.value = names.includes(b) ? b : '';
   selA.addEventListener('change', () => setWorld(pA, selA.value));
   selB.addEventListener('change', () => setWorld(pB, selB.value));
 

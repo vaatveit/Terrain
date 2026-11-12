@@ -42,7 +42,8 @@ Or compare two worlds side by side on 3D globes in the browser:
 .venv\Scripts\python.exe scripts\view_worlds.py data/world_n256_s1_continents data/world_n256_s2_earth
 ```
 
-Both worlds are optional, and every world under `data/` is in the page's two pickers. The
+Both worlds are optional. The page's two pickers list every world in `data/` and in the
+sibling `C:\Projects\Data` folder, grouped by folder (`--data-dir` adds more folders). The
 globes draw the real Goldberg cells (the same approach as BotWorld2's globe viewer), with
 these features:
 
@@ -56,9 +57,18 @@ these features:
   in green.
 - **Hover.** Hovering either globe reads that cell off both worlds and rings it on both.
 
-The first view of a world exports it to `<world>/viewer/` in a few seconds. That cache is
-rebuilt when `world.npz` changes. `--port` sets the port (default 8765), and
-`--no-browser` skips opening a tab. three.js loads from a CDN, so the page needs a network
+The first view of a world exports it to `data/viewer_cache/`, which is git-ignored, and
+nothing is ever written next to the world itself. This takes a few seconds at n=256 and
+about 10 s at n=785. An n=785 world's cache is about 0.4 GB, plus 0.25 GB of geometry shared
+by every world on that grid. A cache is rebuilt when its `world.npz` changes.
+
+Both sizes run side by side. Two n=785 worlds load in about 10 s on an RTX 4080. Hovering
+compares cells only between worlds on the same grid; a world on another grid shows
+"other grid".
+
+`--port` sets the port (default 8765). If the port is taken (say, by a viewer that's already
+running), the script stops and says so rather than sharing it. `--no-browser` skips opening
+a tab. three.js loads from a CDN, so the page needs a network
 connection.
 
 Run the tests:
