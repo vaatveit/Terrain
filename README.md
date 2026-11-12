@@ -55,7 +55,21 @@ these features:
 - **Stats strip.** Above each globe: land fraction, landmasses holding at least 5% of land,
   peak, plates, belt width and Hack's *h*. The higher value of a comparable pair is shown
   in green.
-- **Hover.** Hovering either globe reads that cell off both worlds and rings it on both.
+- **Hover.** Hovering either globe reads that cell off both worlds and rings it on both. When
+  both worlds are on one grid, an *A − B* column shows the differences in elevation,
+  temperature and uplift, and the precipitation ratio.
+- **Difference mode.** Tick *A − B* to recolour globe B as A − B, still drawn on B's relief,
+  with globe A left as the reference.
+  - Elevation, temperature and uplift use a diverging scale: red where A is higher, blue
+    where B is.
+  - Precipitation and discharge use log₂(A / B).
+  - The scale saturates at the 98th percentile of the difference, so a few extreme cells
+    don't wash out the rest.
+  - Köppen, biome and plates mark the cells whose class differs.
+  - Landmasses shows the coastline change: land in A only (orange), B only (blue) or both.
+  - Difference mode needs both worlds on the same grid (same `n`), where a cell id is the
+    same place. It is most useful for one seed run with different settings, such as
+    `--preset continents` against `earth`.
 
 The first view of a world exports it to `data/viewer_cache/`, which is git-ignored, and
 nothing is ever written next to the world itself. This takes a few seconds at n=256 and
