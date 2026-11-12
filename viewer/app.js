@@ -52,11 +52,20 @@ uniform float uExag;
 uniform float uRadiusM;
 uniform float uFlat;
 uniform float uSeaFloor;
+// Difference mode: the OTHER world's tables (world A's, when this is globe B), read at the
+// same cell. Only ever bound between worlds on the same grid, where a cell id is a place.
+uniform float uDiff;
+uniform sampler2D uOtherSA;
+uniform sampler2D uOtherSB;
+uniform sampler2D uOtherCodes;
 
 flat out int vCell;
 flat out vec4 vA;
 flat out vec4 vB;
 flat out vec4 vC;
+flat out vec4 vOA;
+flat out vec4 vOB;
+flat out vec4 vOC;
 out vec3 vWorld;
 
 void main() {
@@ -66,6 +75,13 @@ void main() {
   vA = texelFetch(uSA, uv, 0);
   vB = texelFetch(uSB, uv, 0);
   vC = floor(texelFetch(uCodes, uv, 0) * 255.0 + 0.5);
+  if (uDiff > 0.5) {
+    vOA = texelFetch(uOtherSA, uv, 0);
+    vOB = texelFetch(uOtherSB, uv, 0);
+    vOC = floor(texelFetch(uOtherCodes, uv, 0) * 255.0 + 0.5);
+  } else {
+    vOA = vA; vOB = vB; vOC = vC;
+  }
   int flags = int(vC.y);
   bool land = (flags & 1) != 0;
   bool lake = (flags & 2) != 0;
@@ -85,9 +101,14 @@ flat in int vCell;
 flat in vec4 vA;
 flat in vec4 vB;
 flat in vec4 vC;
+flat in vec4 vOA;
+flat in vec4 vOB;
+flat in vec4 vOC;
 in vec3 vWorld;
 
 uniform int uMode;
+uniform float uDiff;
+uniform float uDiffRange;    // the |A - B| that saturates the diverging ramp
 uniform float uRivers;
 uniform float uSeaFloor;
 uniform vec2 uElevRange;     // deepest sea, highest land, over both worlds
@@ -192,13 +213,55 @@ vec3 cellColour() {
   return vec3(0.50, 0.50, 0.48);
 }
 
+// The panel accents: orange for A, blue for B.
+const vec3 ONLY_A = vec3(0.949, 0.639, 0.227);
+const vec3 ONLY_B = vec3(0.298, 0.765, 0.910);
+const vec3 SAME = vec3(0.52, 0.53, 0.55);
+const vec3 CHANGED = vec3(0.92, 0.30, 0.62);
+
+/** t in [-1, 1]: red where A is higher, blue where B is, near-white where they agree. */
+vec3 diverge(float t) {
+  t = clamp(t, -1.0, 1.0);
+  return t >= 0.0 ? mix(vec3(0.93, 0.93, 0.91), vec3(0.70, 0.13, 0.13), t)
+                  : mix(vec3(0.93, 0.93, 0.91), vec3(0.15, 0.33, 0.70), -t);
+}
+
+float logRatio(float a, float b, float floorV) {
+  return log2(max(a, floorV) / max(b, floorV));
+}
+
+/** A - B at this cell, with vO* holding A and v* holding B. */
+vec3 diffColour() {
+  bool landA = (int(vOC.y) & 1) != 0;
+  bool landB = (int(vC.y) & 1) != 0;
+  float R = max(uDiffRange, 1e-9);
+  if (uMode == 0) return diverge((vOA.x - vA.x) / R);         // elevation: land and sea floor
+  if (uMode == 8) {                                            // landmasses: coastline change
+    if (landA && landB) return SAME;
+    if (landA) return ONLY_A;
+    if (landB) return ONLY_B;
+    return DEEP;
+  }
+  if (uMode == 7) return vOC.w == vC.w ? SAME : CHANGED;      // plates, sea included
+  if (!landA && !landB) return DEEP;
+  // Land in one world only: no like-for-like value, so say which world has it, dimmed.
+  if (landA != landB) return mix(landA ? ONLY_A : ONLY_B, DEEP, 0.45);
+  if (uMode == 1) return vOC.z == vC.z ? SAME : CHANGED;
+  if (uMode == 2) return vOC.x == vC.x ? SAME : CHANGED;
+  if (uMode == 3) return diverge((vOA.y - vA.y) / R);
+  if (uMode == 4) return diverge(logRatio(vOA.z, vA.z, 1.0) / R);
+  if (uMode == 5) return diverge(logRatio(vOA.w, vA.w, 1e-9) / R);
+  return diverge((vOB.x - vB.x) / R);                          // uplift
+}
+
 void main() {
   // A true per-triangle normal from screen derivatives: the facets read as facets with no
   // normals shipped. The outward direction is radial, which settles the sign.
   vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   if (dot(N, vWorld) < 0.0) N = -N;
   float lambert = max(dot(N, normalize(uLightDir)), 0.0);
-  vec3 colour = cellColour() * (0.34 + 0.72 * lambert);
+  vec3 base = uDiff > 0.5 ? diffColour() : cellColour();
+  vec3 colour = base * (0.34 + 0.72 * lambert);
 
   if (uRingOn > 0.5) {
     float a = acos(clamp(dot(normalize(vWorld), uRingDir), -1.0, 1.0));
@@ -338,7 +401,13 @@ async function loadWorld(name, onStatus) {
     uCodes: { value: dataTexture(codes, texW, THREE.UnsignedByteType) },
     uTexW: { value: texW },
     uRadiusM: { value: meta.stats.radiusKm * 1000 },
+    uDiff: { value: 0 },
   };
+  // Bound to this world's own tables until difference mode points them at the other world's:
+  // an unbound sampler is a link error even on a branch nothing takes.
+  own.uOtherSA = { value: own.uSA.value };
+  own.uOtherSB = { value: own.uSB.value };
+  own.uOtherCodes = { value: own.uCodes.value };
   const free = function () { this.array = new Int16Array(0); };
   const group = new THREE.Group();
   const parts = geom.chunks.map((ch) => {
@@ -372,7 +441,7 @@ async function loadWorld(name, onStatus) {
     return seen;
   };
   return {
-    name, meta, geom, mesh: group, parts, sA, sB, codes,
+    name, meta, geom, own, mesh: group, parts, sA, sB, codes,
     biomesPresent: present(0, 0), koppenPresent: present(2, 1),
     usePick(on) {
       for (const p of parts) p.mesh.material = on ? p.pickMaterial : p.material;
@@ -427,6 +496,7 @@ const shared = {
   uRingDir: { value: new THREE.Vector3(1, 0, 0) },
   uRingRadius: { value: 0.02 },
   uRingOn: { value: 0 },
+  uDiffRange: { value: 1 },
 };
 
 function makeCamera() {
@@ -490,6 +560,8 @@ const params = new URLSearchParams(location.search);
 let modeIndex = Math.max(0, MODES.findIndex((m) => m.key === params.get('mode')));
 let exagTouched = false;
 let cameraFitted = false;
+let diffWanted = params.get('diff') === '1';
+let diffActive = false;   // wanted, and both worlds loaded on one grid
 
 const selA = document.getElementById('world-a');
 const selB = document.getElementById('world-b');
@@ -511,6 +583,7 @@ function setMode(i) {
   shared.uMode.value = i;
   [...modesEl.children].forEach((b, j) => b.classList.toggle('on', j === i));
   updateRanges();
+  applyDiff();
   renderLegend();
   saveUrl();
 }
@@ -525,6 +598,16 @@ document.getElementById('rivers').addEventListener('change', (e) => { shared.uRi
 document.getElementById('flat').addEventListener('change', (e) => { shared.uFlat.value = e.target.checked ? 1 : 0; });
 document.getElementById('seafloor').addEventListener('change', (e) => { shared.uSeaFloor.value = e.target.checked ? 1 : 0; });
 document.getElementById('link').addEventListener('change', (e) => setLinked(e.target.checked));
+const diffBox = document.getElementById('diff');
+diffBox.checked = diffWanted;
+diffBox.addEventListener('change', (e) => {
+  diffWanted = e.target.checked;
+  applyDiff();
+  renderStats();
+  renderLegend();
+  renderInspector();
+  saveUrl();
+});
 document.getElementById('swap').addEventListener('click', () => {
   const a = selA.value;
   const b = selB.value;
@@ -546,6 +629,7 @@ function saveUrl() {
   if (selA.value) q.set('a', selA.value);
   if (selB.value) q.set('b', selB.value);
   q.set('mode', MODES[modeIndex].key);
+  if (diffWanted) q.set('diff', '1');
   history.replaceState(null, '', `?${q}`);
 }
 
@@ -559,6 +643,7 @@ async function setWorld(panel, name) {
   panel.scene.clear();
   if (panel.world) panel.world.dispose();
   panel.world = null;
+  applyDiff();               // never leave B sampling a world that has just been disposed
   panel.status.classList.remove('error');
   stage.classList.toggle('single', !(pB.world || pB.loading));
   if (!name) {
@@ -606,6 +691,7 @@ function afterWorldsChanged() {
     }
   }
   updateRanges();
+  applyDiff();
   renderStats();
   renderLegend();
   saveUrl();
@@ -642,6 +728,87 @@ function updateRanges() {
 }
 
 // ---------------------------------------------------------------------------------------
+// Difference mode: globe B recoloured as A - B, globe A left as the reference
+// ---------------------------------------------------------------------------------------
+
+const sameGrid = () => Boolean(pA.world && pB.world && pA.world.geom.key === pB.world.geom.key);
+
+/** Point B's "other" samplers at A's tables (or back at its own), and fix the ramp's range. */
+function applyDiff() {
+  const can = sameGrid();
+  diffBox.disabled = !can;
+  diffBox.parentElement.title = can
+    ? 'Recolour globe B as A − B, cell by cell'
+    : 'Needs two worlds on the same grid (same n), where a cell id is the same place';
+  diffActive = diffWanted && can;
+  for (const p of panels) {
+    const w = p.world;
+    if (!w) continue;
+    const src = diffActive && p === pB ? pA.world.own : w.own;
+    w.own.uDiff.value = diffActive && p === pB ? 1 : 0;
+    w.own.uOtherSA.value = src.uSA.value;
+    w.own.uOtherSB.value = src.uSB.value;
+    w.own.uOtherCodes.value = src.uCodes.value;
+  }
+  if (diffActive) shared.uDiffRange.value = diffRange(MODES[modeIndex].key);
+}
+
+/** The 98th percentile of |A - B| over a ~200k-cell sample: where the diverging ramp saturates.
+ *  A percentile, not the maximum, so one freak cell cannot wash every other one out to white. */
+function diffRange(key) {
+  const A = pA.world;
+  const B = pB.world;
+  const n = A.meta.cells;
+  const step = Math.max(1, Math.floor(n / 200000));
+  const vals = [];
+  for (let i = 0; i < n; i += step) {
+    const both = (A.codes[i * 4 + 1] & 1) && (B.codes[i * 4 + 1] & 1);
+    let d;
+    if (key === 'elevation') d = A.sA[i * 4] - B.sA[i * 4];
+    else if (!both) continue;
+    else if (key === 'temperature') d = A.sA[i * 4 + 1] - B.sA[i * 4 + 1];
+    else if (key === 'precipitation') d = Math.log2(Math.max(A.sA[i * 4 + 2], 1) / Math.max(B.sA[i * 4 + 2], 1));
+    else if (key === 'discharge') d = Math.log2(Math.max(A.sA[i * 4 + 3], 1e-9) / Math.max(B.sA[i * 4 + 3], 1e-9));
+    else if (key === 'uplift') d = A.sB[i * 4] - B.sB[i * 4];
+    else return 1;
+    vals.push(Math.abs(d));
+  }
+  if (!vals.length) return 1;
+  vals.sort((a, b) => a - b);
+  const q = vals[Math.floor(0.98 * (vals.length - 1))];
+  return q > 0 ? q : Math.max(vals[vals.length - 1], 1e-6);
+}
+
+const DIVERGE = [[0.15, 0.33, 0.70], [0.93, 0.93, 0.91], [0.70, 0.13, 0.13]];
+const ONLY_A = [0.949, 0.639, 0.227];
+const ONLY_B = [0.298, 0.765, 0.910];
+const DIM = (c) => c.map((v, i) => v * 0.55 + [0.027, 0.078, 0.180][i] * 0.45);
+
+function renderDiffLegend() {
+  const key = MODES[modeIndex].key;
+  const R = shared.uDiffRange.value;
+  const units = { elevation: ['m', 0], temperature: ['°C', 1], uplift: ['m/Myr', 1] };
+  const mixed = [[DIM(ONLY_A), 'land in A only'], [DIM(ONLY_B), 'land in B only']];
+  if (units[key]) {
+    const [u, d] = units[key];
+    gradient(`A − B ${key}: red where A is higher`, DIVERGE, `−${fmt(R, d)} ${u}`, `+${fmt(R, d)} ${u}`);
+    if (key !== 'elevation') {
+      legendEl.insertAdjacentHTML('beforeend',
+        '<div class="title">land in one world only: orange for A, blue for B, dimmed</div>');
+    }
+  } else if (key === 'precipitation' || key === 'discharge') {
+    const x = 2 ** R;
+    gradient(`A ÷ B ${key}, log scale: red where A is ${key === 'precipitation' ? 'wetter' : 'higher'}`,
+      DIVERGE, `B ${x.toFixed(1)}×`, `A ${x.toFixed(1)}×`);
+  } else if (key === 'landmasses') {
+    swatches('A − B coastlines', [[[0.52, 0.53, 0.55], 'land in both'], [ONLY_A, 'land in A only'], [ONLY_B, 'land in B only']]);
+  } else {
+    swatches(`A − B ${key}: where the class differs`,
+      [[[0.52, 0.53, 0.55], 'same'], [[0.92, 0.30, 0.62], 'different']].concat(key === 'plates' ? [] : mixed));
+  }
+}
+
+// ---------------------------------------------------------------------------------------
 // Stats and legend
 // ---------------------------------------------------------------------------------------
 
@@ -670,6 +837,10 @@ function renderStats() {
     p.nameEl.textContent = p.world ? p.world.name : (p.loading ? '…' : '—');
     p.statsEl.replaceChildren();
     if (!p.world) continue;
+    if (diffActive && p === pB) {
+      p.nameEl.textContent = `A − B   (${pA.world.name} − ${pB.world.name}, on B's relief)`;
+      continue;
+    }
     const mine = statRows(p.world.meta.stats);
     const other = both ? statRows((p === pA ? pB : pA).world.meta.stats) : null;
     mine.forEach(([label, v, text, more], i) => {
@@ -705,6 +876,7 @@ function gradient(title, stops, lo, hi) {
 function renderLegend() {
   const ws = loadedWorlds();
   if (!ws.length) { legendEl.replaceChildren(); return; }
+  if (diffActive) { renderDiffLegend(); return; }
   const key = MODES[modeIndex].key;
   const r = shared.uRange.value;
   const e = shared.uElevRange.value;
@@ -826,6 +998,22 @@ function describe(w, cell) {
   };
 }
 
+/** A - B at one cell, for the inspector's third column. Precipitation as a ratio, since it
+ *  spans orders of magnitude; only where both worlds have land there. */
+function deltas(A, B, cell) {
+  const a = (w, i) => w.sA[cell * 4 + i];
+  const b = (w, i) => w.sB[cell * 4 + i];
+  const land = (w) => w.codes[cell * 4 + 1] & 1;
+  const signed = (v, d, u) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${fmt(Math.abs(v), d)} ${u}`;
+  const out = {
+    elevation: signed(a(A, 0) - a(B, 0), 0, 'm'),
+    temperature: signed(a(A, 1) - a(B, 1), 1, '°C'),
+    uplift: signed(b(A, 0) - b(B, 0), 1, 'm/Myr'),
+  };
+  if (land(A) && land(B) && a(B, 2) > 0) out.precipitation = `×${(a(A, 2) / a(B, 2)).toFixed(2)}`;
+  return out;
+}
+
 function renderInspector() {
   if (!hovered) { inspectorEl.hidden = true; return; }
   const { panel, cell, dir } = hovered;
@@ -837,9 +1025,15 @@ function renderInspector() {
   const lat = (Math.asin(Math.max(-1, Math.min(1, dir.z))) * 180) / Math.PI;
   const lon = (Math.atan2(dir.y, dir.x) * 180) / Math.PI;
   const keys = Object.keys(cols.find((c) => c.data).data);
+  // A - B beside the two columns, for the numeric fields, whenever the cell is the same place.
+  const delta = cols.length === 2 && cols.every((c) => c.data) ? deltas(pA.world, pB.world, cell) : null;
+  const head = cols.map((c) => `<td><span class="tag ${c.slot}">${c.slot.toUpperCase()}</span></td>`).join('')
+    + (delta ? '<td>A − B</td>' : '');
+  const row = (k) => cols.map((c) => `<td>${c.data ? c.data[k] : 'other grid'}</td>`).join('')
+    + (delta ? `<td>${delta[k] ?? ''}</td>` : '');
   inspectorEl.innerHTML = `<div class="where">cell ${cell} · ${lat.toFixed(2)}°, ${lon.toFixed(2)}°</div>
-    <table><thead><tr><th></th>${cols.map((c) => `<td><span class="tag ${c.slot}">${c.slot.toUpperCase()}</span></td>`).join('')}</tr></thead>
-    <tbody>${keys.map((k) => `<tr><th>${k}</th>${cols.map((c) => `<td>${c.data ? c.data[k] : 'other grid'}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    <table><thead><tr><th></th>${head}</tr></thead>
+    <tbody>${keys.map((k) => `<tr><th>${k}</th>${row(k)}</tr>`).join('')}</tbody></table>`;
   inspectorEl.hidden = false;
 }
 

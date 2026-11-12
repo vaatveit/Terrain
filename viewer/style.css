@@ -90,3 +90,4 @@ output { min-width: 3.4em; color: var(--text); font-variant-numeric: tabular-num
 #inspector td { padding: 1px 0 1px 12px; text-align: right; }
 #inspector thead td { font-weight: 600; }
 #inspector .where { color: var(--muted); margin-bottom: 4px; }
+.toggles label:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
