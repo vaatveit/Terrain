@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>World Compare</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header id="bar">
+    <div class="group worlds">
+      <label class="pick"><span class="tag a">A</span><select id="world-a"></select></label>
+      <button id="swap" title="Swap A and B">⇄</button>
+      <label class="pick"><span class="tag b">B</span><select id="world-b"></select></label>
+    </div>
+    <div class="group" id="modes"></div>
+    <div class="group toggles">
+      <label class="slider" title="Vertical exaggeration">relief
+        <input id="relief" type="range" min="0" max="10" step="0.1" value="1" />
+        <output id="relief-out">1.0×</output>
+      </label>
+      <label><input id="rivers" type="checkbox" checked /> rivers</label>
+      <label><input id="flat" type="checkbox" /> flat tiles</label>
+      <label><input id="seafloor" type="checkbox" /> sea floor</label>
+      <label><input id="link" type="checkbox" checked /> link views</label>
+    </div>
+  </header>
+
+  <main id="stage">
+    <canvas id="gl"></canvas>
+    <section class="panel" id="panel-a" data-slot="a">
+      <div class="head"><span class="tag a">A</span><span class="name">—</span><div class="stats"></div></div>
+      <div class="status"></div>
+    </section>
+    <section class="panel" id="panel-b" data-slot="b">
+      <div class="head"><span class="tag b">B</span><span class="name">—</span><div class="stats"></div></div>
+      <div class="status"></div>
+    </section>
+  </main>
+
+  <aside id="legend"></aside>
+  <aside id="inspector" hidden></aside>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
