@@ -36,6 +36,31 @@ Render it from the exported rasters:
 .venv\Scripts\python.exe scripts\render_world.py data/world01
 ```
 
+Or compare two worlds side by side on 3D globes in the browser:
+
+```bash
+.venv\Scripts\python.exe scripts\view_worlds.py data/world_n256_s1_continents data/world_n256_s2_earth
+```
+
+Both worlds are optional, and every world under `data/` is in the page's two pickers. The
+globes draw the real Goldberg cells (the same approach as BotWorld2's globe viewer), with
+these features:
+
+- **Linked views.** Both globes share one camera until you untick *link views*.
+- **Colour modes.** Elevation, Köppen, biome, temperature, precipitation, discharge, uplift,
+  plates and landmasses (the ten largest, each in its own colour).
+- **Shared colour scale.** Each mode's range is the union of the two worlds', so a colour
+  means the same value on both globes.
+- **Stats strip.** Above each globe: land fraction, landmasses holding at least 5% of land,
+  peak, plates, belt width and Hack's *h*. The higher value of a comparable pair is shown
+  in green.
+- **Hover.** Hovering either globe reads that cell off both worlds and rings it on both.
+
+The first view of a world exports it to `<world>/viewer/` in a few seconds. That cache is
+rebuilt when `world.npz` changes. `--port` sets the port (default 8765), and
+`--no-browser` skips opening a tab. three.js loads from a CDN, so the page needs a network
+connection.
+
 Run the tests:
 
 ```bash
